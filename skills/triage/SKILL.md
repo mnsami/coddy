@@ -2,6 +2,7 @@
 name: triage
 description: Turn review findings into tracker issues
 disable-model-invocation: true
+allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh")
 ---
 
 # Triage

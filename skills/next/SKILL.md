@@ -2,6 +2,7 @@
 name: next
 description: Pick the next issue to work on
 disable-model-invocation: true
+allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh")
 ---
 
 # Next

@@ -2,6 +2,7 @@
 name: ship
 description: Verify, commit, push and open a PR for the current issue branch
 disable-model-invocation: true
+allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh"), Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/tree.sh")
 ---
 
 # Ship
@@ -10,7 +11,7 @@ disable-model-invocation: true
 !`bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh"`
 
 ## Working tree
-!`git branch --show-current 2>/dev/null; git status --short 2>/dev/null | head -30`
+!`bash "${CLAUDE_PLUGIN_ROOT}/scripts/tree.sh"`
 
 `NOT_ONBOARDED` → stop and say: run `/coddy:onboard` first.
 Current branch equals `default_branch` → stop and say: not on an issue branch.

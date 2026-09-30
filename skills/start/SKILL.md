@@ -3,6 +3,7 @@ name: start
 description: Start work on a tracked issue
 arguments: [issue]
 disable-model-invocation: true
+allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh")
 ---
 
 # Start issue $issue

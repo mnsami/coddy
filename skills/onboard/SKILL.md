@@ -2,6 +2,7 @@
 name: onboard
 description: Bring the current project into the coddy workflow by writing .claude/coddy.yml
 disable-model-invocation: true
+allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/detect.sh")
 ---
 
 # Onboard this project
