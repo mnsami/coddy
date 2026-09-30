@@ -1,0 +1,37 @@
+---
+name: onboard
+description: Bring the current project into the coddy workflow by writing .claude/coddy.yml
+disable-model-invocation: true
+---
+
+# Onboard this project
+
+## Detected
+!`bash "${CLAUDE_PLUGIN_ROOT}/scripts/detect.sh"`
+
+## Config schema: `.claude/coddy.yml`
+
+```yaml
+tracker: github              # github | jira
+repo: owner/name             # github only
+jira:                        # jira only
+  site: https://acme.atlassian.net
+  project: KEY
+vcs: git                     # git | jj
+default_branch: main
+branch: "{type}/{issue}-{slug}"
+commit: "{type}({issue}): {summary}"
+verify: "make check"         # must exit 0 before /coddy:ship
+roadmap: docs/ROADMAP.md     # optional; /coddy:next reads it
+```
+
+## Steps
+
+1. `config: present` → show it and ask whether to overwrite. "No" ends the skill.
+2. Pre-fill from the detection block: `tracker`/`repo` from the remote, `branch`/`commit` from recent branches and commits when a pattern is visible, `verify` from make targets or package scripts, `roadmap` from the detected file.
+3. Ask for the rest in ONE AskUserQuestion call: every key you could not infer, plus confirmation of the guessed patterns. A non-GitHub remote means asking for the tracker; `tracker: jira` means asking for site and project key.
+4. Write `.claude/coddy.yml`.
+5. `claude_dir_gitignored: no` → ask whether the config is personal (add `.claude/coddy.yml` to `.git/info/exclude`) or shared (leave it for commit).
+6. Print the final config and stop.
+
+This skill changes nothing else: no code, CI, CLAUDE.md, or planning docs.
