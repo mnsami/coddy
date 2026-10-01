@@ -1,7 +1,7 @@
 ---
 name: next
 description: Pick the next issue to work on
-disable-model-invocation: true
+when_to_use: Use when the user asks what to work on next, what is open, or which issue or ticket to pick up.
 allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh")
 ---
 

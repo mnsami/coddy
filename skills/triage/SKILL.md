@@ -1,7 +1,7 @@
 ---
 name: triage
 description: Turn review findings into tracker issues
-disable-model-invocation: true
+when_to_use: Use when the user asks to file, log or create issues or tickets from findings, a review, an audit or a list of problems.
 allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh")
 ---
 
