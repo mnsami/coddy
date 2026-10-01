@@ -1,7 +1,7 @@
 ---
 name: onboard
 description: Bring the current project into the coddy workflow by writing .claude/coddy.yml
-when_to_use: Use when the user asks to onboard, set up or configure coddy for this project, or to change its tracker, worktree tool, branch, commit or verify settings.
+when_to_use: Use when the user asks to onboard a project or set coddy up in it for the first time. Changing a setting later is the config skill.
 allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/detect.sh")
 ---
 

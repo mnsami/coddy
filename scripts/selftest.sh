@@ -74,7 +74,7 @@ else
 fi
 
 tripped 0 "tripwire: quiet when nothing changed" 'true'
-tripped 0 "tripwire: quiet for .claude/" 'echo x >> .claude/coddy.yml'
+tripped 0 "tripwire: quiet for other files in .claude/" 'echo x >> .claude/notes.md'
 tripped 0 "tripwire: quiet for a worktree" 'echo y >> .worktrees/43/a.txt'
 tripped 2 "tripwire: tracked file modified" 'echo x >> README.md'
 tripped 2 "tripwire: dirty file modified again" 'echo y >> README.md'
@@ -84,6 +84,25 @@ tripped 0 "tripwire: quiet when the new file is removed" 'rm stray.txt'
 tripped 2 "tripwire: tracked file deleted" 'rm README.md'
 git checkout -q README.md
 tripped 2 "tripwire: local commit in the main checkout" 'git commit -q --allow-empty -m oops'
+
+# The config switches every hook off when it goes, so a shell command may not touch it.
+cp .claude/coddy.yml "$tmp/conf.orig"
+same() { cmp -s "$repo/.claude/coddy.yml" "$tmp/conf.orig"; }
+tripped 2 "config: deleting it trips" 'rm .claude/coddy.yml'
+t 0 "config: restored after deletion" same
+t 2 "config: guard still on after the deletion" guard "$repo/README.md"
+tripped 2 "config: rewriting it trips" 'echo "verify: true" >> .claude/coddy.yml'
+t 0 "config: restored after the rewrite" same
+tripped 2 "config: removing .claude/ trips" 'rm -rf .claude'
+t 0 "config: restored after .claude/ was removed" same
+# A shared (committed) config that changes through git is not a bypass.
+git add -f .claude/coddy.yml; git commit -q -m "share config"; git push -q origin HEAD:main
+git clone -q -b main "$tmp/origin.git" "$tmp/mate" 2>/dev/null
+(cd "$tmp/mate" && echo "roadmap: docs/ROADMAP.md" >> .claude/coddy.yml && git commit -q -am "roadmap" && git push -q origin HEAD:main)
+tripped 0 "config: a pulled change to a shared config stands" 'git fetch -q origin && git merge -q --ff-only origin/main'
+t 0 "config: the pulled change is kept" grep -q '^roadmap:' .claude/coddy.yml
+tripped 2 "config: a shell edit to a shared config still trips" 'echo "verify: true" >> .claude/coddy.yml'
+t 1 "config: the shell edit to a shared config is undone" grep -q '^verify: true' .claude/coddy.yml
 
 mkdir -p .worktrees/other
 t 0 "tree.sh lists a claimed issue" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/tree.sh' | grep -q '^worktrees: .*43'"

@@ -6,6 +6,7 @@ state; the plugin holds the habits.
 | Skill | What it does |
 |---|---|
 | `/coddy:onboard` | Detects the project, asks for what it can't infer, writes `.claude/coddy.yml` |
+| `/coddy:config [key=value ...]` | Shows `.claude/coddy.yml`, or changes the keys you name |
 | `/coddy:start <issue>` | Fetches the issue, restates acceptance criteria, claims it, moves it to In Progress, creates its own branch in its own worktree (`.worktrees/<issue>`) |
 | `/coddy:ship [issue]` | Runs `verify` in the issue's worktree, commits, pushes, opens the PR, links it back to the issue |
 | `/coddy:triage` | Turns findings into issues, skipping ones already open |
@@ -56,7 +57,8 @@ roadmap: docs/ROADMAP.md
 `worktree` picks what creates each issue's worktree: `jj` (`jj workspace
 add`, colocating the repo on first use) or `git` (`git worktree add`).
 
-Delete the file to leave the workflow. Every other skill refuses to run
+Delete the file yourself to leave the workflow; a shell command from Claude
+that removes or rewrites it is undone, and `/coddy:config` asks you first. Every other skill refuses to run
 without it.
 
 ## Develop

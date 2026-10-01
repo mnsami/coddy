@@ -53,17 +53,30 @@ snap() {
 }
 
 if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
-  [ -f "$conf" ] || exit 0
   id=$(jq -r '.tool_use_id // empty' 2>/dev/null)
   file="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-${id:-shared}"
-  if [ "$1" = snap ]; then snap | LC_ALL=C sort > "$file"; exit 0; fi
+  if [ "$1" = snap ]; then
+    [ -f "$conf" ] || exit 0
+    snap | LC_ALL=C sort > "$file"; cp "$conf" "$file.conf"; exit 0
+  fi
+  # A snapshot means the project was onboarded when the command started, so
+  # trip must not look at the config first: the command may have removed it.
   [ -f "$file" ] || exit 0
+  code=2 msg=""
+  # The config is the off switch for every hook here, so a shell command may
+  # not change it: put it back. A config identical to the one committed at
+  # HEAD came from git (a pull, a checkout) and stands.
+  head=$(git -C "$root" rev-parse -q --verify HEAD:.claude/coddy.yml 2>/dev/null)
+  if ! cmp -s "$conf" "$file.conf" && ! { [ -f "$conf" ] && [ -n "$head" ] && [ "$(git hash-object "$conf")" = "$head" ]; }; then
+    mkdir -p "$root/.claude" && cp "$file.conf" "$conf"
+    msg="that command changed .claude/coddy.yml, which switches the coddy guardrails, so it has been restored. Settings change through /coddy:config; leaving the workflow is for the user to do by hand. "
+  fi
   # Only lines that are new count, so undoing a change never trips the wire.
   added=$(snap | LC_ALL=C sort | LC_ALL=C comm -13 "$file" - | sed 's/ [^ ]*$//' | tr '\n' ' ' | sed 's/ $//')
-  rm -f "$file"
-  [ -z "$added" ] && exit 0
-  code=2
-  die "that command changed the main checkout: $added. Issue work belongs in .worktrees/<issue>/. Undo it."
+  rm -f "$file" "$file.conf"
+  [ -n "$added" ] && msg="${msg}that command changed the main checkout: $added. Issue work belongs in .worktrees/<issue>/. Undo it."
+  [ -z "$msg" ] && exit 0
+  die "$msg"
 fi
 
 [ -f "$conf" ] || die "NOT_ONBOARDED"
