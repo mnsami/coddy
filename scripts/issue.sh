@@ -7,6 +7,8 @@
 #   issue.sh snap | trip               Pre/PostToolUse hooks on Bash
 # An issue counts as In Progress once .git/coddy/<issue> exists; only claim
 # writes it, and guard rejects every edit that is not inside a claimed worktree.
+# create records the issue's branch in .git/coddy/<issue>.branch, and push
+# pushes that branch and no other.
 # snap and trip fingerprint the main checkout around each shell command and
 # reject the command's result when it left new changes there.
 set -u
@@ -83,14 +85,29 @@ fi
 cd "$root" || die "cannot enter $root"
 cmd="${1-}" issue="${2-}"
 case "$issue" in ''|*[!A-Za-z0-9_-]*) die "issue id must look like 42 or ABC-123, got '$issue'" ;; esac
-wt=".worktrees/$issue"
+wt=".worktrees/$issue" rec=".git/coddy/$issue.branch"
 tool=$(cfg worktree); tool="${tool:-jj}"
 base=$(cfg default_branch); base="${base:-main}"
+
+# The worktree sits on branch $1: checked out (git), an ancestor of @ (jj).
+on() {
+  if [ "$tool" = jj ]; then
+    [ -n "$(jj -R "$wt" log --no-graph -r "bookmarks(exact:\"$1\") & ::@" -T '"x"' 2>/dev/null)" ]
+  else
+    [ "$(git -C "$wt" branch --show-current)" = "$1" ]
+  fi
+}
+record() { mkdir -p .git/coddy && echo "$branch" > "$rec" || die "could not record the branch"; }
 
 case "$cmd" in
   create)
     branch="${3-}"; [ -n "$branch" ] || die "usage: issue.sh create <issue> <branch>"
-    [ -d "$wt" ] && { echo "exists: $wt"; exit 0; }
+    if [ -d "$wt" ]; then
+      # A worktree from before the branch was recorded: record it now, but
+      # only a branch the worktree really is on.
+      [ -s "$rec" ] || { on "$branch" || die "$wt is not on $branch"; record; }
+      echo "exists: $wt"; exit 0
+    fi
     mkdir -p .worktrees
     git check-ignore -q .worktrees || echo '.worktrees/' >> .git/info/exclude
     if [ "$tool" = jj ]; then
@@ -104,6 +121,7 @@ case "$cmd" in
       git fetch origin || die "fetch failed"
       git worktree add --no-track -b "$branch" "$wt" "origin/$base" || die "could not create the git worktree"
     fi
+    record
     echo "created: $wt on $branch" ;;
 
   claim)
@@ -123,14 +141,12 @@ case "$cmd" in
     msg="${3-}"
     [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
     [ -e ".git/coddy/$issue" ] || die "issue $issue is not In Progress. Run /coddy:start $issue."
-    if [ "$tool" = jj ]; then
-      branch=$(jj -R "$wt" log --no-graph -r 'heads(::@ & bookmarks())' -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' | head -1)
-      dirty=$(jj -R "$wt" diff --summary)
-    else
-      branch=$(git -C "$wt" branch --show-current)
-      dirty=$(git -C "$wt" status --porcelain)
-    fi
-    [ -n "$branch" ] && [ "$branch" != "$base" ] || die "$wt is not on an issue branch"
+    # The branch create recorded, never one read off the history: once $base
+    # is merged in, the history holds the branches of merged issues too.
+    branch=$(cat "$rec" 2>/dev/null)
+    [ -n "$branch" ] || die "no branch recorded for $issue. Record it: issue.sh create $issue <branch>"
+    [ "$branch" != "$base" ] && on "$branch" || die "$wt is not on issue branch $branch"
+    if [ "$tool" = jj ]; then dirty=$(jj -R "$wt" diff --summary); else dirty=$(git -C "$wt" status --porcelain); fi
     if [ -n "$dirty" ]; then
       [ -n "$msg" ] || die "uncommitted changes in $wt: pass a commit message"
       if [ "$tool" = jj ]; then
