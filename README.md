@@ -58,10 +58,17 @@ branch: "{type}/{issue}-{slug}"
 commit: "{type}({issue}): {summary}"
 verify: "make check"
 roadmap: docs/ROADMAP.md
+guard: block                 # block (default) | warn
 ```
 
 `worktree` picks what creates each issue's worktree: `jj` (`jj workspace
 add`, colocating the repo on first use) or `git` (`git worktree add`).
+
+`guard: warn` turns the edit hook from a rejection into a notice: the edit
+goes through, and Claude is told it landed outside a claimed worktree and
+which command to run. The shell hook and the config lock are the same in
+both modes. `/coddy:onboard` leaves the key out; set it with
+`/coddy:config guard=warn`.
 
 Delete the file yourself to leave the workflow; a shell command from Claude
 that removes or rewrites it is undone, and `/coddy:config` asks you first. Every other skill refuses to run
