@@ -10,6 +10,10 @@ allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/detect.sh")
 ## Detected
 !`bash "${CLAUDE_PLUGIN_ROOT}/scripts/detect.sh"`
 
+`jq: missing` or `gh_auth: missing` → stop before asking anything and write nothing. Name each one that is missing with its fix, then say: run `/coddy:onboard` again.
+- `jq: missing`: the edit guard blocks every edit without it. `brew install jq` or `apt install jq`.
+- `gh_auth: missing`: `gh` is not installed (https://cli.github.com) or not signed in (`gh auth login`).
+
 ## Config schema: `.claude/coddy.yml`
 
 ```yaml
