@@ -40,14 +40,25 @@ if [ "${1-}" = guard ]; then
   exit 0
 fi
 
-# One line per dirty path in the main checkout with its content hash, plus
-# HEAD when it is a commit no remote branch contains. Paths, not git status
-# codes: jj colocation flips untracked files to intent-to-add on its own.
+# The main checkout's fingerprint: one line per dirty path with its content
+# hash, one for the default branch when it holds commits its remote branch
+# does not, and one for HEAD when it has left the default branch. A detached
+# HEAD on the default branch's own history counts as on it: that is where jj
+# leaves a synced checkout. Paths, not git status codes: jj colocation flips
+# untracked files to intent-to-add on its own.
 # ponytail: one git hash-object per dirty file, so a checkout with thousands
 # of dirty files slows every shell command; batch with --stdin-paths then.
 snap() {
   cd "$root" 2>/dev/null || return 0
-  [ -n "$(git branch -r --contains HEAD 2>/dev/null)" ] || git rev-parse HEAD 2>/dev/null | sed 's/^/HEAD /'
+  b=$(cfg default_branch); b="${b:-main}"
+  git merge-base --is-ancestor "refs/heads/$b" "refs/remotes/origin/$b" 2>/dev/null ||
+    { tip=$(git rev-parse -q --verify "refs/heads/$b" 2>/dev/null) && echo "commits on $b $tip"; }
+  at=$(git symbolic-ref -q --short HEAD 2>/dev/null); h=$(git rev-parse HEAD 2>/dev/null)
+  if [ -n "$at" ]; then
+    [ "$at" = "$b" ] || echo "branch $at $h"
+  elif ! git merge-base --is-ancestor HEAD "refs/remotes/origin/$b" 2>/dev/null; then
+    echo "detached HEAD $h"
+  fi
   git status --porcelain -uall -z 2>/dev/null | while IFS= read -r -d '' e; do
     p="${e:3}"
     case "$p" in .claude/*) continue ;; esac
