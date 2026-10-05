@@ -52,6 +52,12 @@ leg() {
   t 1 "$tool: push refuses uncommitted work without a message" run push "$n"
   t 0 "$tool: push commits and pushes" run push "$n" "feat($n): thing"
   t 0 "$tool: branch reached the remote" git ls-remote --exit-code origin "refs/heads/feat/$n-thing"
+  rm -f ".git/coddy/$n.branch" # a worktree made before create recorded the branch
+  t 1 "$tool: push refuses a worktree with no recorded branch" run push "$n"
+  t 0 "$tool: that refusal names the command that records it" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' push $n 2>&1 | grep -q 'issue.sh create $n'"
+  t 1 "$tool: create refuses to record a branch the worktree is not on" run create "$n" "feat/$n-other"
+  t 0 "$tool: create records the branch of an existing worktree" run create "$n" "feat/$n-thing"
+  t 0 "$tool: push works again once the branch is recorded" run push "$n"
   t 0 "$tool: the whole flow left the main checkout alone" wire trip "leg$n"
 }
 
@@ -64,6 +70,9 @@ t 1 "create rejects a bad issue id" run create "../x" feat/x
 t 1 "claim needs a worktree first" run claim 99
 
 leg git 43
+git -C .worktrees/43 checkout -q -b feat/43-other
+t 1 "git: push refuses a worktree that left its recorded branch" run push 43
+git -C .worktrees/43 checkout -q feat/43-thing
 if command -v jj >/dev/null; then
   printf 'tracker: github\nworktree: jj\ndefault_branch: main\n' > .claude/coddy.yml
   t 1 "jj: create refuses a repo that is not jj-backed" run create 41 feat/41-thing
@@ -108,5 +117,18 @@ mkdir -p .worktrees/other
 t 0 "tree.sh lists a claimed issue" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/tree.sh' | grep -q '^worktrees: .*43'"
 t 1 "tree.sh skips an unclaimed directory" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/tree.sh' | grep -q other"
 t 0 "config.sh finds the config from inside a worktree" sh -c "CLAUDE_PROJECT_DIR='$repo/.worktrees/43' bash '$here/scripts/config.sh' | grep -q '^tracker:'"
+
+# Merging main into an issue branch brings the bookmark of every merged PR
+# into its history, and a newer one must not be taken for the issue's branch.
+# Last, because it moves main on the remote.
+if command -v jj >/dev/null; then
+  { run create 44 feat/44-thing; run claim 44; echo y > .worktrees/44/a.txt; run push 44 "feat(44): thing"
+    git clone -q -b main "$tmp/origin.git" "$tmp/merger"
+    (cd "$tmp/merger" && git merge -q --no-ff -m "merge 44" origin/feat/44-thing && git push -q origin main)
+    jj git fetch; jj -R .worktrees/42 new feat/42-thing main@origin; echo z > .worktrees/42/a.txt; } >/dev/null 2>&1
+  was=$(git ls-remote origin refs/heads/feat/44-thing)
+  t 0 "jj: push after merging main pushes the issue's branch" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' push 42 'chore(42): merge main' 2>/dev/null | grep -qx 'pushed: feat/42-thing'"
+  t 0 "jj: that push left the merged branch alone" test "$(git ls-remote origin refs/heads/feat/44-thing)" = "$was"
+fi
 
 exit $fail
