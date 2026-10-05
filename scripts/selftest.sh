@@ -32,6 +32,7 @@ echo "$*" >> "$GH_LOG"
 case "$*" in
   *"issue view"*) echo "${GH_LABEL-in progress}" ;;
   *"pr list"*) [ "${GH_PR-}" != fail ] || exit 1; echo "${GH_PR-}" ;;
+  *"auth status"*) [ "${GH_AUTH-}" != fail ] || exit 1 ;;
 esac
 EOF
 chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log"
@@ -179,6 +180,12 @@ mkdir -p .worktrees/other
 t 0 "tree.sh lists a claimed issue with its branch" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/tree.sh' | grep -q '^worktrees: .*43=feat/43-thing'"
 t 1 "tree.sh skips an unclaimed directory" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/tree.sh' | grep -q other"
 t 0 "config.sh finds the config from inside a worktree" sh -c "CLAUDE_PROJECT_DIR='$repo/.worktrees/43' bash '$here/scripts/config.sh' | grep -q '^tracker:'"
+# detect <line> [VAR=value...]: detect.sh prints exactly that line
+detect() { line=$1; shift; env CLAUDE_PROJECT_DIR="$repo" "$@" "$BASH" "$here/scripts/detect.sh" 2>/dev/null | grep -qx "$line"; }
+t 0 "detect.sh reports an installed jq" detect 'jq: installed'
+t 0 "detect.sh reports a signed-in gh" detect 'gh_auth: ok'
+t 0 "detect.sh reports a missing jq" detect 'jq: missing' PATH="$tmp/bin"
+t 0 "detect.sh reports a gh that is not signed in" detect 'gh_auth: missing' GH_AUTH=fail
 
 # Merging main into an issue branch brings the bookmark of every merged PR
 # into its history, and a newer one must not be taken for the issue's branch.
