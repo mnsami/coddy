@@ -98,28 +98,50 @@ on() {
   fi
 }
 record() { mkdir -p .git/coddy && echo "$branch" > "$rec" || die "could not record the branch"; }
+has() { [ -n "$(jj log --no-graph -r "$1" -T '"x"' 2>/dev/null)" ]; } # a jj revset matches
 
 case "$cmd" in
   create)
     branch="${3-}"; [ -n "$branch" ] || die "usage: issue.sh create <issue> <branch>"
+    [ "$branch" != "$base" ] || die "$base is the default branch, not an issue branch"
+    other=$(grep -lxF -- "$branch" .git/coddy/*.branch 2>/dev/null | grep -vxF -- "$rec" | head -1)
+    [ -z "$other" ] || die "branch $branch belongs to issue $(basename "$other" .branch)"
     if [ -d "$wt" ]; then
-      # A worktree from before the branch was recorded: record it now, but
-      # only a branch the worktree really is on.
-      [ -s "$rec" ] || { on "$branch" || die "$wt is not on $branch"; record; }
+      if [ -s "$rec" ]; then
+        [ "$(cat "$rec")" = "$branch" ] || die "$wt is on $(cat "$rec"), not $branch"
+      else
+        # A worktree from before the branch was recorded: record it now, but
+        # only a branch the worktree really is on.
+        on "$branch" || die "$wt is not on $branch"
+        record
+      fi
       echo "exists: $wt"; exit 0
     fi
     mkdir -p .worktrees
     git check-ignore -q .worktrees || echo '.worktrees/' >> .git/info/exclude
+    # A branch that exists, here or only on the remote, is continued; any
+    # other name starts a new branch from $base.
     if [ "$tool" = jj ]; then
       command -v jj >/dev/null || die "jj is not installed. Install it or set 'worktree: git' in .claude/coddy.yml."
       [ -d .jj ] || die "this repo is not jj-backed. Ask the user, then run: jj git init --colocate && echo '.jj/' >> .git/info/exclude"
-      [ -z "$(jj bookmark list "$branch" 2>/dev/null)" ] || die "branch $branch already exists"
       jj git fetch || die "fetch failed"
-      jj workspace add --name "$issue" -r "$base@origin" "$wt" || die "could not create the jj workspace"
-      jj -R "$wt" bookmark create "$branch" -r @ || die "could not create branch $branch"
+      mine="bookmarks(exact:\"$branch\")"
+      if ! has "$mine" && has "remote_bookmarks(exact:\"$branch\", exact:\"origin\")"; then
+        jj bookmark track "$branch@origin" || die "could not track $branch@origin"
+      fi
+      if has "$mine"; then
+        jj workspace add --name "$issue" -r "\"$branch\"" "$wt" || die "could not create the jj workspace"
+      else
+        jj workspace add --name "$issue" -r "$base@origin" "$wt" || die "could not create the jj workspace"
+        jj -R "$wt" bookmark create "$branch" -r @ || die "could not create branch $branch"
+      fi
     else
       git fetch origin || die "fetch failed"
-      git worktree add --no-track -b "$branch" "$wt" "origin/$base" || die "could not create the git worktree"
+      if git show-ref -q "refs/heads/$branch" "refs/remotes/origin/$branch"; then
+        git worktree add "$wt" "$branch" || die "could not create the git worktree"
+      else
+        git worktree add --no-track -b "$branch" "$wt" "origin/$base" || die "could not create the git worktree"
+      fi
     fi
     record
     echo "created: $wt on $branch" ;;

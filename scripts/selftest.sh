@@ -58,6 +58,18 @@ leg() {
   t 1 "$tool: create refuses to record a branch the worktree is not on" run create "$n" "feat/$n-other"
   t 0 "$tool: create records the branch of an existing worktree" run create "$n" "feat/$n-thing"
   t 0 "$tool: push works again once the branch is recorded" run push "$n"
+  # Continue a branch that exists only on the remote, as for someone else's PR.
+  p=$((n + 10))
+  (git clone -q -b main "$tmp/origin.git" "$tmp/ext$p" && cd "$tmp/ext$p" && git checkout -q -b "ext/pr-$p" && echo "$p" > ext.txt && git add -A && git commit -q -m "pr $p" && git push -q origin "ext/pr-$p") >/dev/null 2>&1
+  t 0 "$tool: create continues a branch that exists only on the remote" run create "$p" "ext/pr-$p"
+  t 0 "$tool: that worktree starts at the branch's tip" test -f ".worktrees/$p/ext.txt"
+  run claim "$p" >/dev/null 2>&1; echo more > ".worktrees/$p/more.txt"
+  was=$(git ls-remote origin "refs/heads/ext/pr-$p")
+  t 0 "$tool: push to a continued branch" run push "$p" "fix($p): more"
+  t 1 "$tool: that push moved the branch on the remote" test "$(git ls-remote origin "refs/heads/ext/pr-$p")" = "$was"
+  t 0 "$tool: create refuses a branch that belongs to another issue" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' create 11 feat/$n-thing 2>&1 | grep -q 'belongs to issue $n'"
+  t 1 "$tool: create refuses another branch for an existing worktree" run create "$n" "feat/$n-other"
+  t 0 "$tool: create refuses the default branch" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' create 12 main 2>&1 | grep -q 'default branch'"
   t 0 "$tool: the whole flow left the main checkout alone" wire trip "leg$n"
 }
 
@@ -114,7 +126,7 @@ tripped 2 "config: a shell edit to a shared config still trips" 'echo "verify: t
 t 1 "config: the shell edit to a shared config is undone" grep -q '^verify: true' .claude/coddy.yml
 
 mkdir -p .worktrees/other
-t 0 "tree.sh lists a claimed issue" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/tree.sh' | grep -q '^worktrees: .*43'"
+t 0 "tree.sh lists a claimed issue with its branch" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/tree.sh' | grep -q '^worktrees: .*43=feat/43-thing'"
 t 1 "tree.sh skips an unclaimed directory" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/tree.sh' | grep -q other"
 t 0 "config.sh finds the config from inside a worktree" sh -c "CLAUDE_PROJECT_DIR='$repo/.worktrees/43' bash '$here/scripts/config.sh' | grep -q '^tracker:'"
 

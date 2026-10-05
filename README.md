@@ -7,7 +7,7 @@ state; the plugin holds the habits.
 |---|---|
 | `/coddy:onboard` | Detects the project, asks for what it can't infer, writes `.claude/coddy.yml` |
 | `/coddy:config [key=value ...]` | Shows `.claude/coddy.yml`, or changes the keys you name |
-| `/coddy:start <issue>` | Fetches the issue, restates acceptance criteria, claims it, moves it to In Progress, creates its own branch in its own worktree (`.worktrees/<issue>`) |
+| `/coddy:start <issue>` | Fetches the issue, restates acceptance criteria, claims it, moves it to In Progress, gives it its own worktree (`.worktrees/<issue>`) on a new branch, or on the existing one when you name a PR or branch or the issue already has an open PR |
 | `/coddy:ship [issue]` | Runs `verify` in the issue's worktree, commits, pushes, opens the PR, links it back to the issue |
 | `/coddy:triage` | Turns findings into issues, skipping ones already open |
 | `/coddy:next` | Recommends the next issue from the tracker and the roadmap |
