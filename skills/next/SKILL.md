@@ -2,7 +2,7 @@
 name: next
 description: Pick the next issue to work on
 when_to_use: Use when the user asks what to work on next, what is open, or which issue or ticket to pick up.
-allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh")
+allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh"), Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" sweep)
 ---
 
 # Next
@@ -10,7 +10,11 @@ allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh")
 ## Config
 !`bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh"`
 
+## Cleaned up
+!`bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" sweep`
+
 `NOT_ONBOARDED` → stop and say: run `/coddy:onboard` first.
+Lines under Cleaned up → say so first, in one sentence. `cleaned` is an issue whose PR merged and whose worktree was removed; `kept` is a merged one whose worktree still holds work to push or discard.
 
 ## Steps
 

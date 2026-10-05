@@ -16,7 +16,13 @@ Each skill also triggers from plain language ("start issue 42", "what's
 next?", "ship it"); the slash command is optional.
 
 Trackers: GitHub Issues (`gh`) and Jira (Atlassian MCP plugin). In Progress
-is the `in progress` label on GitHub and the workflow status on Jira.
+is the `in progress` label on GitHub and the workflow status on Jira. It ends
+when `/coddy:ship` has the PR open: the label comes off on GitHub, and Jira
+moves to In Review.
+
+Once a PR has merged, the next `/coddy:next` or `/coddy:start` removes that
+issue's worktree, claim and local branch. A worktree that still holds work
+that is not in the PR is kept and reported.
 
 ## Guardrails
 

@@ -22,9 +22,21 @@ wire() { printf '{"tool_use_id":"%s"}' "$2" | run "$1"; }
 # tripped <expected exit> <name> <shell snippet run in the main checkout>
 tripped() { wire snap w; (cd "$repo" && eval "$3") >/dev/null 2>&1; t "$1" "$2" wire trip w; }
 
+# The stub gh. GH_LABEL: the labels "issue view" reports. GH_PR: the
+# "<number> <state> <head commit>" line "pr list" reports, or fail. Every
+# call is logged to $GH_LOG.
 mkdir "$tmp/bin"
-printf '#!/usr/bin/env bash\ncase "$*" in *"issue view"*) echo "${GH_LABEL-in progress}" ;; esac\n' > "$tmp/bin/gh"
-chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"
+cat > "$tmp/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >> "$GH_LOG"
+case "$*" in
+  *"issue view"*) echo "${GH_LABEL-in progress}" ;;
+  *"pr list"*) [ "${GH_PR-}" != fail ] || exit 1; echo "${GH_PR-}" ;;
+esac
+EOF
+chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log"
+# kept <what> <GH_PR>: sweep, faced with that PR, leaves worktree $p alone
+kept() { GH_PR="$2" run sweep >/dev/null 2>&1; t 0 "$tool: sweep keeps $1" test -d ".worktrees/$p"; }
 
 git init -q --bare "$tmp/origin.git"
 git clone -q "$tmp/origin.git" "$repo" 2>/dev/null
@@ -35,6 +47,7 @@ echo note > notes.txt; : > empty.txt # untracked on purpose: jj must not make th
 
 t 1 "no skill disables model invocation" grep -rq disable-model-invocation "$here/skills"
 t 0 "guard allows everything before onboarding" guard "$repo/README.md"
+t 0 "sweep is a quiet no-op before onboarding" run sweep
 
 leg() {
   tool=$1 n=$2
@@ -70,6 +83,28 @@ leg() {
   t 0 "$tool: create refuses a branch that belongs to another issue" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' create 11 feat/$n-thing 2>&1 | grep -q 'belongs to issue $n'"
   t 1 "$tool: create refuses another branch for an existing worktree" run create "$n" "feat/$n-other"
   t 0 "$tool: create refuses the default branch" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' create 12 main 2>&1 | grep -q 'default branch'"
+  # The end of the lifecycle, on the continued branch. While its PR is open
+  # a claim leaves the tracker alone; sweep removes the worktree only once
+  # the PR has merged and nothing in the worktree is missing from it.
+  tip=$(git ls-remote origin "refs/heads/ext/pr-$p" | cut -f1)
+  rm -f ".git/coddy/$p"; : > "$GH_LOG"
+  GH_PR="7 OPEN $tip" t 0 "$tool: claim with an open PR" run claim "$p"
+  t 1 "$tool: that claim left labels and assignees alone" grep -q "issue edit" "$GH_LOG"
+  t 0 "$tool: that claim allows edits" guard "$repo/.worktrees/$p/a.txt"
+  kept "an open PR" "7 OPEN $tip"
+  kept "a PR closed without merging" "7 CLOSED $tip"
+  kept "everything when gh fails" fail
+  kept "commits that are not in the merged PR" "7 MERGED 0000"
+  echo wip > ".worktrees/$p/wip.txt"
+  kept "uncommitted changes" "7 MERGED $tip"
+  rm ".worktrees/$p/wip.txt"
+  GH_PR="7 MERGED $tip" CLAUDE_PROJECT_DIR="$repo/.worktrees/$p" bash "$here/scripts/issue.sh" sweep >/dev/null 2>&1
+  t 0 "$tool: sweep keeps the worktree the session is in" test -d ".worktrees/$p"
+  GH_PR="7 MERGED $tip" t 0 "$tool: sweep reports a merged, clean worktree as cleaned" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
+  t 1 "$tool: sweep removed that worktree" test -e ".worktrees/$p"
+  t 1 "$tool: sweep removed its marker and branch record" test -e ".git/coddy/$p" -o -e ".git/coddy/$p.branch"
+  t 1 "$tool: sweep removed its local branch" git show-ref -q "refs/heads/ext/pr-$p"
+  t 0 "$tool: sweep left the other worktree alone" test -d ".worktrees/$n"
   t 0 "$tool: the whole flow left the main checkout alone" wire trip "leg$n"
 }
 
