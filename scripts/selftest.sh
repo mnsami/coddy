@@ -139,7 +139,22 @@ tripped 2 "tripwire: new file" 'echo x > stray.txt'
 tripped 0 "tripwire: quiet when the new file is removed" 'rm stray.txt'
 tripped 2 "tripwire: tracked file deleted" 'rm README.md'
 git checkout -q README.md
+# HEAD leaving the default branch is a change too, even for a pushed commit
+# with nothing dirty. A detached HEAD on the default branch's own history is
+# where jj leaves a synced checkout, so that one is quiet.
+wire snap w; git checkout -q -b side origin/feat/43-thing
+wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: switch to a pushed branch" test "$got" = 2
+t 0 "tripwire: that report names the branch" grep -q "branch side" "$tmp/trip.err"
+tripped 0 "tripwire: quiet on the switch back" 'git checkout -q main'
+tripped 0 "tripwire: quiet for a detached HEAD on the default branch" 'git checkout -q --detach origin/main'
+tripped 2 "tripwire: detached HEAD on a pushed commit off the default branch" 'git checkout -q --detach origin/feat/43-thing'
+git checkout -q main
 tripped 2 "tripwire: local commit in the main checkout" 'git commit -q --allow-empty -m oops'
+git checkout -q side
+tripped 0 "tripwire: quiet on the switch back to a default branch with local commits" 'git checkout -q main'
+git branch -q -D side
+tripped 2 "tripwire: local commit that was pushed to another branch" 'git commit -q --allow-empty -m oops2 && git push -q origin HEAD:refs/heads/elsewhere'
 
 # The config switches every hook off when it goes, so a shell command may not touch it.
 cp .claude/coddy.yml "$tmp/conf.orig"
