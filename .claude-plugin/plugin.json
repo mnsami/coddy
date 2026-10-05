@@ -1,6 +1,6 @@
 {
   "name": "coddy",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Issue-driven development workflow: onboard a project, start an issue, ship a PR, triage findings, pick what's next. Works with GitHub Issues and Jira.",
   "author": { "name": "Mina Sami" }
 }
