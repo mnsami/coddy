@@ -3,6 +3,7 @@
 #   issue.sh create <issue> <branch>   worktree at .worktrees/<issue> on <branch>
 #   issue.sh claim  <issue>            move the issue to In Progress, record it
 #   issue.sh push   <issue> [message]  commit what is uncommitted, then push
+#   issue.sh sweep                     remove what issues with a merged PR left behind
 #   issue.sh guard                     PreToolUse hook on Edit/Write (hooks/hooks.json)
 #   issue.sh snap | trip               Pre/PostToolUse hooks on Bash
 # An issue counts as In Progress once .git/coddy/<issue> exists; only claim
@@ -81,10 +82,10 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   die "$msg"
 fi
 
-[ -f "$conf" ] || die "NOT_ONBOARDED"
+[ -f "$conf" ] || { [ "${1-}" = sweep ] && exit 0; die "NOT_ONBOARDED"; }
 cd "$root" || die "cannot enter $root"
 cmd="${1-}" issue="${2-}"
-case "$issue" in ''|*[!A-Za-z0-9_-]*) die "issue id must look like 42 or ABC-123, got '$issue'" ;; esac
+[ "$cmd" = sweep ] || case "$issue" in ''|*[!A-Za-z0-9_-]*) die "issue id must look like 42 or ABC-123, got '$issue'" ;; esac
 wt=".worktrees/$issue" rec=".git/coddy/$issue.branch"
 tool=$(cfg worktree); tool="${tool:-jj}"
 base=$(cfg default_branch); base="${base:-main}"
@@ -99,6 +100,9 @@ on() {
 }
 record() { mkdir -p .git/coddy && echo "$branch" > "$rec" || die "could not record the branch"; }
 has() { [ -n "$(jj log --no-graph -r "$1" -T '"x"' 2>/dev/null)" ]; } # a jj revset matches
+# "<number> <state> <head commit>" of the PR for branch $1, an open one
+# first; nothing when there is none or gh fails.
+pr() { gh pr list --head "$1" --state all --json number,state,headRefOid --jq '(map(select(.state == "OPEN"))[0] // .[0] // empty) | "\(.number) \(.state) \(.headRefOid)"' 2>/dev/null; }
 
 case "$cmd" in
   create)
@@ -148,7 +152,11 @@ case "$cmd" in
 
   claim)
     [ -d "$wt" ] || die "create the worktree first: issue.sh create $issue <branch>"
-    if [ "$(cfg tracker)" != jira ]; then
+    # An open PR puts the issue past In Progress: follow-up work on it needs
+    # the claim recorded, not the tracker changed.
+    branch=$(cat "$rec" 2>/dev/null); n="" state=""
+    [ -z "$branch" ] || read -r n state _ <<<"$(pr "$branch")"
+    if [ "$state" != OPEN ] && [ "$(cfg tracker)" != jira ]; then
       gh label create "in progress" >/dev/null 2>&1
       gh issue edit "$issue" --add-assignee @me --add-label "in progress" >/dev/null || die "could not move #$issue to In Progress"
       gh issue view "$issue" --json labels --jq '.labels[].name' | grep -qx "in progress" || die "#$issue does not carry the 'in progress' label"
@@ -157,7 +165,7 @@ case "$cmd" in
     # records the transition the skill just made instead of verifying it.
     # Upgrade path: a PostToolUse hook on the Atlassian transition tool.
     mkdir -p .git/coddy && : > ".git/coddy/$issue" || die "could not record the claim"
-    echo "in progress: $issue" ;;
+    if [ "$state" = OPEN ]; then echo "claimed: $issue (PR #$n is open, tracker left as it is)"; else echo "in progress: $issue"; fi ;;
 
   push)
     msg="${3-}"
@@ -185,5 +193,38 @@ case "$cmd" in
     fi
     echo "pushed: $branch" ;;
 
-  *) die "usage: issue.sh create <issue> <branch> | claim <issue> | push <issue> [message] | guard" ;;
+  sweep)
+    # Runs at skill load (next, start): quiet, never failing, and whatever it
+    # cannot prove finished stays. Finished means the branch's PR is merged
+    # and the worktree holds nothing beyond that PR's last commit.
+    for rec in .git/coddy/*.branch; do
+      issue=$(basename "$rec" .branch); wt=".worktrees/$issue"; branch=$(cat "$rec" 2>/dev/null)
+      case "$issue" in ''|*[!A-Za-z0-9_-]*) continue ;; esac
+      [ -n "$branch" ] && [ -e ".git/coddy/$issue" ] && [ -d "$wt" ] || continue
+      # ponytail: compared as strings, so a session that reached its
+      # worktree through a symlink is not recognised as being inside it.
+      case "${CLAUDE_PROJECT_DIR-}/ $OLDPWD/" in *"$root/$wt/"*) continue ;; esac
+      read -r n state oid <<<"$(pr "$branch")"
+      [ "$state" = MERGED ] || continue
+      if [ "$tool" = jj ]; then
+        tip=$(jj -R "$wt" log --no-graph -r @- -T commit_id 2>/dev/null); dirty=$(jj -R "$wt" diff --summary 2>/dev/null)
+      else
+        tip=$(git -C "$wt" rev-parse HEAD 2>/dev/null); dirty=$(git -C "$wt" status --porcelain 2>/dev/null)
+      fi
+      [ -n "$tip" ] || continue
+      if [ -n "$dirty" ] || [ "$tip" != "$oid" ]; then
+        echo "kept: $issue (PR #$n merged, but $wt holds work that is not in it)"; continue
+      fi
+      if [ "$tool" = jj ]; then
+        jj workspace forget "$issue" >/dev/null 2>&1 || continue
+        rm -rf "$wt"; jj bookmark forget "$branch" >/dev/null 2>&1
+      else
+        git worktree remove "$wt" >/dev/null 2>&1 || continue
+        git branch -D "$branch" >/dev/null 2>&1
+      fi
+      rm -f ".git/coddy/$issue" "$rec"; echo "cleaned: $issue"
+    done
+    exit 0 ;;
+
+  *) die "usage: issue.sh create <issue> <branch> | claim <issue> | push <issue> [message] | sweep | guard" ;;
 esac
