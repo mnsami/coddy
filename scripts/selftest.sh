@@ -19,7 +19,10 @@ t() {
 run() { CLAUDE_PROJECT_DIR="$repo" bash "$here/scripts/issue.sh" "$@"; }
 as() { CLAUDE_CODE_SESSION_ID=$1 CLAUDE_PID=$2 run "${@:3}"; }
 says() { "${@:2}" 2>&1 | grep -q "$1"; } # the command's output mentions $1
-guard() { printf '{"tool_input":{"file_path":"%s"}}' "$1" | run guard; }
+# guard <path> [session] [pid]: the edit hook, as Claude Code calls it; the
+# payload names this run's session unless another is, and none when "" is;
+# the hook runs in that session's process: this one, or 1 for another session
+guard() { local s=${2-sess-a} p=1; [ "$s" != sess-a ] || p=$$; printf '{%s"tool_input":{"file_path":"%s"}}' "${s:+"\"session_id\":\"$s\","}" "$1" | CLAUDE_PID=${3-$p} run guard; }
 # wire <snap|trip> <id>: the Bash hooks, as Claude Code calls them
 wire() { printf '{"tool_use_id":"%s"}' "$2" | run "$1"; }
 # tripped <expected exit> <name> <shell snippet run in the main checkout>
@@ -76,21 +79,42 @@ leg() {
   ( GH_SLOW=2 CLAUDE_PROJECT_DIR="$repo" exec bash "$here/scripts/issue.sh" claim "$n" ) >/dev/null 2>&1 & k=$!
   sleep 0.5; kill -9 "$k"; wait "$k" 2>/dev/null; : > "$GH_LOG"
   t 0 "$tool: a claim killed mid-way leaves its lock pending" grep -q pending ".git/coddy/$n/owner"
+  t 2 "$tool: guard blocks even the owner while its claim is pending" guard "$repo/.worktrees/$n/a.txt"
+  t 0 "$tool: another session is told whose that pending claim is" says "belongs to session sess-a" guard "$repo/.worktrees/$n/a.txt" sess-b
   t 0 "$tool: claim" run claim "$n"
   t 0 "$tool: that claim redid the tracker step the killed one left unfinished" grep -q "issue edit" "$GH_LOG"
   t 0 "$tool: the lock names this session and its pid" grep -qx "sess-a $$" ".git/coddy/$n/owner"
-  GH_LABEL=other t 1 "$tool: a takeover whose tracker step fails is refused" as sess-b $$ claim "$n" --take
+  t 0 "$tool: guard allows the owner's edit" guard "$repo/.worktrees/$n/a.txt"
+  t 2 "$tool: guard blocks another session's edit in that worktree" guard "$repo/.worktrees/$n/a.txt" sess-b
+  t 0 "$tool: that rejection names the issue and the owner" says "issue $n belongs to session sess-a (pid $$, running)" guard "$repo/.worktrees/$n/a.txt" sess-b
+  t 2 "$tool: a Claude Code worktree is held to the same owner check" guard "$repo/.claude/worktrees/$n/a.txt" sess-b
+  t 0 "$tool: a hook payload without session_id is not held to it" guard "$repo/.worktrees/$n/a.txt" ""
+  t 0 "$tool: guard allows the owner's process under a new session id (/clear)" guard "$repo/.worktrees/$n/a.txt" sess-b $$
+  t 0 "$tool: and moves the lock to that session id" grep -qx "sess-b $$" ".git/coddy/$n/owner"
+  t 0 "$tool: and back on this session's edit" guard "$repo/.worktrees/$n/a.txt"
+  t 0 "$tool: guard allows the owner's session from a new process (--resume)" guard "$repo/.worktrees/$n/a.txt" sess-a 1
+  t 0 "$tool: and moves the lock to that process" grep -qx "sess-a 1" ".git/coddy/$n/owner"
+  t 0 "$tool: and back on this session's edit" guard "$repo/.worktrees/$n/a.txt"
+  t 0 "$tool: the lock names this session and its pid again" grep -qx "sess-a $$" ".git/coddy/$n/owner"
+  GH_LABEL=other t 1 "$tool: a takeover whose tracker step fails is refused" as sess-b 1 claim "$n" --take
   t 0 "$tool: that failed takeover left the owner's lock alone" grep -qx "sess-a $$" ".git/coddy/$n/owner"
-  t 1 "$tool: a running session's claim is refused" as sess-b $$ claim "$n"
-  t 0 "$tool: that refusal names the owner" says "session sess-a" as sess-b $$ claim "$n"
-  PATH="$tmp/nops:$PATH" t 1 "$tool: a running session's claim is refused with no ps on PATH" as sess-b $$ claim "$n"
+  t 1 "$tool: a running session's claim is refused" as sess-b 1 claim "$n"
+  t 0 "$tool: that refusal names the owner" says "session sess-a" as sess-b 1 claim "$n"
+  PATH="$tmp/nops:$PATH" t 1 "$tool: a running session's claim is refused with no ps on PATH" as sess-b 1 claim "$n"
   : > "$GH_LOG"
   t 0 "$tool: a re-claim by the owner is a no-op" run claim "$n"
+  t 0 "$tool: so is one by the owner's process under a new session id (/clear)" as sess-b $$ claim "$n"
+  t 0 "$tool: and the lock followed it to that session id" grep -qx "sess-b $$" ".git/coddy/$n/owner"
+  t 0 "$tool: and back to this one" run claim "$n"
   t 0 "$tool: so is one by the owner's session from a new process (--resume)" as sess-a 1 claim "$n"
   t 0 "$tool: and the lock followed it to that process" grep -qx "sess-a 1" ".git/coddy/$n/owner"
+  t 0 "$tool: and back to this one" run claim "$n"
+  t 0 "$tool: the lock names this session and its pid again" grep -qx "sess-a $$" ".git/coddy/$n/owner"
   t 1 "$tool: those re-claims left the tracker alone" grep -q "issue edit" "$GH_LOG"
-  t 0 "$tool: --take hands the claim to another session" as sess-b $$ claim "$n" --take
-  t 0 "$tool: the lock now names that session" grep -qx "sess-b $$" ".git/coddy/$n/owner"
+  t 0 "$tool: --take hands the claim to another session" as sess-b 1 claim "$n" --take
+  t 0 "$tool: the lock now names that session" grep -qx "sess-b 1" ".git/coddy/$n/owner"
+  t 2 "$tool: guard now blocks the previous owner" guard "$repo/.worktrees/$n/a.txt"
+  t 0 "$tool: guard allows the taker" guard "$repo/.worktrees/$n/a.txt" sess-b
   dead=$(sh -c 'echo $$') # that shell has exited
   as sess-c "$dead" claim "$n" --take >/dev/null 2>&1
   t 0 "$tool: a lock whose owner is gone is taken over" says "not running" run claim "$n"
@@ -99,6 +123,8 @@ leg() {
   t 0 "$tool: guard allows a Claude Code worktree named for the claimed issue" guard "$repo/.claude/worktrees/$n/a.txt"
   echo x > ".worktrees/$n/a.txt"
   t 1 "$tool: push refuses uncommitted work without a message" run push "$n"
+  t 1 "$tool: push refuses another session's worktree" as sess-b 1 push "$n" "feat($n): thing"
+  t 0 "$tool: that refusal names the owner" says "belongs to session sess-a" as sess-b 1 push "$n" "feat($n): thing"
   t 0 "$tool: push commits and pushes" run push "$n" "feat($n): thing"
   t 0 "$tool: branch reached the remote" git ls-remote --exit-code origin "refs/heads/feat/$n-thing"
   rm -f ".git/coddy/$n.branch" # a worktree made before create recorded the branch
@@ -113,15 +139,19 @@ leg() {
   t 0 "$tool: create continues a branch that exists only on the remote" run create "$p" "ext/pr-$p"
   t 0 "$tool: that worktree starts at the branch's tip" test -f ".worktrees/$p/ext.txt"
   # Two sessions claim it at once: one wins the lock, the other is refused.
+  # The other session's process is one of this test's own: $PPID may exit
+  # under a launcher that backgrounds the test, and a dead pid is taken over.
+  sleep 60 & live=$!
   as sess-x $$ claim "$p" >/dev/null 2>&1 & x=$!
-  as sess-y $$ claim "$p" >/dev/null 2>&1 & y=$!
+  as sess-y "$live" claim "$p" >/dev/null 2>&1 & y=$!
   wait "$x"; xr=$?; wait "$y"; yr=$?
   t 0 "$tool: of two claims at once exactly one wins" test "$xr$yr" = 01 -o "$xr$yr" = 10
-  [ "$xr" = 0 ] && w=sess-x || w=sess-y
-  t 0 "$tool: the lock names the winner" grep -qx "$w $$" ".git/coddy/$p/owner"
+  [ "$xr" = 0 ] && w="sess-x $$" || w="sess-y $live"
+  t 0 "$tool: the lock names the winner" grep -qx "$w" ".git/coddy/$p/owner"
+  kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
   echo more > ".worktrees/$p/more.txt"
   was=$(git ls-remote origin "refs/heads/ext/pr-$p")
-  t 0 "$tool: push to a continued branch" run push "$p" "fix($p): more"
+  t 0 "$tool: push to a continued branch" as ${w% *} ${w#* } push "$p" "fix($p): more" # as the winner: push is the owner's too
   t 1 "$tool: that push moved the branch on the remote" test "$(git ls-remote origin "refs/heads/ext/pr-$p")" = "$was"
   t 0 "$tool: create refuses a branch that belongs to another issue" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' create 11 feat/$n-thing 2>&1 | grep -q 'belongs to issue $n'"
   t 1 "$tool: create refuses another branch for an existing worktree" run create "$n" "feat/$n-other"
@@ -135,7 +165,7 @@ leg() {
   rm -rf ".git/coddy/$p"; ln -s nowhere ".git/coddy/$p"
   t 1 "$tool: a lock that cannot be written is a failed claim" run claim "$p"
   rm -rf ".git/coddy/$p"; : > ".git/coddy/$p"; : > "$GH_LOG"
-  t 0 "$tool: an old marker still allows edits" guard "$repo/.worktrees/$p/a.txt"
+  t 0 "$tool: an old marker still allows edits from any session" guard "$repo/.worktrees/$p/a.txt" sess-b
   t 0 "$tool: claim turns an old marker into a lock" run claim "$p"
   t 0 "$tool: that claim took the tracker step" grep -q "issue edit" "$GH_LOG"
   t 0 "$tool: that lock names this session" grep -qx "sess-a $$" ".git/coddy/$p/owner"
@@ -146,6 +176,7 @@ leg() {
   # A lock with no owner line is a claim in flight, or one that died halfway.
   rm -rf ".git/coddy/$p"; mkdir ".git/coddy/$p"
   t 1 "$tool: a lock with no owner is refused" run claim "$p"
+  t 2 "$tool: guard blocks a lock with no owner" guard "$repo/.worktrees/$p/a.txt"
   t 0 "$tool: that refusal says how to take it" says "take it over" run claim "$p"
   t 0 "$tool: --take adopts a lock with no owner" run claim "$p" --take
   rm -rf ".git/coddy/$p"
@@ -179,16 +210,24 @@ t 0 "guard allows .claude/" guard "$repo/.claude/coddy.yml"
 t 2 "guard blocks a Claude Code worktree under .claude/ without a claim" guard "$repo/.claude/worktrees/55/a.txt"
 t 0 "guard ignores paths outside the project" guard "$tmp/elsewhere.txt"
 t 2 "guard rejects .. paths" guard "$repo/.worktrees/../README.md"
+t 2 "guard rejects .. paths hidden behind a newline" guard "$repo/.claude/x\\n/../../README.md"
+mkdir -p .git/coddy/66 && echo "sess-f " > .git/coddy/66/owner # a claim run without CLAUDE_PID
+t 0 "guard reads an owner without a pid as running, as claim does" says "(pid , running)" guard "$repo/.worktrees/66/a.txt" sess-b
+rm -r .git/coddy/66
 t 1 "create rejects a bad issue id" run create "../x" feat/x
 t 1 "claim needs a worktree first" run claim 99
 
 # guard: warn lets every edit through and hands Claude the message instead;
 # the tripwire and the config lock are the same in both modes.
-# warned <path>: guard exits 0 and prints that message as hook JSON
-warned() { out=$(guard "$1") && printf %s "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and (.additionalContext | contains("/coddy:start"))'; }
+# warned <path> [session] [text]: guard exits 0 and prints that message, with
+# the text (default: the command to run), as hook JSON
+warned() { out=$(guard "$1" "${2-sess-a}") && printf %s "$out" | jq -e --arg s "${3-/coddy:start}" '.hookSpecificOutput | .hookEventName == "PreToolUse" and (.additionalContext | contains($s))'; }
 printf 'tracker: github\ndefault_branch: main\nguard: warn\n' > .claude/coddy.yml
 t 0 "warn: guard lets the main checkout through with the message" warned "$repo/README.md"
 t 0 "warn: guard lets an unclaimed worktree through with the message" warned "$repo/.worktrees/77/a.txt"
+mkdir -p .git/coddy/77 && echo "sess-z 1" > .git/coddy/77/owner # claimed by another session, in another process
+t 0 "warn: guard lets another session's worktree through, naming the owner" warned "$repo/.worktrees/77/a.txt" sess-a "belongs to session sess-z"
+rm -r .git/coddy/77
 t 0 "warn: guard says nothing about .claude/" test -z "$(guard "$repo/.claude/coddy.yml")"
 tripped 2 "warn: the tripwire still trips" 'echo x > stray.txt'; rm -f stray.txt
 tripped 2 "warn: the config lock still holds" 'rm .claude/coddy.yml'

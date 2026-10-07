@@ -27,7 +27,7 @@ Empty issue id → stop and say: usage `/coddy:start <issue>`.
 - The issue is In Progress in the tracker before any code is edited, or its PR is already open.
 - One issue, one branch, one worktree. Every edit and commit for this issue happens in `.worktrees/$issue` on its own branch: never in the main checkout, never on `default_branch`, never on another issue's branch.
 
-Hooks enforce both: every Edit and Write outside a worktree whose issue step 4 has claimed is rejected, and any shell command that leaves a change in the main checkout is flagged. A rejection means a step was skipped: go back and do it, and undo what was flagged. Never route around it.
+Hooks enforce both: every Edit and Write outside a worktree whose issue step 4 has claimed is rejected, so is one inside a worktree another session claimed (the remedy is `/coddy:start <issue>`, which asks before taking it over), and any shell command that leaves a change in the main checkout is flagged. A rejection means a step was skipped: go back and do it, and undo what was flagged. Never route around it.
 
 Paths below are relative to `root`.
 
