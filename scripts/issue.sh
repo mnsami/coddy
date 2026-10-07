@@ -7,7 +7,8 @@
 #   issue.sh guard                     PreToolUse hook on Edit/Write (hooks/hooks.json)
 #   issue.sh snap | trip               Pre/PostToolUse hooks on Bash
 # An issue counts as In Progress once .git/coddy/<issue> exists; only claim
-# writes it, and guard rejects every edit that is not inside a claimed worktree.
+# writes it, and guard rejects every edit that is not inside a claimed worktree
+# (with "guard: warn" in the config it lets the edit through and says so).
 # create records the issue's branch in .git/coddy/<issue>.branch, and push
 # pushes that branch and no other.
 # snap and trip fingerprint the main checkout around each shell command and
@@ -25,6 +26,16 @@ cfg() { sed -n "s/^$1:[[:space:]]*//p" "$conf" | sed "s/[[:space:]]*#.*$//; s/^[
 if [ "${1-}" = guard ]; then
   [ -f "$conf" ] || exit 0
   code=2 # exit 2 is what blocks the tool call
+  # guard: warn lets the edit through and hands Claude the message as context
+  # instead. No permissionDecision, so the usual permission flow still applies.
+  # jq fails only when it is missing, and then the one message is that it is.
+  if [ "$(cfg guard)" = warn ]; then
+    die() {
+      jq -cn --arg m "coddy warning, the edit was let through (guard: warn): $*" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $m}}' 2>/dev/null ||
+        echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"coddy warning: the edit guard needs jq, so this edit was not checked."}}'
+      exit 0
+    }
+  fi
   command -v jq >/dev/null || die "the edit guard needs jq"
   f=$(jq -r '.tool_input.file_path // .tool_input.notebook_path // empty')
   # ponytail: string-prefix match, so a symlinked path into the project slips

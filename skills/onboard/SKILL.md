@@ -28,13 +28,14 @@ branch: "{type}/{issue}-{slug}"
 commit: "{type}({issue}): {summary}"
 verify: "make check"         # must exit 0 before /coddy:ship
 roadmap: docs/ROADMAP.md     # optional; /coddy:next reads it
+guard: block                 # optional; block (default) | warn. warn lets an edit outside a claimed worktree through with a notice to Claude
 ```
 
 ## Steps
 
 1. `config: present` → show it and ask whether to overwrite. "No" ends the skill.
 2. Pre-fill from the detection block: `tracker`/`repo` from the remote, `branch`/`commit` from recent branches and commits when a pattern is visible, `verify` from make targets or package scripts, `roadmap` from the detected file.
-3. Ask for the rest in ONE AskUserQuestion call: every key you could not infer, plus confirmation of the guessed patterns, plus the `worktree` tool with `jj` as the default first option and `git` as the other (`jj: missing` → say so in the `jj` option). A non-GitHub remote means asking for the tracker; `tracker: jira` means asking for site and project key. `default_branch_protected: false` → also ask whether to require a pull request for `default_branch`, so nothing reaches it without one, even from a shell.
+3. Ask for the rest in ONE AskUserQuestion call: every key you could not infer, plus confirmation of the guessed patterns, plus the `worktree` tool with `jj` as the default first option and `git` as the other (`jj: missing` → say so in the `jj` option). A non-GitHub remote means asking for the tracker; `tracker: jira` means asking for site and project key. `guard` is not asked for: leave it out, `/coddy:config` sets it later. `default_branch_protected: false` → also ask whether to require a pull request for `default_branch`, so nothing reaches it without one, even from a shell.
 4. Write `.claude/coddy.yml`.
 5. `claude_dir_gitignored: no` → ask whether the config is personal (add `.claude/coddy.yml` to `.git/info/exclude`) or shared (leave it for commit).
 6. Protection was accepted → `gh api -X PUT "repos/{owner}/{repo}/branches/<default_branch>/protection" -F required_status_checks=null -F enforce_admins=true -F "required_pull_request_reviews[required_approving_review_count]=0" -F restrictions=null`. It fails (plan or permissions) → say so and carry on.

@@ -117,6 +117,22 @@ t 2 "guard rejects .. paths" guard "$repo/.worktrees/../README.md"
 t 1 "create rejects a bad issue id" run create "../x" feat/x
 t 1 "claim needs a worktree first" run claim 99
 
+# guard: warn lets every edit through and hands Claude the message instead;
+# the tripwire and the config lock are the same in both modes.
+# warned <path>: guard exits 0 and prints that message as hook JSON
+warned() { out=$(guard "$1") && printf %s "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and (.additionalContext | contains("/coddy:start"))'; }
+printf 'tracker: github\ndefault_branch: main\nguard: warn\n' > .claude/coddy.yml
+t 0 "warn: guard lets the main checkout through with the message" warned "$repo/README.md"
+t 0 "warn: guard lets an unclaimed worktree through with the message" warned "$repo/.worktrees/77/a.txt"
+t 0 "warn: guard says nothing about .claude/" test -z "$(guard "$repo/.claude/coddy.yml")"
+tripped 2 "warn: the tripwire still trips" 'echo x > stray.txt'; rm -f stray.txt
+tripped 2 "warn: the config lock still holds" 'rm .claude/coddy.yml'
+t 0 "warn: the config came back as it was" grep -qx 'guard: warn' .claude/coddy.yml
+for v in block wran; do
+  printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
+  t 2 "guard: $v blocks the main checkout" guard "$repo/README.md"
+done
+
 leg git 43
 git -C .worktrees/43 checkout -q -b feat/43-other
 t 1 "git: push refuses a worktree that left its recorded branch" run push 43
