@@ -30,7 +30,10 @@ In an onboarded project a hook rejects every file edit Claude attempts
 outside `.worktrees/<issue>/`, and inside it until `/coddy:start` has moved
 that issue to In Progress. So each issue is worked on its own branch, in its
 own worktree, with the tracker already updated. `.claude/` stays editable.
-The hook needs `jq`.
+The hook needs `jq`. A claim belongs to the session that made it: another
+session starting the same issue is refused and told how to take it over
+(`claim <issue> --take`, which `/coddy:start` runs only when you say so); a
+session that is no longer running is taken over on its own.
 
 Shell commands cannot be checked in advance, so a second hook compares the
 main checkout before and after each one and tells Claude to undo any change

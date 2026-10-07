@@ -49,5 +49,7 @@ Paths below are relative to `root`.
 4. Move it to In Progress. A failure here → stop and report; do not continue. An issue whose branch has an open PR is past In Progress: its labels, assignees and status stay as they are and only the claim is recorded.
    - github: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim $issue` assigns you, adds the `in progress` label and verifies it, or only records the claim when the PR is open.
    - jira: no open PR → assign to me, then `getTransitionsForJiraIssue` and `transitionJiraIssue` into the In Progress status (already there → no transition; no such transition → stop and list the available ones). Then, open PR or not, `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim $issue` to record it.
+
+   Either tracker: `claim` is refused because another session holds the claim and is running, or a claim is in flight → stop and ask the user whether to take it over; only on a yes run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim $issue --take`. `claim` reports a takeover from a session that is no longer running → say so in one line and continue.
 5. Investigate the code in the worktree. When the change spans more than three files or touches a public contract (API, schema, CLI flags), post the plan as an issue comment before editing.
 6. Implement in `.worktrees/$issue` only. Commit messages follow the `commit` pattern. A jj worktree has no `.git`: commit with `jj commit -m`, never `git`. When done, say: run `/coddy:ship`.

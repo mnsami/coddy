@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 # The mutating half of coddy, and the guard that makes its rules binding.
 #   issue.sh create <issue> <branch>   worktree at .worktrees/<issue> on <branch>
-#   issue.sh claim  <issue>            move the issue to In Progress, record it
+#   issue.sh claim  <issue> [--take]   lock the issue for this session, move it to In Progress
 #   issue.sh push   <issue> [message]  commit what is uncommitted, then push
 #   issue.sh sweep                     remove what issues with a merged PR left behind
 #   issue.sh guard                     PreToolUse hook on Edit/Write (hooks/hooks.json)
 #   issue.sh snap | trip               Pre/PostToolUse hooks on Bash
-# An issue counts as In Progress once .git/coddy/<issue> exists; only claim
-# writes it, and guard rejects every edit that is not inside a claimed worktree
-# (with "guard: warn" in the config it lets the edit through and says so).
+# An issue counts as In Progress once the lock .git/coddy/<issue>/ exists.
+# Only claim makes it (mkdir, so of two sessions claiming at once one wins;
+# a plain-file marker from before locks still counts until the next claim
+# replaces it with a lock, tracker step and all); its owner
+# file holds "<session> <pid>", plus "pending" until the tracker step went
+# through, and another session's claim is refused unless --take is passed
+# or the owner's pid no longer runs. guard rejects every edit that is not
+# inside a claimed worktree (with "guard: warn" in the config it lets the
+# edit through and says so).
 # create records the issue's branch in .git/coddy/<issue>.branch, and push
 # pushes that branch and no other.
 # snap and trip fingerprint the main checkout around each shell command and
@@ -20,6 +26,11 @@ case "$root" in */.worktrees/*) root="${root%%/.worktrees/*}" ;; esac
 conf="$root/.claude/coddy.yml"
 code=1
 
+# The process $1 runs. kill -0 needs no ps and sees this user's processes;
+# /proc sees everyone's on Linux, where images without ps live; ps comes
+# last, so a missing ps never reads as a dead owner. No pid counts as
+# running, as claim reads it.
+alive() { [ -z "$1" ] || kill -0 "$1" 2>/dev/null || [ -d "/proc/$1" ] || ps -p "$1" >/dev/null 2>&1; }
 die() { echo "coddy: $*" >&2; exit "$code"; }
 cfg() { sed -n "s/^$1:[[:space:]]*//p" "$conf" | sed "s/[[:space:]]*#.*$//; s/^[\"']//; s/[\"']$//" | head -1; }
 
@@ -174,9 +185,37 @@ case "$cmd" in
 
   claim)
     [ -d "$wt" ] || die "create the worktree first: issue.sh create $issue <branch>"
+    lock=".git/coddy/$issue" me="${CLAUDE_CODE_SESSION_ID-}" note="" own="" n="" state=""
+    # A marker from before claims were locks is a plain file: nobody owns it;
+    # the claim replaces it. rm -f never removes the lock another session
+    # just made of it, so the mkdir race stays atomic.
+    [ -f "$lock" ] && rm -f "$lock"
+    mkdir -p .git/coddy || die "could not record the claim"
+    if ! mkdir "$lock" 2>/dev/null; then
+      for i in 1 2 3 4 5; do [ -s "$lock/owner" ] && break; sleep 0.1; done # the winner writes owner right after its mkdir
+      own=$(cat "$lock/owner" 2>/dev/null) # "<session> <pid>", plus "pending" until the tracker step went through
+      sid="${own%% *}" pid="${own#* }"; pid="${pid%% *}"
+      if [ ! -s "$lock/owner" ]; then
+        # A claim in flight, or one that died between its mkdir and its owner line.
+        [ "${3-}" = --take ] || die "issue $issue is being claimed right now, or that claim died halfway: retry, or take it over with bash \"$0\" claim $issue --take"
+      elif [ "$sid" = "$me" ] && [ "${own##* }" != pending ]; then
+        # --resume keeps the session id and changes the pid: the lock follows it.
+        [ "$own" = "$me ${CLAUDE_PID-}" ] || echo "$me ${CLAUDE_PID-}" > "$lock/owner"
+        echo "in progress: $issue (already claimed by this session)"; exit 0
+      elif [ "$sid" = "$me" ]; then own="" # mine, but it died before its tracker step: redo it as a fresh claim
+      elif [ "${3-}" = --take ]; then note="taken over: $issue from session $sid (--take)"
+      elif ! alive "$pid"; then note="taken over: $issue from session $sid (pid $pid is not running)"
+      else die "issue $issue is claimed by session $sid (pid $pid, running). To take it over deliberately: bash \"$0\" claim $issue --take"
+      fi
+    fi
+    # A claim that fails from here on leaves no lock behind; a takeover that
+    # fails hands the lock back to its owner as it was. A kill runs no trap,
+    # so the owner line says pending until the tracker step went through.
+    trap 'if [ -n "$own" ]; then echo "$own" > "$lock/owner"; else rm -rf "$lock"; fi' EXIT
+    echo "$me ${CLAUDE_PID-} pending" > "$lock/owner" || die "could not record the claim"
     # An open PR puts the issue past In Progress: follow-up work on it needs
     # the claim recorded, not the tracker changed.
-    branch=$(cat "$rec" 2>/dev/null); n="" state=""
+    branch=$(cat "$rec" 2>/dev/null)
     [ -z "$branch" ] || read -r n state _ <<<"$(pr "$branch")"
     if [ "$state" != OPEN ] && [ "$(cfg tracker)" != jira ]; then
       gh label create "in progress" >/dev/null 2>&1
@@ -186,8 +225,11 @@ case "$cmd" in
     # ponytail: Jira is reachable only through MCP tools, so for jira this
     # records the transition the skill just made instead of verifying it.
     # Upgrade path: a PostToolUse hook on the Atlassian transition tool.
-    mkdir -p .git/coddy && : > ".git/coddy/$issue" || die "could not record the claim"
-    if [ "$state" = OPEN ]; then echo "claimed: $issue (PR #$n is open, tracker left as it is)"; else echo "in progress: $issue"; fi ;;
+    echo "$me ${CLAUDE_PID-}" > "$lock/owner" || die "could not record the claim"
+    trap - EXIT
+    [ -z "$note" ] || echo "$note"
+    if [ "$state" = OPEN ]; then echo "claimed: $issue (PR #$n is open, tracker left as it is)"
+    else echo "in progress: $issue"; fi ;;
 
   push)
     msg="${3-}"
@@ -244,9 +286,9 @@ case "$cmd" in
         git worktree remove "$wt" >/dev/null 2>&1 || continue
         git branch -D "$branch" >/dev/null 2>&1
       fi
-      rm -f ".git/coddy/$issue" "$rec"; echo "cleaned: $issue"
+      rm -rf ".git/coddy/$issue" "$rec"; echo "cleaned: $issue"
     done
     exit 0 ;;
 
-  *) die "usage: issue.sh create <issue> <branch> | claim <issue> | push <issue> [message] | sweep | guard" ;;
+  *) die "usage: issue.sh create <issue> <branch> | claim <issue> [--take] | push <issue> [message] | sweep | guard" ;;
 esac
