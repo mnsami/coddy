@@ -41,6 +41,23 @@ it left there. `/coddy:onboard` also offers to require a pull request on the
 default branch, which is the backstop for a command that commits and pushes
 in one go.
 
+## PR check
+
+A GitHub Action, `templates/coddy.yml`, fails a pull request unless it
+closes an issue (`Closes #<n>` in the description) that is open and has an
+assignee. Open and assigned is what holds from `/coddy:start` to the merge;
+the `in progress` label comes off as soon as the PR opens, and the check
+runs again on every push. It is keyed on the closing reference, not the
+branch name, so it is the one layer that holds for a cloud agent, or for
+any branch coddy did not name. GitHub Issues only: a Jira PR carries no
+closing reference and would fail it. GitHub links `Closes #<n>` only on a
+PR against the repository's default branch, so `default_branch` must be
+that branch, or link the issue by hand in the PR sidebar. `/coddy:onboard`
+offers to copy it to `.github/workflows/coddy.yml`, or copy the file
+yourself, and makes it a required check when it is also protecting the
+default branch; otherwise add the check, `closes a claimed issue`, to the
+required checks by hand.
+
 ## Install
 
 ```bash

@@ -213,14 +213,18 @@ case "$cmd" in
     # so the owner line says pending until the tracker step went through.
     trap 'if [ -n "$own" ]; then echo "$own" > "$lock/owner"; else rm -rf "$lock"; fi' EXIT
     echo "$me ${CLAUDE_PID-} pending" > "$lock/owner" || die "could not record the claim"
-    # An open PR puts the issue past In Progress: follow-up work on it needs
-    # the claim recorded, not the tracker changed.
+    # An open PR puts the issue past In Progress: the label stays off, but
+    # the assignee is what the PR check reads, so it is still taken.
     branch=$(cat "$rec" 2>/dev/null)
     [ -z "$branch" ] || read -r n state _ <<<"$(pr "$branch")"
-    if [ "$state" != OPEN ] && [ "$(cfg tracker)" != jira ]; then
-      gh label create "in progress" >/dev/null 2>&1
-      gh issue edit "$issue" --add-assignee @me --add-label "in progress" >/dev/null || die "could not move #$issue to In Progress"
-      gh issue view "$issue" --json labels --jq '.labels[].name' | grep -qx "in progress" || die "#$issue does not carry the 'in progress' label"
+    if [ "$(cfg tracker)" != jira ]; then
+      if [ "$state" = OPEN ]; then
+        gh issue edit "$issue" --add-assignee @me >/dev/null || die "could not assign #$issue"
+      else
+        gh label create "in progress" >/dev/null 2>&1
+        gh issue edit "$issue" --add-assignee @me --add-label "in progress" >/dev/null || die "could not move #$issue to In Progress"
+        gh issue view "$issue" --json labels --jq '.labels[].name' | grep -qx "in progress" || die "#$issue does not carry the 'in progress' label"
+      fi
     fi
     # ponytail: Jira is reachable only through MCP tools, so for jira this
     # records the transition the skill just made instead of verifying it.
@@ -228,7 +232,7 @@ case "$cmd" in
     echo "$me ${CLAUDE_PID-}" > "$lock/owner" || die "could not record the claim"
     trap - EXIT
     [ -z "$note" ] || echo "$note"
-    if [ "$state" = OPEN ]; then echo "claimed: $issue (PR #$n is open, tracker left as it is)"
+    if [ "$state" = OPEN ]; then echo "claimed: $issue (PR #$n is open, assigned without the label)"
     else echo "in progress: $issue"; fi ;;
 
   push)

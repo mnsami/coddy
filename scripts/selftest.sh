@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the scripts against a throwaway repo with a local bare remote and a
 # stub gh: both worktree tools, the claim and its lock, the push, the edit
-# guard and the shell tripwire.
+# guard, the shell tripwire and the PR check's run block.
 # Usage: bash scripts/selftest.sh
 set -u
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -26,16 +26,19 @@ wire() { printf '{"tool_use_id":"%s"}' "$2" | run "$1"; }
 tripped() { wire snap w; (cd "$repo" && eval "$3") >/dev/null 2>&1; t "$1" "$2" wire trip w; }
 
 # The stub gh. GH_LABEL: the labels "issue view" reports. GH_PR: the
-# "<number> <state> <head commit>" line "pr list" reports, or fail.
-# GH_SLOW: seconds "issue edit" takes. Every call is logged to $GH_LOG.
+# "<number> <state> <head commit>" line "pr list" reports, or fail. GH_LINKED:
+# the "<number> <state> <assignees>" lines "api graphql" reports, or fail.
+# GH_SLOW: seconds "issue edit" takes; GH_EDIT=fail: it fails. Every call is
+# logged to $GH_LOG.
 mkdir "$tmp/bin"
 cat > "$tmp/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
 case "$*" in
-  *"issue edit"*) sleep "${GH_SLOW-0}" ;;
+  *"issue edit"*) sleep "${GH_SLOW-0}"; [ "${GH_EDIT-}" != fail ] || exit 1 ;;
   *"issue view"*) echo "${GH_LABEL-in progress}" ;;
   *"pr list"*) [ "${GH_PR-}" != fail ] || exit 1; echo "${GH_PR-}" ;;
+  *"api graphql"*) [ "${GH_LINKED-}" != fail ] || exit 1; echo "${GH_LINKED-}" ;;
   *"auth status"*) [ "${GH_AUTH-}" != fail ] || exit 1 ;;
 esac
 EOF
@@ -124,7 +127,7 @@ leg() {
   t 1 "$tool: create refuses another branch for an existing worktree" run create "$n" "feat/$n-other"
   t 0 "$tool: create refuses the default branch" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' create 12 main 2>&1 | grep -q 'default branch'"
   # The end of the lifecycle, on the continued branch. While its PR is open
-  # a claim leaves the tracker alone; sweep removes the worktree only once
+  # a claim assigns without the label; sweep removes the worktree only once
   # the PR has merged and nothing in the worktree is missing from it.
   tip=$(git ls-remote origin "refs/heads/ext/pr-$p" | cut -f1)
   # A marker from before claims were locks is a plain file: it still counts,
@@ -145,9 +148,13 @@ leg() {
   t 1 "$tool: a lock with no owner is refused" run claim "$p"
   t 0 "$tool: that refusal says how to take it" says "take it over" run claim "$p"
   t 0 "$tool: --take adopts a lock with no owner" run claim "$p" --take
-  rm -rf ".git/coddy/$p"; : > "$GH_LOG"
+  rm -rf ".git/coddy/$p"
+  GH_PR="7 OPEN $tip" GH_EDIT=fail t 1 "$tool: claim with an open PR stops when the assign fails" run claim "$p"
+  t 2 "$tool: guard still blocks after that failed claim" guard "$repo/.worktrees/$p/a.txt"
+  : > "$GH_LOG"
   GH_PR="7 OPEN $tip" t 0 "$tool: claim with an open PR" run claim "$p"
-  t 1 "$tool: that claim left labels and assignees alone" grep -q "issue edit" "$GH_LOG"
+  t 0 "$tool: that claim assigned me" grep -q add-assignee "$GH_LOG"
+  t 1 "$tool: that claim left the label alone" grep -q add-label "$GH_LOG"
   t 0 "$tool: that claim allows edits" guard "$repo/.worktrees/$p/a.txt"
   kept "an open PR" "7 OPEN $tip"
   kept "a PR closed without merging" "7 CLOSED $tip"
@@ -260,6 +267,26 @@ t 0 "detect.sh reports an installed jq" detect 'jq: installed'
 t 0 "detect.sh reports a signed-in gh" detect 'gh_auth: ok'
 t 0 "detect.sh reports a missing jq" detect 'jq: missing' PATH="$tmp/bin"
 t 0 "detect.sh reports a gh that is not signed in" detect 'gh_auth: missing' GH_AUTH=fail
+t 0 "detect.sh reports no PR check" detect 'pr_check: none'
+mkdir -p .github/workflows && : > .github/workflows/coddy.yml
+t 0 "detect.sh reports the PR check once its workflow exists" detect 'pr_check: present'
+rm -r .github
+
+# The PR check's run block, as the workflow runs it (bash -e), with the stub
+# gh and the template's own env names, each set to itself, so the gh log
+# shows which names the run block read.
+sed '1,/run: |/d; s/^          //' "$here/templates/coddy.yml" > "$tmp/check.sh"
+check() { GH_LINKED="$1" env $(sed -n 's/^      \([A-Z_]*\): .*/\1=\1/p' "$here/templates/coddy.yml") bash -e "$tmp/check.sh"; }
+t 0 "pr check: an open, assigned linked issue passes" check "12 OPEN 1"
+t 0 "pr check: the run block hands env's owner, repo and PR to gh" grep -q -- '-f owner=OWNER -f repo=REPO -F pr=PR' "$GH_LOG"
+t 1 "pr check: no linked issue fails" check ""
+t 1 "pr check: a failed lookup fails" check fail
+t 1 "pr check: a closed linked issue fails" check "12 CLOSED 1"
+t 1 "pr check: an unassigned linked issue fails" check "12 OPEN 0"
+t 1 "pr check: one bad issue among two fails" check $'12 OPEN 1\n13 OPEN 0'
+t 0 "pr check: two open, assigned issues pass" check $'12 OPEN 1\n13 OPEN 2'
+t 0 "pr check: no linked issue names the fix" says '::error::no linked issue' check ""
+t 0 "pr check: an unassigned issue names the issue and the fix" says '::error::#12 is not claimed.*/coddy:start 12' check "12 OPEN 0"
 
 # Merging main into an issue branch brings the bookmark of every merged PR
 # into its history, and a newer one must not be taken for the issue's branch.
