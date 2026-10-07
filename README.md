@@ -33,8 +33,9 @@ own worktree, with the tracker already updated. `.claude/` stays editable.
 The hook needs `jq`. A claim belongs to the session that made it: only it
 may edit or push the worktree, another session starting the same issue
 is refused and told how to take it over (`claim <issue> --take`, which
-`/coddy:start` runs only when you say so); a session that is no longer
-running is taken over on its own.
+`/coddy:start` runs only when you say so), and so is a claim on an issue the
+tracker shows assigned to someone else, or in progress and not to you; a
+session that is no longer running is taken over on its own.
 
 Shell commands cannot be checked in advance, so a second hook compares the
 main checkout before and after each one and tells Claude to undo any change

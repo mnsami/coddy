@@ -12,9 +12,12 @@
 # replaces it with a lock, tracker step and all); its owner
 # file holds "<session> <pid>", plus "pending" until the tracker step went
 # through, and another session's claim is refused unless --take is passed
-# or the owner's pid no longer runs. guard rejects every edit that is not
-# inside a claimed worktree, or is inside one another session claimed (with
-# "guard: warn" in the config it lets the edit through and says so).
+# or the owner's pid no longer runs. For github, claim also refuses an issue
+# the tracker shows assigned to someone else, or in progress and not to me,
+# unless --take, which reassigns it; a re-claim by the owner reads the
+# tracker again. guard rejects every edit that is not inside a claimed
+# worktree, or is inside one another session claimed (with "guard: warn" in
+# the config it lets the edit through and says so).
 # create records the issue's branch in .git/coddy/<issue>.branch, and push
 # pushes that branch and no other, for the lock's owner and no other session.
 # snap and trip fingerprint the main checkout around each shell command and
@@ -209,7 +212,7 @@ case "$cmd" in
 
   claim)
     [ -d "$wt" ] || die "create the worktree first: issue.sh create $issue <branch>"
-    lock=".git/coddy/$issue" me="${CLAUDE_CODE_SESSION_ID-}" note="" own="" n="" state=""
+    lock=".git/coddy/$issue" me="${CLAUDE_CODE_SESSION_ID-}" note="" own="" n="" state="" drop="" again=""
     # A marker from before claims were locks is a plain file: nobody owns it;
     # the claim replaces it. rm -f never removes the lock another session
     # just made of it, so the mkdir race stays atomic.
@@ -222,10 +225,10 @@ case "$cmd" in
       if [ ! -s "$lock/owner" ]; then
         # A claim in flight, or one that died between its mkdir and its owner line.
         [ "${3-}" = --take ] || die "issue $issue is being claimed right now, or that claim died halfway: retry, or take it over with bash \"$0\" claim $issue --take"
-      elif mine && [ "${own##* }" != pending ]; then
-        # /clear changes the session id, --resume the pid: the lock follows this session.
-        [ "$own" = "$me ${CLAUDE_PID-}" ] || echo "$me ${CLAUDE_PID-}" > "$lock/owner"
-        echo "in progress: $issue (already claimed by this session)"; exit 0
+      # A re-claim: the tracker is read again below, and the lock then names
+      # this session's current id and pid (/clear changes the one, --resume
+      # the other); $own stays, for the trap.
+      elif mine && [ "${own##* }" != pending ]; then again=1
       elif mine; then own="" # mine, but it died before its tracker step: redo it as a fresh claim
       elif [ "${3-}" = --take ]; then note="taken over: $issue from session $sid (--take)"
       elif ! alive "$pid"; then note="taken over: $issue from session $sid (pid $pid is not running)"
@@ -242,11 +245,29 @@ case "$cmd" in
     branch=$(cat "$rec" 2>/dev/null)
     [ -z "$branch" ] || read -r n state _ <<<"$(pr "$branch")"
     if [ "$(cfg tracker)" != jira ]; then
+      # Whose the issue is in the tracker: "<logins> in progress|-". Someone
+      # else's is refused unless --take, which takes their assignment away; a
+      # re-claim reads it again, so a takeover from another machine is caught.
+      # ponytail: read-then-edit, so two machines claiming inside the same
+      # round trip both succeed; re-read the assignees after the edit and
+      # release if anyone else landed, if that ever bites.
+      has=$(gh issue view "$issue" --json assignees,labels --jq '([.assignees[].login] | join(",")) + " " + (if any(.labels[]; .name == "in progress") then "in progress" else "-" end)') || die "could not read #$issue"
+      # ponytail: gh api goes to github.com (or GH_HOST), not the repo's host,
+      # so GitHub Enterprise sets GH_HOST; upgrade: --hostname from the remote URL.
+      login=$(gh api user --jq .login) || die "could not read who gh is signed in as"
+      who="${has%% *}"
+      case ",$who," in *",$login,"*) ;; *) # not mine, from any machine
+        [ "${3-}" = --take ] || [ -z "$who" ] || die "#$issue is assigned to $who. To take it over deliberately: bash \"$0\" claim $issue --take"
+        [ "${3-}" = --take ] || [ "${has#* }" != "in progress" ] || die "#$issue is in progress (assigned to nobody). To take it over deliberately: bash \"$0\" claim $issue --take"
+        drop="${who:+--remove-assignee $who}"
+        [ -z "$who" ] || note="${note:+$note; }reassigned #$issue from $who" ;; # a lock refusal said nothing of them
+      esac
+      # Idempotent, so a re-claim changes nothing in the tracker.
       if [ "$state" = OPEN ]; then
-        gh issue edit "$issue" --add-assignee @me >/dev/null || die "could not assign #$issue"
+        gh issue edit "$issue" --add-assignee @me $drop >/dev/null || die "could not assign #$issue"
       else
         gh label create "in progress" >/dev/null 2>&1
-        gh issue edit "$issue" --add-assignee @me --add-label "in progress" >/dev/null || die "could not move #$issue to In Progress"
+        gh issue edit "$issue" --add-assignee @me $drop --add-label "in progress" >/dev/null || die "could not move #$issue to In Progress"
         gh issue view "$issue" --json labels --jq '.labels[].name' | grep -qx "in progress" || die "#$issue does not carry the 'in progress' label"
       fi
     fi
@@ -256,7 +277,8 @@ case "$cmd" in
     echo "$me ${CLAUDE_PID-}" > "$lock/owner" || die "could not record the claim"
     trap - EXIT
     [ -z "$note" ] || echo "$note"
-    if [ "$state" = OPEN ]; then echo "claimed: $issue (PR #$n is open, assigned without the label)"
+    if [ -n "$again" ]; then echo "in progress: $issue (already claimed by this session)"
+    elif [ "$state" = OPEN ]; then echo "claimed: $issue (PR #$n is open, assigned without the label)"
     else echo "in progress: $issue"; fi ;;
 
   push)

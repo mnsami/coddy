@@ -28,9 +28,12 @@ wire() { printf '{"tool_use_id":"%s"}' "$2" | run "$1"; }
 # tripped <expected exit> <name> <shell snippet run in the main checkout>
 tripped() { wire snap w; (cd "$repo" && eval "$3") >/dev/null 2>&1; t "$1" "$2" wire trip w; }
 
-# The stub gh. GH_LABEL: the labels "issue view" reports. GH_PR: the
-# "<number> <state> <head commit>" line "pr list" reports, or fail. GH_LINKED:
-# the "<number> <state> <assignees>" lines "api graphql" reports, or fail.
+# The stub gh. GH_LABEL: the labels "issue view" reports. GH_ASSIGNED: the
+# logins, comma-separated, and GH_INPROG="in progress": the label, that
+# "issue view --json assignees,labels" reports; GH_VIEW=fail: it fails.
+# GH_USER=fail: "api user" fails, else it says me. GH_PR: the "<number>
+# <state> <head commit>" line "pr list" reports, or fail. GH_LINKED: the
+# "<number> <state> <assignees>" lines "api graphql" reports, or fail.
 # GH_SLOW: seconds "issue edit" takes; GH_EDIT=fail: it fails. Every call is
 # logged to $GH_LOG.
 mkdir "$tmp/bin"
@@ -39,7 +42,9 @@ cat > "$tmp/bin/gh" <<'EOF'
 echo "$*" >> "$GH_LOG"
 case "$*" in
   *"issue edit"*) sleep "${GH_SLOW-0}"; [ "${GH_EDIT-}" != fail ] || exit 1 ;;
+  *"issue view"*"assignees"*) [ "${GH_VIEW-}" != fail ] || exit 1; echo "${GH_ASSIGNED-} ${GH_INPROG--}" ;;
   *"issue view"*) echo "${GH_LABEL-in progress}" ;;
+  *"api user"*) [ "${GH_USER-}" != fail ] || exit 1; echo me ;;
   *"pr list"*) [ "${GH_PR-}" != fail ] || exit 1; echo "${GH_PR-}" ;;
   *"api graphql"*) [ "${GH_LINKED-}" != fail ] || exit 1; echo "${GH_LINKED-}" ;;
   *"auth status"*) [ "${GH_AUTH-}" != fail ] || exit 1 ;;
@@ -110,8 +115,15 @@ leg() {
   t 0 "$tool: and the lock followed it to that process" grep -qx "sess-a 1" ".git/coddy/$n/owner"
   t 0 "$tool: and back to this one" run claim "$n"
   t 0 "$tool: the lock names this session and its pid again" grep -qx "sess-a $$" ".git/coddy/$n/owner"
-  t 1 "$tool: those re-claims left the tracker alone" grep -q "issue edit" "$GH_LOG"
-  t 0 "$tool: --take hands the claim to another session" as sess-b 1 claim "$n" --take
+  t 0 "$tool: those re-claims read the tracker again" grep -q "issue view" "$GH_LOG"
+  t 1 "$tool: and reassigned nobody" grep -q -- --remove-assignee "$GH_LOG"
+  GH_ASSIGNED=other t 1 "$tool: a re-claim is refused once the tracker shows someone else on the issue" run claim "$n"
+  GH_ASSIGNED=other t 0 "$tool: that refusal names them" says "assigned to other" run claim "$n"
+  t 0 "$tool: and left the lock as it was" grep -qx "sess-a $$" ".git/coddy/$n/owner"
+  GH_INPROG="in progress" t 1 "$tool: a re-claim is refused once the tracker shows the issue in progress for nobody" run claim "$n"
+  GH_ASSIGNED=other t 0 "$tool: --take from the owner reassigns the issue and names them" says "reassigned #$n from other" run claim "$n" --take
+  t 0 "$tool: the lock still names this session" grep -qx "sess-a $$" ".git/coddy/$n/owner"
+  GH_ASSIGNED=other t 0 "$tool: --take hands the claim to another session, reassigns the issue and names both" says "taken over: $n from session sess-a (--take); reassigned #$n from other" as sess-b 1 claim "$n" --take
   t 0 "$tool: the lock now names that session" grep -qx "sess-b 1" ".git/coddy/$n/owner"
   t 2 "$tool: guard now blocks the previous owner" guard "$repo/.worktrees/$n/a.txt"
   t 0 "$tool: guard allows the taker" guard "$repo/.worktrees/$n/a.txt" sess-b
@@ -179,6 +191,35 @@ leg() {
   t 2 "$tool: guard blocks a lock with no owner" guard "$repo/.worktrees/$p/a.txt"
   t 0 "$tool: that refusal says how to take it" says "take it over" run claim "$p"
   t 0 "$tool: --take adopts a lock with no owner" run claim "$p" --take
+  rm -rf ".git/coddy/$p"
+  # The tracker's own state: an issue someone else holds there is refused,
+  # unless --take, which reassigns it.
+  GH_ASSIGNED=other t 1 "$tool: claim refuses an issue assigned to someone else" run claim "$p"
+  GH_ASSIGNED=other t 0 "$tool: that refusal names them" says "assigned to other" run claim "$p"
+  GH_ASSIGNED=other t 0 "$tool: that refusal says how to take it" says "take it over" run claim "$p"
+  t 1 "$tool: that refusal left no lock behind" test -e ".git/coddy/$p"
+  : > "$GH_LOG"
+  GH_ASSIGNED=other t 0 "$tool: --take takes an issue assigned to someone else and names them" says "reassigned #$p from other" run claim "$p" --take
+  t 0 "$tool: that takeover reassigned it" grep -q -- "--add-assignee @me --remove-assignee other" "$GH_LOG"
+  rm -rf ".git/coddy/$p"
+  GH_ASSIGNED=me t 0 "$tool: claim continues an issue assigned to me" run claim "$p"
+  rm -rf ".git/coddy/$p"
+  GH_ASSIGNED=me,other t 0 "$tool: claim continues an issue assigned to me among others" run claim "$p"
+  rm -rf ".git/coddy/$p"
+  GH_INPROG="in progress" t 1 "$tool: claim refuses an issue in progress with nobody assigned" run claim "$p"
+  GH_INPROG="in progress" t 0 "$tool: that refusal says so" says "is in progress" run claim "$p"
+  GH_ASSIGNED=me GH_INPROG="in progress" t 0 "$tool: claim continues my own issue already in progress" run claim "$p"
+  rm -rf ".git/coddy/$p"
+  GH_INPROG="in progress" t 0 "$tool: --take takes an issue in progress with nobody assigned" run claim "$p" --take
+  rm -rf ".git/coddy/$p"
+  GH_ASSIGNED=other GH_PR="7 OPEN $tip" t 1 "$tool: claim refuses someone else's issue with an open PR too" run claim "$p"
+  GH_USER=fail t 1 "$tool: claim stops when gh cannot say who I am" run claim "$p"
+  t 1 "$tool: that failed claim left no lock behind" test -e ".git/coddy/$p"
+  GH_VIEW=fail t 1 "$tool: claim stops when gh cannot read the issue" run claim "$p"
+  t 1 "$tool: that failed claim left no lock behind either" test -e ".git/coddy/$p"
+  : > "$GH_LOG"
+  GH_ASSIGNED=other GH_PR="7 OPEN $tip" t 0 "$tool: --take takes someone else's issue with an open PR" run claim "$p" --take
+  t 0 "$tool: that open-PR takeover reassigned it" grep -q -- "--remove-assignee other" "$GH_LOG"
   rm -rf ".git/coddy/$p"
   GH_PR="7 OPEN $tip" GH_EDIT=fail t 1 "$tool: claim with an open PR stops when the assign fails" run claim "$p"
   t 2 "$tool: guard still blocks after that failed claim" guard "$repo/.worktrees/$p/a.txt"
