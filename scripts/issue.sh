@@ -42,8 +42,8 @@ if [ "${1-}" = guard ]; then
   # through; resolve with realpath if that ever matters.
   case "$f" in */../*) die "refusing a path containing '..': $f" ;; esac
   case "$f" in
-    "$root"/.worktrees/*)
-      issue="${f#"$root"/.worktrees/}"; issue="${issue%%/*}"
+    "$root"/.worktrees/*|"$root"/.claude/worktrees/*) # the second is where Claude Code puts its own worktrees
+      issue="${f#"$root"/.worktrees/}"; issue="${issue#"$root"/.claude/worktrees/}"; issue="${issue%%/*}"
       [ -e "$root/.git/coddy/$issue" ] || die "issue $issue is not In Progress yet. Run /coddy:start $issue." ;;
     "$root"/.claude/*) ;;
     "$root"/*) die "edits belong in an issue worktree, not the main checkout. Run /coddy:start <issue>, then edit under .worktrees/<issue>/." ;;

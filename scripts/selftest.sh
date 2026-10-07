@@ -62,6 +62,7 @@ leg() {
   t 2 "$tool: guard still blocks after a failed claim" guard "$repo/.worktrees/$n/a.txt"
   t 0 "$tool: claim" run claim "$n"
   t 0 "$tool: guard allows the worktree after the claim" guard "$repo/.worktrees/$n/a.txt"
+  t 0 "$tool: guard allows a Claude Code worktree named for the claimed issue" guard "$repo/.claude/worktrees/$n/a.txt"
   echo x > ".worktrees/$n/a.txt"
   t 1 "$tool: push refuses uncommitted work without a message" run push "$n"
   t 0 "$tool: push commits and pushes" run push "$n" "feat($n): thing"
@@ -112,6 +113,7 @@ leg() {
 printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml
 t 2 "guard blocks the main checkout" guard "$repo/README.md"
 t 0 "guard allows .claude/" guard "$repo/.claude/coddy.yml"
+t 2 "guard blocks a Claude Code worktree under .claude/ without a claim" guard "$repo/.claude/worktrees/55/a.txt"
 t 0 "guard ignores paths outside the project" guard "$tmp/elsewhere.txt"
 t 2 "guard rejects .. paths" guard "$repo/.worktrees/../README.md"
 t 1 "create rejects a bad issue id" run create "../x" feat/x
