@@ -24,12 +24,16 @@ Each phase below is a [GitHub milestone](https://github.com/mnsami/coddy/milesto
 ## Milestones
 
 ### M0 · Fix what's live
+Milestone: [`M0-fix-live-bugs`](https://github.com/mnsami/coddy/milestone/1)
+
 Bugs in the current release.
 - #11 Onboarding succeeds without jq, then the guard blocks every edit (done)
 - #12 Release the changes merged since 0.2.0 (done)
 - #20 Guard lets edits under .claude/ through, including Claude Code's own worktrees
 
 ### M1 · Test window: parallel-safe on Claude Code
+Milestone: [`M1-test-window`](https://github.com/mnsami/coddy/milestone/2)
+
 Make parallel sessions safe on Claude Code, add the PR check, lower adoption friction, then test with real users. **Go/no-go gate for M2 onwards.**
 - #21 Make claims exclusive: an atomic lock owned by the claiming session
 - #22 Guard allows edits only in worktrees owned by the calling session
@@ -43,17 +47,23 @@ Make parallel sessions safe on Claude Code, add the PR check, lower adoption fri
 Go signals: still in use at the end of 4 weeks of dogfooding; at least 3 of 5 cold users finish onboarding and ship a PR; at least 2 people outside the project file issues or PRs.
 
 ### M2 · Agent-agnostic core
+Milestone: [`M2-agent-agnostic-core`](https://github.com/mnsami/coddy/milestone/3)
+
 Extract a `coddy` CLI core with no Claude Code dependencies; Claude Code becomes the first adapter.
 - #27 Extract an agent-agnostic coddy CLI core
 - #28 Write an AGENTS.md section at onboarding and keep skills portable
 - #16 Post the restated acceptance criteria back to the issue
 
 ### M3 · The floor
+Milestone: [`M3-the-floor`](https://github.com/mnsami/coddy/milestone/4)
+
 Enforcement every agent gets.
 - #29 Install git hooks that refuse commits outside a claimed issue branch
 - #14 Make git the default worktree tool, keep jj opt-in
 
 ### M4 · Agent adapters
+Milestone: [`M4-agent-adapters`](https://github.com/mnsami/coddy/milestone/5)
+
 - #30 Spike: build agent adapters on an existing cross-agent hook layer
 - #31 Codex adapter
 - #32 Cursor adapter
@@ -62,6 +72,8 @@ Enforcement every agent gets.
 - #15 Create issue worktrees through Claude Code's WorktreeCreate/WorktreeRemove hooks
 
 ### M5 · Parallel-convenient
+Milestone: [`M5-parallel-convenient`](https://github.com/mnsami/coddy/milestone/6)
+
 - #35 next --parallel N: pick issues that can safely run side by side
 - #36 Refresh sibling worktrees after a PR merges
 - #37 Worktree setup: a setup command, .worktreeinclude and port offsets
@@ -69,6 +81,8 @@ Enforcement every agent gets.
 - #39 Ownership for subagents and agent teams
 
 ### M6 · Strict mode
+Milestone: [`M6-strict-mode`](https://github.com/mnsami/coddy/milestone/7)
+
 - #40 Strict mode: confine each agent to its issue's worktree with a sandbox
 
 ## Risks
