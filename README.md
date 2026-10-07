@@ -3,6 +3,33 @@
 Issue-driven development workflow for Claude Code. The tracker holds the
 state; the plugin holds the habits.
 
+<!-- Static transcript; a recording (asciinema, vhs) can replace it. -->
+```text
+> add a Develop section to the README
+
+⏺ Update(README.md)
+  ⎿  PreToolUse:Edit hook error: [bash "…/coddy/scripts/issue.sh" guard]:
+     coddy: edits belong in an issue worktree, not the main checkout. Run /coddy:start <issue>, then edit under .worktrees/<issue>/.
+
+> /coddy:start 42
+
+⏺ #42 "Add a Develop section to the README": one section listing the three dev commands.
+⏺ Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" create 42 chore/42-readme-develop)
+  ⎿  created: .worktrees/42 on chore/42-readme-develop
+⏺ Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim 42)
+  ⎿  in progress: 42
+⏺ #42 is In Progress in .worktrees/42. Run /coddy:ship when done.
+
+> now add it
+
+⏺ Update(.worktrees/42/README.md)
+  ⎿  Updated .worktrees/42/README.md with 7 additions
+```
+
+The first edit is rejected and the same edit goes through once `/coddy:start`
+has claimed the issue and given it a worktree: a hook enforces it, not the
+prompt.
+
 | Skill | What it does |
 |---|---|
 | `/coddy:onboard` | Detects the project, asks for what it can't infer, writes `.claude/coddy.yml` |
