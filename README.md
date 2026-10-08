@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/coddy.svg" alt="Hermit, the coddy mascot: a hermit crab in its shell" width="160">
+</p>
+
 # coddy
 
 Issue-driven development workflow for Claude Code. The tracker holds the
