@@ -10,7 +10,7 @@ state; the plugin holds the habits.
 | `/coddy:start <issue>` | Fetches the issue, restates acceptance criteria, claims it, moves it to In Progress, gives it its own worktree (`.worktrees/<issue>`) on a new branch, or on the existing one when you name a PR or branch or the issue already has an open PR |
 | `/coddy:ship [issue]` | Runs `verify` in the issue's worktree, commits, pushes, opens the PR, links it back to the issue |
 | `/coddy:triage` | Turns findings into issues, skipping ones already open |
-| `/coddy:next` | Recommends the next issue from the tracker and the roadmap |
+| `/coddy:next` | Recommends the next issue from the tracker and the roadmap, setting aside issues in progress, assigned to someone else, or claimed on this machine |
 
 Each skill also triggers from plain language ("start issue 42", "what's
 next?", "ship it"); the slash command is optional.
@@ -33,8 +33,9 @@ own worktree, with the tracker already updated. `.claude/` stays editable.
 The hook needs `jq`. A claim belongs to the session that made it: only it
 may edit or push the worktree, another session starting the same issue
 is refused and told how to take it over (`claim <issue> --take`, which
-`/coddy:start` runs only when you say so); a session that is no longer
-running is taken over on its own.
+`/coddy:start` runs only when you say so), and so is a claim on an issue the
+tracker shows assigned to someone else, or in progress and not to you; a
+session that is no longer running is taken over on its own.
 
 Shell commands cannot be checked in advance, so a second hook compares the
 main checkout before and after each one and tells Claude to undo any change
