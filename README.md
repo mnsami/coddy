@@ -49,7 +49,8 @@ moves to In Review.
 
 Once a PR has merged, the next `/coddy:next` or `/coddy:start` removes that
 issue's worktree, claim and local branch. A worktree that still holds work
-that is not in the PR is kept and reported.
+that is not in the PR, or that another running session still holds, is kept
+and reported.
 
 ## Guardrails
 

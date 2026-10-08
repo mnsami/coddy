@@ -238,11 +238,18 @@ leg() {
   rm ".worktrees/$p/wip.txt"
   GH_PR="7 MERGED $tip" CLAUDE_PROJECT_DIR="$repo/.worktrees/$p" bash "$here/scripts/issue.sh" sweep >/dev/null 2>&1
   t 0 "$tool: sweep keeps the worktree the session is in" test -d ".worktrees/$p"
+  echo "sess-b 1" > ".git/coddy/$p/owner" # claimed by another session whose process runs
+  kept "a merged worktree another running session holds" "7 MERGED $tip"
+  GH_PR="7 MERGED $tip" t 0 "$tool: and names that session" says "kept: $p (PR #7 merged, session sess-b still holds it)" run sweep
+  echo "sess-b $(sh -c 'echo $$')" > ".git/coddy/$p/owner" # that process has exited
   GH_PR="7 MERGED $tip" t 0 "$tool: sweep reports a merged, clean worktree as cleaned" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
   t 1 "$tool: sweep removed that worktree" test -e ".worktrees/$p"
   t 1 "$tool: sweep removed its lock and branch record" test -e ".git/coddy/$p" -o -e ".git/coddy/$p.branch"
   t 1 "$tool: sweep removed its local branch" git show-ref -q "refs/heads/ext/pr-$p"
   t 0 "$tool: sweep left the other worktree alone" test -d ".worktrees/$n"
+  # The same worktree back, held by this session: swept as before.
+  run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
+  GH_PR="7 MERGED $tip" t 0 "$tool: sweep cleans a merged worktree this session holds" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
   t 0 "$tool: the whole flow left the main checkout alone" wire trip "leg$n"
 }
 
