@@ -28,7 +28,7 @@ branch: "{type}/{issue}-{slug}"
 commit: "{type}({issue}): {summary}"
 verify: "make check"         # must exit 0 before /coddy:ship
 roadmap: docs/ROADMAP.md     # optional; /coddy:next reads it
-guard: block                 # optional; block (default) | warn. warn lets an edit outside a claimed worktree through with a notice to Claude
+guard: block                 # optional; block (default) | warn. warn lets an edit outside a claimed worktree, or inside one another session claimed, through with a notice to Claude
 ```
 
 ## Steps

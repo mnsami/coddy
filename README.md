@@ -10,7 +10,7 @@ state; the plugin holds the habits.
 | `/coddy:start <issue>` | Fetches the issue, restates acceptance criteria, claims it, moves it to In Progress, gives it its own worktree (`.worktrees/<issue>`) on a new branch, or on the existing one when you name a PR or branch or the issue already has an open PR |
 | `/coddy:ship [issue]` | Runs `verify` in the issue's worktree, commits, pushes, opens the PR, links it back to the issue |
 | `/coddy:triage` | Turns findings into issues, skipping ones already open |
-| `/coddy:next` | Recommends the next issue from the tracker and the roadmap |
+| `/coddy:next` | Recommends the next issue from the tracker and the roadmap, setting aside issues in progress, assigned to someone else, or claimed on this machine |
 
 Each skill also triggers from plain language ("start issue 42", "what's
 next?", "ship it"); the slash command is optional.
@@ -30,9 +30,11 @@ In an onboarded project a hook rejects every file edit Claude attempts
 outside `.worktrees/<issue>/`, and inside it until `/coddy:start` has moved
 that issue to In Progress. So each issue is worked on its own branch, in its
 own worktree, with the tracker already updated. `.claude/` stays editable.
-The hook needs `jq`. A claim belongs to the session that made it: another
-session starting the same issue is refused and told how to take it over
-(`claim <issue> --take`, which `/coddy:start` runs only when you say so); a
+The hook needs `jq`. A claim belongs to the session that made it: only it
+may edit or push the worktree, another session starting the same issue
+is refused and told how to take it over (`claim <issue> --take`, which
+`/coddy:start` runs only when you say so), and so is a claim on an issue the
+tracker shows assigned to someone else, or in progress and not to you; a
 session that is no longer running is taken over on its own.
 
 Shell commands cannot be checked in advance, so a second hook compares the
@@ -85,10 +87,10 @@ guard: block                 # block (default) | warn
 add`, colocating the repo on first use) or `git` (`git worktree add`).
 
 `guard: warn` turns the edit hook from a rejection into a notice: the edit
-goes through, and Claude is told it landed outside a claimed worktree and
-which command to run. The shell hook and the config lock are the same in
-both modes. `/coddy:onboard` leaves the key out; set it with
-`/coddy:config guard=warn`.
+goes through, and Claude is told it landed outside a claimed worktree, or
+in one another session claimed, and which command to run. The shell hook
+and the config lock are the same in both modes. `/coddy:onboard` leaves
+the key out; set it with `/coddy:config guard=warn`.
 
 Delete the file yourself to leave the workflow; a shell command from Claude
 that removes or rewrites it is undone, and `/coddy:config` asks you first. Every other skill refuses to run
