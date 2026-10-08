@@ -4,6 +4,8 @@
 
 # coddy
 
+[![CI](https://github.com/mnsami/coddy/actions/workflows/ci.yml/badge.svg)](https://github.com/mnsami/coddy/actions/workflows/ci.yml)
+
 Issue-driven development workflow for Claude Code. The tracker holds the
 state; the plugin holds the habits.
 
