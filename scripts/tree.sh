@@ -3,7 +3,9 @@
 # /coddy:ship, /coddy:config and /coddy:next. A directory under .worktrees/
 # counts only once issue.sh claim has recorded it, so worktrees coddy did not
 # create are never listed. Each is printed as issue=branch, with the branch
-# issue.sh create recorded, and again under owners as issue=<owner>: me when
+# issue.sh create recorded; under bases as issue=branch when create stacked
+# it on another issue's branch, which ship makes the PR's base; and again
+# under owners as issue=<owner>: me when
 # the lock is this session's (the same session id, or the same Claude Code
 # process, since /clear changes the id and not the pid: issue.sh's mine()),
 # another session's id with (running) or (gone) by its pid, read the way
@@ -16,6 +18,7 @@ cd "$root" || exit 0
 echo "root: $root"
 echo "jj_repo: $([ -d .jj ] && echo yes || echo no)"
 echo "worktrees: $(for d in .worktrees/*/; do n=$(basename "$d"); [ -e ".git/coddy/$n" ] || continue; b=$(cat ".git/coddy/$n.branch" 2>/dev/null); printf '%s ' "$n${b:+=$b}"; done)"
+echo "bases: $(for d in .worktrees/*/; do n=$(basename "$d"); [ -e ".git/coddy/$n" ] || continue; b=$(cat ".git/coddy/$n.base" 2>/dev/null); [ -z "$b" ] || printf '%s ' "$n=$b"; done)"
 echo "owners: $(for d in .worktrees/*/; do n=$(basename "$d"); [ -e ".git/coddy/$n" ] || continue
   own=$(cat ".git/coddy/$n/owner" 2>/dev/null); sid="${own%% *}" pid="${own#* }"; pid="${pid%% *}"
   if [ -z "$sid" ]; then o=unknown

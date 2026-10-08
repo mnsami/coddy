@@ -1,8 +1,8 @@
 ---
 name: start
 description: Start or continue work on a tracked issue by moving it to In Progress and giving it its own worktree, on a new branch or on the branch of an existing PR
-when_to_use: Use whenever the user asks to start, pick up, work on, fix or implement a GitHub issue or Jira ticket (issue 42, ABC-123, an issue URL), or to continue an existing pull request or branch (resolve its conflicts, address review comments, rebase it), before touching any code for it. Pass the bare issue number or Jira key as the argument. For a pull request, pass the issue it closes, or the PR number when it closes none.
-arguments: [issue]
+when_to_use: Use whenever the user asks to start, pick up, work on, fix or implement a GitHub issue or Jira ticket (issue 42, ABC-123, an issue URL), or to continue an existing pull request or branch (resolve its conflicts, address review comments, rebase it), before touching any code for it. Pass the bare issue number or Jira key as the argument, followed by onto and another issue to stack the new branch on that issue's branch (issue 22 onto 21). For a pull request, pass the issue it closes, or the PR number when it closes none.
+arguments: [issue, onto, base]
 allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh"), Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/tree.sh"), Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" create *), Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim *), Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" sweep)
 ---
 
@@ -19,7 +19,8 @@ allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh"), Bash(bash "
 
 `NOT_ONBOARDED` → stop and say: run `/coddy:onboard` first.
 Lines under Cleaned up → say so first, in one sentence. `cleaned` is an issue whose PR merged and whose worktree was removed, so it has no worktree even if Worktrees still lists it; `kept` is a merged one whose worktree still holds work to push or discard, or that another running session still holds.
-Empty issue id → stop and say: usage `/coddy:start <issue>`.
+Empty issue id, or `$onto` given without a base issue after it → stop and say: usage `/coddy:start <issue> [onto <base-issue>]`.
+`$base` is set and Worktrees does not list `$base=<branch>` → stop and say: run `/coddy:start $base` first, a branch can only be stacked on a claimed issue's.
 `tracker: jira` and `$issue` is not a ticket key → stop and ask which ticket the work belongs to.
 
 ## Non-negotiable
@@ -37,7 +38,7 @@ Paths below are relative to `root`.
    - github: `gh issue view $issue --comments`
    - jira: the Atlassian MCP tools (`getJiraIssue`, then its comments). If none are loaded, stop and say the atlassian plugin needs to be authenticated.
 2. Restate in at most 10 lines: goal, acceptance criteria, out of scope. No acceptance criteria in the issue → ask one question to pin them down before continuing.
-3. Create the worktree: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" create $issue <branch>`. It continues `<branch>` when that branch exists, locally or on the remote, and starts it from `default_branch` otherwise. An existing worktree for `$issue` is reused when it is on `<branch>`. `<branch>` is the first of these that applies:
+3. Create the worktree: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" create $issue <branch>`, or with `$base` set `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" create $issue <branch> $base`. It continues `<branch>` when that branch exists, locally or on the remote, and starts it from `default_branch` otherwise, or from issue `$base`'s branch, which it records so that `ship` opens the PR against it. An existing worktree for `$issue` is reused when it is on `<branch>`. `<branch>` is the first of these that applies:
    - The user named a branch → that branch. The user named a PR → its `headRefName` from `gh pr view <pr> --json headRefName,isCrossRepository`. `isCrossRepository` is true → stop and say a PR from a fork cannot be continued.
    - The issue has an open PR → its `headRefName`.
      - github: `gh pr list --state open --json headRefName,closingIssuesReferences --jq '.[] | select(any(.closingIssuesReferences[]; .number == $issue)) | .headRefName'`
