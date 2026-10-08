@@ -27,7 +27,7 @@ Empty issue id → stop and say: usage `/coddy:start <issue>`.
 - The issue is In Progress in the tracker before any code is edited, or its PR is already open.
 - One issue, one branch, one worktree. Every edit and commit for this issue happens in `.worktrees/$issue` on its own branch: never in the main checkout, never on `default_branch`, never on another issue's branch.
 
-Hooks enforce both: every Edit and Write outside a worktree whose issue step 4 has claimed is rejected, and any shell command that leaves a change in the main checkout is flagged. A rejection means a step was skipped: go back and do it, and undo what was flagged. Never route around it.
+Hooks enforce both: every Edit and Write outside a worktree whose issue step 4 has claimed is rejected, so is one inside a worktree another session claimed (the remedy is `/coddy:start <issue>`, which asks before taking it over), and any shell command that leaves a change in the main checkout is flagged. A rejection means a step was skipped: go back and do it, and undo what was flagged. Never route around it.
 
 Paths below are relative to `root`.
 
@@ -46,8 +46,10 @@ Paths below are relative to `root`.
    - None of these → the `branch` pattern: `type` is `bug`, `feat` or `chore` from the issue's labels or type; `slug` is at most four words from the title.
 
    `create` fails → show the output and stop. Never pass another issue id or branch to get past it. `jj_repo: no` while `worktree` is `jj` or absent → first ask, then `jj git init --colocate; echo '.jj/' >> .git/info/exclude`.
-4. Move it to In Progress. A failure here → stop and report; do not continue. An issue whose branch has an open PR is past In Progress: its labels, assignees and status stay as they are and only the claim is recorded.
-   - github: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim $issue` assigns you, adds the `in progress` label and verifies it, or only records the claim when the PR is open.
-   - jira: no open PR → assign to me, then `getTransitionsForJiraIssue` and `transitionJiraIssue` into the In Progress status (already there → no transition; no such transition → stop and list the available ones). Then, open PR or not, `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim $issue` to record it.
+4. Move it to In Progress. A failure here → stop and report; do not continue. An issue whose branch has an open PR is past In Progress: its labels and status stay as they are; github still assigns you, since the PR check reads the assignee.
+   - github: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim $issue` assigns you, adds the `in progress` label and verifies it, or only assigns you when the PR is open. It refuses when the tracker shows the issue assigned to someone else, or in progress and not to you, naming who has it.
+   - jira: read the ticket (`getJiraIssue`): assigned to someone else, or In Progress and not to me → stop and say who has it; take it over only when the user says so: assign to me, then the steps below with `claim $issue --take` in place of `claim $issue`. No open PR → assign to me, then `getTransitionsForJiraIssue` and `transitionJiraIssue` into the In Progress status (already there → no transition; no such transition → stop and list the available ones), then `getJiraIssue` again: status not In Progress or assignee not me → stop and report, no claim. Then, open PR or not, `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim $issue` to record it.
+
+   Either tracker: `claim` is refused because another session holds the claim and is running, a claim is in flight, or (github) the tracker shows someone else on the issue → stop and ask the user whether to take it over; only on a yes run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim $issue --take`. On github `--take` also reassigns the issue to you and names whoever lost it, even when the refusal named only a session. `claim` reports a takeover → say so in one line, naming whom it was taken from, and continue.
 5. Investigate the code in the worktree. When the change spans more than three files or touches a public contract (API, schema, CLI flags), post the plan as an issue comment before editing.
 6. Implement in `.worktrees/$issue` only. Commit messages follow the `commit` pattern. A jj worktree has no `.git`: commit with `jj commit -m`, never `git`. When done, say: run `/coddy:ship`.
