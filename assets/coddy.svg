@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Hermit, the coddy mascot: a hermit crab in its shell">
+  <!-- shell -->
+  <circle cx="64" cy="54" r="27" fill="#FFC857"/>
+  <path d="M64 54 m-15 0 a15 15 0 1 1 15 15 a8.5 8.5 0 1 1 8.5 -8.5 a3.5 3.5 0 1 1 -3.5 -3.5" fill="none" stroke="#F4A93B" stroke-width="4.5" stroke-linecap="round"/>
+  <!-- shell opening -->
+  <ellipse cx="43" cy="62" rx="7" ry="15" fill="#E29A2C"/>
+  <!-- raised claw (arm + pincer) -->
+  <path d="M27 66 L20 56" fill="none" stroke="#FF7A59" stroke-width="6" stroke-linecap="round"/>
+  <path d="M15 42 A7.5 7.5 0 1 1 15 57" fill="none" stroke="#FF7A59" stroke-width="7" stroke-linecap="round"/>
+  <!-- eye stalks -->
+  <path d="M30 58 L26 38 M42 58 L44 38" fill="none" stroke="#FF7A59" stroke-width="4.5" stroke-linecap="round"/>
+  <!-- body -->
+  <ellipse cx="36" cy="69" rx="17" ry="13" fill="#FF7A59"/>
+  <!-- small claw + legs -->
+  <path d="M22 77 L15 84" fill="none" stroke="#FF7A59" stroke-width="4.5" stroke-linecap="round"/>
+  <circle cx="13" cy="86" r="5" fill="#FF7A59"/>
+  <path d="M30 81 L26 91 M38 82 L37 92 M46 80 L50 90" fill="none" stroke="#FF7A59" stroke-width="4" stroke-linecap="round"/>
+  <!-- cheeks -->
+  <circle cx="27" cy="71" r="3" fill="#FFB199"/>
+  <circle cx="45" cy="71" r="3" fill="#FFB199"/>
+  <!-- eyes -->
+  <circle cx="25" cy="35" r="6.5" fill="#FFFFFF"/>
+  <circle cx="26" cy="36" r="3.3" fill="#1B2A4A"/>
+  <circle cx="27.2" cy="34.6" r="1.1" fill="#FFFFFF"/>
+  <circle cx="44" cy="35" r="6.5" fill="#FFFFFF"/>
+  <circle cx="45" cy="36" r="3.3" fill="#1B2A4A"/>
+  <circle cx="46.2" cy="34.6" r="1.1" fill="#FFFFFF"/>
+</svg>
