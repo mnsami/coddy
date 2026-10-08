@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The mutating half of coddy, and the guard that makes its rules binding.
-#   issue.sh create <issue> <branch>   worktree at .worktrees/<issue> on <branch>
+#   issue.sh create <issue> <branch> [base-issue]   worktree at .worktrees/<issue> on <branch>, from default_branch or the base issue's branch
 #   issue.sh claim  <issue> [--take]   lock the issue for this session, move it to In Progress
 #   issue.sh push   <issue> [message]  commit what is uncommitted, then push
 #   issue.sh sweep                     remove what issues with a merged PR left behind
@@ -166,8 +166,16 @@ pr() { gh pr list --head "$1" --state all --json number,state,headRefOid --jq '(
 
 case "$cmd" in
   create)
-    branch="${3-}"; [ -n "$branch" ] || die "usage: issue.sh create <issue> <branch>"
+    branch="${3-}"; [ -n "$branch" ] || die "usage: issue.sh create <issue> <branch> [base-issue]"
     [ "$branch" != "$base" ] || die "$base is the default branch, not an issue branch"
+    # A new branch starts from $base on the remote, or, given a base issue,
+    # from that issue's recorded branch as it stands here (pushed or not),
+    # which is recorded too and becomes the PR's base in ship.
+    onto="${4-}" from=""
+    if [ -n "$onto" ]; then
+      case "$onto" in *[!A-Za-z0-9_-]*) die "base issue id must look like 42 or ABC-123, got '$onto'" ;; esac
+      from=$(cat ".git/coddy/$onto.branch" 2>/dev/null); [ -n "$from" ] || die "issue $onto has no worktree here to stack on. Run /coddy:start $onto first."
+    fi
     other=$(grep -lxF -- "$branch" .git/coddy/*.branch 2>/dev/null | grep -vxF -- "$rec" | head -1)
     [ -z "$other" ] || die "branch $branch belongs to issue $(basename "$other" .branch)"
     if [ -d "$wt" ]; then
@@ -196,7 +204,8 @@ case "$cmd" in
       if has "$mine"; then
         jj workspace add --name "$issue" -r "\"$branch\"" "$wt" || die "could not create the jj workspace"
       else
-        jj workspace add --name "$issue" -r "$base@origin" "$wt" || die "could not create the jj workspace"
+        start="$base@origin"; [ -z "$from" ] || start="\"$from\""
+        jj workspace add --name "$issue" -r "$start" "$wt" || die "could not create the jj workspace"
         jj -R "$wt" bookmark create "$branch" -r @ || die "could not create branch $branch"
       fi
     else
@@ -204,11 +213,12 @@ case "$cmd" in
       if git show-ref -q "refs/heads/$branch" "refs/remotes/origin/$branch"; then
         git worktree add "$wt" "$branch" || die "could not create the git worktree"
       else
-        git worktree add --no-track -b "$branch" "$wt" "origin/$base" || die "could not create the git worktree"
+        git worktree add --no-track -b "$branch" "$wt" "${from:-origin/$base}" || die "could not create the git worktree"
       fi
     fi
     record
-    echo "created: $wt on $branch" ;;
+    [ -z "$from" ] || echo "$from" > ".git/coddy/$issue.base" || die "could not record the base"
+    echo "created: $wt on $branch${from:+ onto $from}" ;;
 
   claim)
     [ -d "$wt" ] || die "create the worktree first: issue.sh create $issue <branch>"
@@ -349,9 +359,9 @@ case "$cmd" in
         git worktree remove "$wt" >/dev/null 2>&1 || continue
         git branch -D "$branch" >/dev/null 2>&1
       fi
-      rm -rf ".git/coddy/$issue" "$rec"; echo "cleaned: $issue"
+      rm -rf ".git/coddy/$issue" "$rec" ".git/coddy/$issue.base"; echo "cleaned: $issue"
     done
     exit 0 ;;
 
-  *) die "usage: issue.sh create <issue> <branch> | claim <issue> [--take] | push <issue> [message] | sweep | guard" ;;
+  *) die "usage: issue.sh create <issue> <branch> [base-issue] | claim <issue> [--take] | push <issue> [message] | sweep | guard" ;;
 esac

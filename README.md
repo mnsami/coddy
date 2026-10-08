@@ -34,8 +34,8 @@ prompt.
 |---|---|
 | `/coddy:onboard` | Detects the project, asks for what it can't infer, writes `.claude/coddy.yml` |
 | `/coddy:config [key=value ...]` | Shows `.claude/coddy.yml`, or changes the keys you name |
-| `/coddy:start <issue>` | Fetches the issue, restates acceptance criteria, claims it, moves it to In Progress, gives it its own worktree (`.worktrees/<issue>`) on a new branch, or on the existing one when you name a PR or branch or the issue already has an open PR |
-| `/coddy:ship [issue]` | Runs `verify` in the issue's worktree, commits, pushes, opens the PR, links it back to the issue |
+| `/coddy:start <issue> [onto <base-issue>]` | Fetches the issue, restates acceptance criteria, claims it, moves it to In Progress, gives it its own worktree (`.worktrees/<issue>`) on a new branch, or on the existing one when you name a PR or branch or the issue already has an open PR. `onto` starts the branch from another issue's branch instead of the default branch |
+| `/coddy:ship [issue]` | Runs `verify` in the issue's worktree, commits, pushes, opens the PR (against the base issue's branch when started `onto` one, so it shows only its own diff), links it back to the issue |
 | `/coddy:triage` | Turns findings into issues, skipping ones already open |
 | `/coddy:next` | Recommends the next issue from the tracker and the roadmap, setting aside issues in progress, assigned to someone else, or claimed on this machine |
 

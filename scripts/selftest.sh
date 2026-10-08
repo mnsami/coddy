@@ -171,6 +171,21 @@ leg() {
   t 0 "$tool: create refuses a branch that belongs to another issue" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' create 11 feat/$n-thing 2>&1 | grep -q 'belongs to issue $n'"
   t 1 "$tool: create refuses another branch for an existing worktree" run create "$n" "feat/$n-other"
   t 0 "$tool: create refuses the default branch" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' create 12 main 2>&1 | grep -q 'default branch'"
+  # A worktree stacked on another issue's branch starts at that branch as it
+  # stands here, records the base for ship, and its push moves only its own branch.
+  q=$((n + 20))
+  t 1 "$tool: create refuses to stack on an issue with no worktree" run create "$q" "feat/$q-stack" 98
+  t 0 "$tool: that refusal says how to make one" says "/coddy:start 98" run create "$q" "feat/$q-stack" 98
+  t 0 "$tool: create stacks a worktree on another issue's branch" says "onto feat/$n-thing" run create "$q" "feat/$q-stack" "$n"
+  t 0 "$tool: that worktree starts at the base branch's tip" test -f ".worktrees/$q/a.txt"
+  t 0 "$tool: and records the base" grep -qx "feat/$n-thing" ".git/coddy/$q.base"
+  t 0 "$tool: a worktree started from the default branch records no base" test ! -e ".git/coddy/$n.base"
+  t 0 "$tool: claim the stacked issue" run claim "$q"
+  t 0 "$tool: tree.sh lists the base" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/tree.sh' | grep -q '^bases: .*$q=feat/$n-thing'"
+  echo s > ".worktrees/$q/s.txt"; was=$(git ls-remote origin "refs/heads/feat/$n-thing")
+  t 0 "$tool: push of the stacked branch" run push "$q" "feat($q): stacked"
+  t 0 "$tool: the stacked branch reached the remote" git ls-remote --exit-code origin "refs/heads/feat/$q-stack"
+  t 0 "$tool: and the base branch did not move" test "$(git ls-remote origin "refs/heads/feat/$n-thing")" = "$was"
   # The end of the lifecycle, on the continued branch. While its PR is open
   # a claim assigns without the label; sweep removes the worktree only once
   # the PR has merged and nothing in the worktree is missing from it.
