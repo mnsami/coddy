@@ -35,8 +35,9 @@ tripped() { wire snap w; (cd "$repo" && eval "$3") >/dev/null 2>&1; t "$1" "$2" 
 # GH_USER=fail: "api user" fails, else it says me. GH_PR: the "<number>
 # <state> <head commit>" line "pr list" reports, or fail. GH_LINKED: the
 # "<number> <state> <assignees>" lines "api graphql" reports, or fail.
-# GH_SLOW: seconds "issue edit" takes; GH_EDIT=fail: it fails. Every call is
-# logged to $GH_LOG.
+# GH_ISSUE: the "<state> <assignees>" that "api repos/*/issues/<n>" reports
+# after the number, or fail. GH_SLOW: seconds "issue edit" takes;
+# GH_EDIT=fail: it fails. Every call is logged to $GH_LOG.
 mkdir "$tmp/bin"
 cat > "$tmp/bin/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -48,6 +49,7 @@ case "$*" in
   *"api user"*) [ "${GH_USER-}" != fail ] || exit 1; echo me ;;
   *"pr list"*) [ "${GH_PR-}" != fail ] || exit 1; echo "${GH_PR-}" ;;
   *"api graphql"*) [ "${GH_LINKED-}" != fail ] || exit 1; echo "${GH_LINKED-}" ;;
+  *"api repos/"*"/issues/"*) [ "${GH_ISSUE-}" != fail ] || exit 1; n="${*##*/issues/}"; echo "${n%% *} ${GH_ISSUE-OPEN 1}" ;;
   *"auth status"*) [ "${GH_AUTH-}" != fail ] || exit 1 ;;
 esac
 EOF
@@ -380,7 +382,9 @@ rm -r .github
 # gh and the template's own env names, each set to itself, so the gh log
 # shows which names the run block read.
 sed '1,/run: |/d; s/^          //' "$here/templates/coddy.yml" > "$tmp/check.sh"
-check() { GH_LINKED="$1" env $(sed -n 's/^      \([A-Z_]*\): .*/\1=\1/p' "$here/templates/coddy.yml") bash -e "$tmp/check.sh"; }
+# check <GH_LINKED> [VAR=value...]: every env name is its own value unless
+# overridden, so BASE and DEFAULT differ: a stacked PR unless both are set.
+check() { GH_LINKED="$1" env $(sed -n 's/^      \([A-Z_]*\): .*/\1=\1/p' "$here/templates/coddy.yml") "${@:2}" bash -e "$tmp/check.sh"; }
 t 0 "pr check: an open, assigned linked issue passes" check "12 OPEN 1"
 t 0 "pr check: the run block hands env's owner, repo and PR to gh" grep -q -- '-f owner=OWNER -f repo=REPO -F pr=PR' "$GH_LOG"
 t 1 "pr check: no linked issue fails" check ""
@@ -391,6 +395,21 @@ t 1 "pr check: one bad issue among two fails" check $'12 OPEN 1\n13 OPEN 0'
 t 0 "pr check: two open, assigned issues pass" check $'12 OPEN 1\n13 OPEN 2'
 t 0 "pr check: no linked issue names the fix" says '::error::no linked issue' check ""
 t 0 "pr check: an unassigned issue names the issue and the fix" says '::error::#12 is not claimed.*/coddy:start 12' check "12 OPEN 0"
+# A PR stacked on another branch: GitHub computes no closing references, so
+# the description's keywords are read instead; on the default branch they are not.
+t 0 "pr check: a stacked PR whose description closes an open, assigned issue passes" check "" BODY='Closes #12'
+t 0 "pr check: that lookup read the issue" grep -q 'api repos/OWNER/REPO/issues/12' "$GH_LOG"
+t 0 "pr check: the keyword is read in any case, with a colon, and among other words" check "" BODY=$'Fixed: #12 in the end\r'
+t 1 "pr check: a word that merely ends in a keyword is not one" check "" BODY='prefixes #12'
+t 1 "pr check: a stacked PR without a keyword fails" check "" BODY='see #12'
+t 0 "pr check: and names the same fix" says '::error::no linked issue' check "" BODY='see #12'
+t 1 "pr check: a default-branch PR is held to the computed references alone" check "" BASE=main DEFAULT=main BODY='Closes #12'
+t 1 "pr check: a stacked keyword to a closed issue fails" check "" BODY='Closes #12' GH_ISSUE="CLOSED 1"
+t 1 "pr check: a stacked keyword to an unassigned issue fails" check "" BODY='Closes #12' GH_ISSUE="OPEN 0"
+t 1 "pr check: a stacked lookup that fails fails" check "" BODY='Closes #12' GH_ISSUE=fail
+: > "$GH_LOG"
+t 0 "pr check: two stacked keywords pass" check "" BODY=$'Closes #12\nResolves #13, closes #12'
+t 0 "pr check: and each issue was read once" test "$(grep -c 'api repos/OWNER/REPO/issues/' "$GH_LOG")" = 2
 
 # Merging main into an issue branch brings the bookmark of every merged PR
 # into its history, and a newer one must not be taken for the issue's branch.
