@@ -10,6 +10,7 @@ echo "gh_auth: $(gh auth status >/dev/null 2>&1 && echo ok || echo missing)"
 b=$( (git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main) | sed 's#^origin/##')
 echo "default_branch: $b"
 echo "default_branch_protected: $(gh api "repos/{owner}/{repo}/branches/$b" --jq .protected 2>/dev/null || echo unknown)"
+echo "pr_check: $([ -f .github/workflows/coddy.yml ] && echo present || echo none)"
 echo "make_targets: $(grep -ohE '^[A-Za-z][A-Za-z0-9_-]*:' Makefile 2>/dev/null | tr -d : | tr '\n' ' ')"
 echo "package_scripts: $(jq -r '.scripts // {} | keys | join(" ")' package.json 2>/dev/null)"
 echo "go_modules: $(ls go.mod */go.mod 2>/dev/null | tr '\n' ' ')"

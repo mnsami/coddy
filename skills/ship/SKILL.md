@@ -14,7 +14,7 @@ allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh"), Bash(bash "
 !`bash "${CLAUDE_PLUGIN_ROOT}/scripts/tree.sh"`
 
 `NOT_ONBOARDED` → stop and say: run `/coddy:onboard` first.
-Worktrees lists each as `issue=branch`. Pick the issue: `$ARGUMENTS` when given, else the issue started in this conversation, else the only worktree listed. Several and unclear → ask which. None listed → stop and say: nothing to ship, run `/coddy:start <issue>` first.
+Worktrees lists each as `issue=branch`, and `owners` whose claim each is. Pick the issue: `$ARGUMENTS` when given, else the issue started in this conversation, else the only worktree whose `owners` entry is `me` or `unknown`. Several and unclear → ask which. None listed → stop and say: nothing to ship, run `/coddy:start <issue>` first. The pick's `owners` entry names another session → stop and say whose it is: ship it from that session, or `/coddy:start <issue>` to take it over (`push` refuses it anyway).
 
 ## Steps
 
