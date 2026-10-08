@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Runs the scripts against a throwaway repo with a local bare remote and a
-# stub gh: both worktree tools, the claim and its lock, the push, the edit
-# guard, the shell tripwire, the PR check's run block and tree.sh's owners
-# line.
+# Runs the scripts against a throwaway repo with a local bare remote: both
+# worktree tools, the claim and its lock, the push, the sweep, the edit
+# guard, the shell tripwire, the PR check's run block (against a stub gh,
+# the one place gh remains: GitHub Actions) and tree.sh's owners line.
 # Usage: bash scripts/selftest.sh
 set -u
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -29,35 +29,24 @@ wire() { printf '{"tool_use_id":"%s"}' "$2" | run "$1"; }
 # tripped <expected exit> <name> <shell snippet run in the main checkout>
 tripped() { wire snap w; (cd "$repo" && eval "$3") >/dev/null 2>&1; t "$1" "$2" wire trip w; }
 
-# The stub gh. GH_LABEL: the labels "issue view" reports. GH_ASSIGNED: the
-# logins, comma-separated, and GH_INPROG="in progress": the label, that
-# "issue view --json assignees,labels" reports; GH_VIEW=fail: it fails.
-# GH_USER=fail: "api user" fails, else it says me. GH_PR: the "<number>
-# <state> <head commit>" line "pr list" reports, or fail. GH_LINKED: the
-# "<number> <state> <assignees>" lines "api graphql" reports, or fail.
-# GH_ISSUE: the "<state> <assignees>" that "api repos/*/issues/<n>" reports
-# after the number, or fail. GH_SLOW: seconds "issue edit" takes;
-# GH_EDIT=fail: it fails. Every call is logged to $GH_LOG.
+# The stub gh, for the PR check's run block alone. GH_LINKED: the "<number>
+# <state> <assignees>" lines "api graphql" reports, or fail. GH_ISSUE: the
+# "<state> <assignees>" that "api repos/*/issues/<n>" reports after the
+# number, or fail. Every call is logged to $GH_LOG.
 mkdir "$tmp/bin"
 cat > "$tmp/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
 case "$*" in
-  *"issue edit"*) sleep "${GH_SLOW-0}"; [ "${GH_EDIT-}" != fail ] || exit 1 ;;
-  *"issue view"*"assignees"*) [ "${GH_VIEW-}" != fail ] || exit 1; echo "${GH_ASSIGNED-} ${GH_INPROG--}" ;;
-  *"issue view"*) echo "${GH_LABEL-in progress}" ;;
-  *"api user"*) [ "${GH_USER-}" != fail ] || exit 1; echo me ;;
-  *"pr list"*) [ "${GH_PR-}" != fail ] || exit 1; echo "${GH_PR-}" ;;
   *"api graphql"*) [ "${GH_LINKED-}" != fail ] || exit 1; echo "${GH_LINKED-}" ;;
   *"api repos/"*"/issues/"*) [ "${GH_ISSUE-}" != fail ] || exit 1; n="${*##*/issues/}"; echo "${n%% *} ${GH_ISSUE-OPEN 1}" ;;
-  *"auth status"*) [ "${GH_AUTH-}" != fail ] || exit 1 ;;
 esac
 EOF
 chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log"
 # A ps that is not there, as in a container image without procps: on PATH first when a case asks.
 mkdir "$tmp/nops"; printf '#!/bin/sh\nexit 127\n' > "$tmp/nops/ps"; chmod +x "$tmp/nops/ps"
-# kept <what> <GH_PR>: sweep, faced with that PR, leaves worktree $p alone
-kept() { GH_PR="$2" run sweep >/dev/null 2>&1; t 0 "$tool: sweep keeps $1" test -d ".worktrees/$p"; }
+# kept <what>: sweep leaves worktree $p alone
+kept() { run sweep >/dev/null 2>&1; t 0 "$tool: sweep keeps $1" test -d ".worktrees/$p"; }
 
 git init -q --bare "$tmp/origin.git"
 git clone -q "$tmp/origin.git" "$repo" 2>/dev/null
@@ -78,19 +67,7 @@ leg() {
   t 0 "$tool: create is idempotent" run create "$n" "feat/$n-thing"
   t 2 "$tool: guard blocks the worktree before the claim" guard "$repo/.worktrees/$n/a.txt"
   t 1 "$tool: push refused before the claim" run push "$n" "feat($n): thing"
-  GH_LABEL=other t 1 "$tool: claim fails when the label did not stick" run claim "$n"
-  t 1 "$tool: that failed claim left no lock behind" test -e ".git/coddy/$n"
-  t 2 "$tool: guard still blocks after a failed claim" guard "$repo/.worktrees/$n/a.txt"
-  # A claim killed mid-way runs no trap: its lock stays, marked pending, and
-  # the owner's next claim redoes the tracker step. exec, so the kill hits
-  # issue.sh itself and not a shell around it.
-  ( GH_SLOW=2 CLAUDE_PROJECT_DIR="$repo" exec bash "$here/scripts/issue.sh" claim "$n" ) >/dev/null 2>&1 & k=$!
-  sleep 0.5; kill -9 "$k"; wait "$k" 2>/dev/null; : > "$GH_LOG"
-  t 0 "$tool: a claim killed mid-way leaves its lock pending" grep -q pending ".git/coddy/$n/owner"
-  t 2 "$tool: guard blocks even the owner while its claim is pending" guard "$repo/.worktrees/$n/a.txt"
-  t 0 "$tool: another session is told whose that pending claim is" says "belongs to session sess-a" guard "$repo/.worktrees/$n/a.txt" sess-b
   t 0 "$tool: claim" run claim "$n"
-  t 0 "$tool: that claim redid the tracker step the killed one left unfinished" grep -q "issue edit" "$GH_LOG"
   t 0 "$tool: the lock names this session and its pid" grep -qx "sess-a $$" ".git/coddy/$n/owner"
   t 0 "$tool: guard allows the owner's edit" guard "$repo/.worktrees/$n/a.txt"
   t 2 "$tool: guard blocks another session's edit in that worktree" guard "$repo/.worktrees/$n/a.txt" sess-b
@@ -104,12 +81,9 @@ leg() {
   t 0 "$tool: and moves the lock to that process" grep -qx "sess-a 1" ".git/coddy/$n/owner"
   t 0 "$tool: and back on this session's edit" guard "$repo/.worktrees/$n/a.txt"
   t 0 "$tool: the lock names this session and its pid again" grep -qx "sess-a $$" ".git/coddy/$n/owner"
-  GH_LABEL=other t 1 "$tool: a takeover whose tracker step fails is refused" as sess-b 1 claim "$n" --take
-  t 0 "$tool: that failed takeover left the owner's lock alone" grep -qx "sess-a $$" ".git/coddy/$n/owner"
   t 1 "$tool: a running session's claim is refused" as sess-b 1 claim "$n"
   t 0 "$tool: that refusal names the owner" says "session sess-a" as sess-b 1 claim "$n"
   PATH="$tmp/nops:$PATH" t 1 "$tool: a running session's claim is refused with no ps on PATH" as sess-b 1 claim "$n"
-  : > "$GH_LOG"
   t 0 "$tool: a re-claim by the owner is a no-op" run claim "$n"
   t 0 "$tool: so is one by the owner's process under a new session id (/clear)" as sess-b $$ claim "$n"
   t 0 "$tool: and the lock followed it to that session id" grep -qx "sess-b $$" ".git/coddy/$n/owner"
@@ -118,15 +92,9 @@ leg() {
   t 0 "$tool: and the lock followed it to that process" grep -qx "sess-a 1" ".git/coddy/$n/owner"
   t 0 "$tool: and back to this one" run claim "$n"
   t 0 "$tool: the lock names this session and its pid again" grep -qx "sess-a $$" ".git/coddy/$n/owner"
-  t 0 "$tool: those re-claims read the tracker again" grep -q "issue view" "$GH_LOG"
-  t 1 "$tool: and reassigned nobody" grep -q -- --remove-assignee "$GH_LOG"
-  GH_ASSIGNED=other t 1 "$tool: a re-claim is refused once the tracker shows someone else on the issue" run claim "$n"
-  GH_ASSIGNED=other t 0 "$tool: that refusal names them" says "assigned to other" run claim "$n"
-  t 0 "$tool: and left the lock as it was" grep -qx "sess-a $$" ".git/coddy/$n/owner"
-  GH_INPROG="in progress" t 1 "$tool: a re-claim is refused once the tracker shows the issue in progress for nobody" run claim "$n"
-  GH_ASSIGNED=other t 0 "$tool: --take from the owner reassigns the issue and names them" says "reassigned #$n from other" run claim "$n" --take
+  t 0 "$tool: a --take by the owner is a no-op too" run claim "$n" --take
   t 0 "$tool: the lock still names this session" grep -qx "sess-a $$" ".git/coddy/$n/owner"
-  GH_ASSIGNED=other t 0 "$tool: --take hands the claim to another session, reassigns the issue and names both" says "taken over: $n from session sess-a (--take); reassigned #$n from other" as sess-b 1 claim "$n" --take
+  t 0 "$tool: --take hands the claim to another session and says so" says "taken over: $n from session sess-a (--take)" as sess-b 1 claim "$n" --take
   t 0 "$tool: the lock now names that session" grep -qx "sess-b 1" ".git/coddy/$n/owner"
   t 2 "$tool: guard now blocks the previous owner" guard "$repo/.worktrees/$n/a.txt"
   t 0 "$tool: guard allows the taker" guard "$repo/.worktrees/$n/a.txt" sess-b
@@ -164,7 +132,7 @@ leg() {
   [ "$xr" = 0 ] && w="sess-x $$" || w="sess-y $live"
   t 0 "$tool: the lock names the winner" grep -qx "$w" ".git/coddy/$p/owner"
   kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
-  echo more > ".worktrees/$p/more.txt"
+  echo "more $p" > ".worktrees/$p/more.txt" # per leg: the other leg's is in main by now
   was=$(git ls-remote origin "refs/heads/ext/pr-$p")
   t 0 "$tool: push to a continued branch" as ${w% *} ${w#* } push "$p" "fix($p): more" # as the winner: push is the owner's too
   t 1 "$tool: that push moved the branch on the remote" test "$(git ls-remote origin "refs/heads/ext/pr-$p")" = "$was"
@@ -186,18 +154,16 @@ leg() {
   t 0 "$tool: push of the stacked branch" run push "$q" "feat($q): stacked"
   t 0 "$tool: the stacked branch reached the remote" git ls-remote --exit-code origin "refs/heads/feat/$q-stack"
   t 0 "$tool: and the base branch did not move" test "$(git ls-remote origin "refs/heads/feat/$n-thing")" = "$was"
-  # The end of the lifecycle, on the continued branch. While its PR is open
-  # a claim assigns without the label; sweep removes the worktree only once
-  # the PR has merged and nothing in the worktree is missing from it.
-  tip=$(git ls-remote origin "refs/heads/ext/pr-$p" | cut -f1)
+  # The end of the lifecycle, on the continued branch: sweep removes the
+  # worktree once its last commit is in main on the remote through a merge
+  # commit and nothing is uncommitted.
   # A marker from before claims were locks is a plain file: it still counts,
-  # and a claim on one replaces it with a lock, tracker step included.
+  # and a claim on one replaces it with a lock.
   rm -rf ".git/coddy/$p"; ln -s nowhere ".git/coddy/$p"
   t 1 "$tool: a lock that cannot be written is a failed claim" run claim "$p"
-  rm -rf ".git/coddy/$p"; : > ".git/coddy/$p"; : > "$GH_LOG"
+  rm -rf ".git/coddy/$p"; : > ".git/coddy/$p"
   t 0 "$tool: an old marker still allows edits from any session" guard "$repo/.worktrees/$p/a.txt" sess-b
   t 0 "$tool: claim turns an old marker into a lock" run claim "$p"
-  t 0 "$tool: that claim took the tracker step" grep -q "issue edit" "$GH_LOG"
   t 0 "$tool: that lock names this session" grep -qx "sess-a $$" ".git/coddy/$p/owner"
   : > ".git/coddy/$p/owner" # a kill between the owner file's open and its write, or a full disk
   t 1 "$tool: an empty owner line is a claim that died halfway" run claim "$p"
@@ -210,63 +176,33 @@ leg() {
   t 0 "$tool: that refusal says how to take it" says "take it over" run claim "$p"
   t 0 "$tool: --take adopts a lock with no owner" run claim "$p" --take
   rm -rf ".git/coddy/$p"
-  # The tracker's own state: an issue someone else holds there is refused,
-  # unless --take, which reassigns it.
-  GH_ASSIGNED=other t 1 "$tool: claim refuses an issue assigned to someone else" run claim "$p"
-  GH_ASSIGNED=other t 0 "$tool: that refusal names them" says "assigned to other" run claim "$p"
-  GH_ASSIGNED=other t 0 "$tool: that refusal says how to take it" says "take it over" run claim "$p"
-  t 1 "$tool: that refusal left no lock behind" test -e ".git/coddy/$p"
-  : > "$GH_LOG"
-  GH_ASSIGNED=other t 0 "$tool: --take takes an issue assigned to someone else and names them" says "reassigned #$p from other" run claim "$p" --take
-  t 0 "$tool: that takeover reassigned it" grep -q -- "--add-assignee @me --remove-assignee other" "$GH_LOG"
-  rm -rf ".git/coddy/$p"
-  GH_ASSIGNED=me t 0 "$tool: claim continues an issue assigned to me" run claim "$p"
-  rm -rf ".git/coddy/$p"
-  GH_ASSIGNED=me,other t 0 "$tool: claim continues an issue assigned to me among others" run claim "$p"
-  rm -rf ".git/coddy/$p"
-  GH_INPROG="in progress" t 1 "$tool: claim refuses an issue in progress with nobody assigned" run claim "$p"
-  GH_INPROG="in progress" t 0 "$tool: that refusal says so" says "is in progress" run claim "$p"
-  GH_ASSIGNED=me GH_INPROG="in progress" t 0 "$tool: claim continues my own issue already in progress" run claim "$p"
-  rm -rf ".git/coddy/$p"
-  GH_INPROG="in progress" t 0 "$tool: --take takes an issue in progress with nobody assigned" run claim "$p" --take
-  rm -rf ".git/coddy/$p"
-  GH_ASSIGNED=other GH_PR="7 OPEN $tip" t 1 "$tool: claim refuses someone else's issue with an open PR too" run claim "$p"
-  GH_USER=fail t 1 "$tool: claim stops when gh cannot say who I am" run claim "$p"
-  t 1 "$tool: that failed claim left no lock behind" test -e ".git/coddy/$p"
-  GH_VIEW=fail t 1 "$tool: claim stops when gh cannot read the issue" run claim "$p"
-  t 1 "$tool: that failed claim left no lock behind either" test -e ".git/coddy/$p"
-  : > "$GH_LOG"
-  GH_ASSIGNED=other GH_PR="7 OPEN $tip" t 0 "$tool: --take takes someone else's issue with an open PR" run claim "$p" --take
-  t 0 "$tool: that open-PR takeover reassigned it" grep -q -- "--remove-assignee other" "$GH_LOG"
-  rm -rf ".git/coddy/$p"
-  GH_PR="7 OPEN $tip" GH_EDIT=fail t 1 "$tool: claim with an open PR stops when the assign fails" run claim "$p"
-  t 2 "$tool: guard still blocks after that failed claim" guard "$repo/.worktrees/$p/a.txt"
-  : > "$GH_LOG"
-  GH_PR="7 OPEN $tip" t 0 "$tool: claim with an open PR" run claim "$p"
-  t 0 "$tool: that claim assigned me" grep -q add-assignee "$GH_LOG"
-  t 1 "$tool: that claim left the label alone" grep -q add-label "$GH_LOG"
+  t 0 "$tool: claim" run claim "$p"
   t 0 "$tool: that claim allows edits" guard "$repo/.worktrees/$p/a.txt"
-  kept "an open PR" "7 OPEN $tip"
-  kept "a PR closed without merging" "7 CLOSED $tip"
-  kept "everything when gh fails" fail
-  kept "commits that are not in the merged PR" "7 MERGED 0000"
+  kept "a branch that is not merged"
+  # Merged into main on the remote, as GitHub's merge button does it.
+  (git clone -q -b main "$tmp/origin.git" "$tmp/merge$p" && cd "$tmp/merge$p" && git merge -q --no-ff -m "merge $p" "origin/ext/pr-$p" && git push -q origin main) >/dev/null 2>&1
   echo wip > ".worktrees/$p/wip.txt"
-  kept "uncommitted changes" "7 MERGED $tip"
+  kept "uncommitted changes"
+  t 0 "$tool: and says so" says "holds uncommitted work" run sweep
   rm ".worktrees/$p/wip.txt"
-  GH_PR="7 MERGED $tip" CLAUDE_PROJECT_DIR="$repo/.worktrees/$p" bash "$here/scripts/issue.sh" sweep >/dev/null 2>&1
+  CLAUDE_PROJECT_DIR="$repo/.worktrees/$p" bash "$here/scripts/issue.sh" sweep >/dev/null 2>&1
   t 0 "$tool: sweep keeps the worktree the session is in" test -d ".worktrees/$p"
   echo "sess-b 1" > ".git/coddy/$p/owner" # claimed by another session whose process runs
-  kept "a merged worktree another running session holds" "7 MERGED $tip"
-  GH_PR="7 MERGED $tip" t 0 "$tool: and names that session" says "kept: $p (PR #7 merged, session sess-b still holds it)" run sweep
+  kept "a merged worktree another running session holds"
+  t 0 "$tool: and names that session" says "kept: $p (merged into main, session sess-b still holds it)" run sweep
   echo "sess-b $(sh -c 'echo $$')" > ".git/coddy/$p/owner" # that process has exited
-  GH_PR="7 MERGED $tip" t 0 "$tool: sweep reports a merged, clean worktree as cleaned" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
+  t 0 "$tool: sweep reports a merged, clean worktree as cleaned" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
   t 1 "$tool: sweep removed that worktree" test -e ".worktrees/$p"
   t 1 "$tool: sweep removed its lock and branch record" test -e ".git/coddy/$p" -o -e ".git/coddy/$p.branch"
   t 1 "$tool: sweep removed its local branch" git show-ref -q "refs/heads/ext/pr-$p"
   t 0 "$tool: sweep left the other worktree alone" test -d ".worktrees/$n"
   # The same worktree back, held by this session: swept as before.
   run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
-  GH_PR="7 MERGED $tip" t 0 "$tool: sweep cleans a merged worktree this session holds" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
+  t 0 "$tool: sweep cleans a merged worktree this session holds" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
+  # A worktree just started from main sits on main's own first-parent line
+  # with nothing of its own yet: not finished.
+  r=$((n + 30)); run create "$r" "feat/$r-fresh" >/dev/null 2>&1; run claim "$r" >/dev/null 2>&1
+  t 0 "$tool: sweep leaves a fresh worktree alone" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep >/dev/null; test -d .worktrees/$r"
   t 0 "$tool: the whole flow left the main checkout alone" wire trip "leg$n"
 }
 
@@ -354,6 +290,10 @@ t 0 "config: restored after the rewrite" same
 tripped 2 "config: removing .claude/ trips" 'rm -rf .claude'
 t 0 "config: restored after .claude/ was removed" same
 # A shared (committed) config that changes through git is not a bypass.
+# The legs merged branches into main on the remote: the local commits above go on
+# top. git reset first: jj colocation left the untracked files as intent-to-add
+# index entries, which a rebase refuses to start over.
+git reset -q && git pull -q --rebase origin main
 git add -f .claude/coddy.yml; git commit -q -m "share config"; git push -q origin HEAD:main
 git clone -q -b main "$tmp/origin.git" "$tmp/mate" 2>/dev/null
 (cd "$tmp/mate" && echo "roadmap: docs/ROADMAP.md" >> .claude/coddy.yml && git commit -q -am "roadmap" && git push -q origin HEAD:main)
@@ -385,9 +325,7 @@ t 0 "config.sh finds the config from inside a worktree" sh -c "CLAUDE_PROJECT_DI
 # detect <line> [VAR=value...]: detect.sh prints exactly that line
 detect() { line=$1; shift; env CLAUDE_PROJECT_DIR="$repo" "$@" "$BASH" "$here/scripts/detect.sh" 2>/dev/null | grep -qx "$line"; }
 t 0 "detect.sh reports an installed jq" detect 'jq: installed'
-t 0 "detect.sh reports a signed-in gh" detect 'gh_auth: ok'
 t 0 "detect.sh reports a missing jq" detect 'jq: missing' PATH="$tmp/bin"
-t 0 "detect.sh reports a gh that is not signed in" detect 'gh_auth: missing' GH_AUTH=fail
 t 0 "detect.sh reports no PR check" detect 'pr_check: none'
 mkdir -p .github/workflows && : > .github/workflows/coddy.yml
 t 0 "detect.sh reports the PR check once its workflow exists" detect 'pr_check: present'

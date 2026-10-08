@@ -42,7 +42,7 @@ prompt.
 Each skill also triggers from plain language ("start issue 42", "what's
 next?", "ship it"); the slash command is optional.
 
-Trackers: GitHub Issues (`gh`) and Jira (Atlassian MCP plugin). In Progress
+Trackers: GitHub Issues (GitHub MCP plugin) and Jira (Atlassian MCP plugin). In Progress
 is the `in progress` label on GitHub and the workflow status on Jira. It ends
 when `/coddy:ship` has the PR open: the label comes off on GitHub, and Jira
 moves to In Review.
@@ -86,9 +86,8 @@ another branch the check reads the closing keywords in the description
 itself, so there the keyword is what counts and a link made only in the
 sidebar is not seen. `/coddy:onboard`
 offers to copy it to `.github/workflows/coddy.yml`, or copy the file
-yourself, and makes it a required check when it is also protecting the
-default branch; otherwise add the check, `closes a claimed issue`, to the
-required checks by hand.
+yourself; it blocks a merge only once `closes a claimed issue` is a required
+check under the default branch's protection rule, which you add by hand.
 
 ## Install
 
@@ -96,6 +95,12 @@ required checks by hand.
 claude plugin marketplace add mnsami/coddy   # or a local path to this repo
 claude plugin install coddy@coddy
 ```
+
+The `github` tracker is reached through the GitHub plugin's MCP tools, so
+enable that plugin with a token that can read and write the repository's
+issues and pull requests; the `jira` tracker through the Atlassian plugin.
+Neither needs a CLI. The PR check workflow alone runs `gh`, inside GitHub
+Actions, where it is built in.
 
 ## Onboard a project
 

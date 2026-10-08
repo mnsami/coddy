@@ -9,13 +9,11 @@
 # An issue counts as In Progress once the lock .git/coddy/<issue>/ exists.
 # Only claim makes it (mkdir, so of two sessions claiming at once one wins;
 # a plain-file marker from before locks still counts until the next claim
-# replaces it with a lock, tracker step and all); its owner
-# file holds "<session> <pid>", plus "pending" until the tracker step went
-# through, and another session's claim is refused unless --take is passed
-# or the owner's pid no longer runs. For github, claim also refuses an issue
-# the tracker shows assigned to someone else, or in progress and not to me,
-# unless --take, which reassigns it; a re-claim by the owner reads the
-# tracker again. guard rejects every edit that is not inside a claimed
+# replaces it with a lock); its owner file holds "<session> <pid>", and
+# another session's claim is refused unless --take is passed or the owner's
+# pid no longer runs. The tracker is reached only through MCP tools, so the
+# skill moves the issue to In Progress and claim records that it did.
+# guard rejects every edit that is not inside a claimed
 # worktree, or is inside one another session claimed (with "guard: warn" in
 # the config it lets the edit through and says so).
 # create records the issue's branch in .git/coddy/<issue>.branch, and push
@@ -69,16 +67,15 @@ if [ "${1-}" = guard ]; then
       issue="${f#"$root"/.worktrees/}"; issue="${issue#"$root"/.claude/worktrees/}"; issue="${issue%%/*}"
       [ -e "$root/.git/coddy/$issue" ] || die "issue $issue is not In Progress yet. Run /coddy:start $issue."
       # A lock with no owner line is a claim in flight, or one that died between
-      # its mkdir and that line: its tracker step never ran.
+      # its mkdir and that line.
       [ ! -d "$root/.git/coddy/$issue" ] || [ -s "$root/.git/coddy/$issue/owner" ] || die "issue $issue's claim is in flight or died halfway. Run /coddy:start $issue."
       # The lock's owner, as claim wrote it; a plain-file marker has none. A
       # claim run by hand, or a hook payload without session_id, names no
       # session, and then the edit is not held to the owner.
-      own=$(cat "$root/.git/coddy/$issue/owner" 2>/dev/null) # "<session> <pid>", plus "pending" until the tracker step went through
+      own=$(cat "$root/.git/coddy/$issue/owner" 2>/dev/null) # "<session> <pid>"
       sid="${own%% *}" pid="${own#* }"; pid="${pid%% *}"
       [ -z "$sid" ] || [ -z "$me" ] || mine ||
         die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" && echo running || echo "not running")). Run /coddy:start $issue to take it over, or work on your own issue."
-      [ "${own##* }" != pending ] || die "issue $issue's claim did not finish (its tracker step is pending). Run /coddy:start $issue."
       # The owner's edit from a new session id (/clear) or process (--resume)
       # moves the lock along, as its re-claim would: a pid left behind reads
       # as a dead owner to every other session.
@@ -160,9 +157,6 @@ on() {
 }
 record() { mkdir -p .git/coddy && echo "$branch" > "$rec" || die "could not record the branch"; }
 has() { [ -n "$(jj log --no-graph -r "$1" -T '"x"' 2>/dev/null)" ]; } # a jj revset matches
-# "<number> <state> <head commit>" of the PR for branch $1, an open one
-# first; nothing when there is none or gh fails.
-pr() { gh pr list --head "$1" --state all --json number,state,headRefOid --jq '(map(select(.state == "OPEN"))[0] // .[0] // empty) | "\(.number) \(.state) \(.headRefOid)"' 2>/dev/null; }
 
 case "$cmd" in
   create)
@@ -222,7 +216,7 @@ case "$cmd" in
 
   claim)
     [ -d "$wt" ] || die "create the worktree first: issue.sh create $issue <branch>"
-    lock=".git/coddy/$issue" me="${CLAUDE_CODE_SESSION_ID-}" note="" own="" n="" state="" drop="" again=""
+    lock=".git/coddy/$issue" me="${CLAUDE_CODE_SESSION_ID-}" note="" own="" again=""
     # A marker from before claims were locks is a plain file: nobody owns it;
     # the claim replaces it. rm -f never removes the lock another session
     # just made of it, so the mkdir race stays atomic.
@@ -230,66 +224,29 @@ case "$cmd" in
     mkdir -p .git/coddy || die "could not record the claim"
     if ! mkdir "$lock" 2>/dev/null; then
       for i in 1 2 3 4 5; do [ -s "$lock/owner" ] && break; sleep 0.1; done # the winner writes owner right after its mkdir
-      own=$(cat "$lock/owner" 2>/dev/null) # "<session> <pid>", plus "pending" until the tracker step went through
+      own=$(cat "$lock/owner" 2>/dev/null) # "<session> <pid>"
       sid="${own%% *}" pid="${own#* }"; pid="${pid%% *}"
       if [ ! -s "$lock/owner" ]; then
         # A claim in flight, or one that died between its mkdir and its owner line.
         [ "${3-}" = --take ] || die "issue $issue is being claimed right now, or that claim died halfway: retry, or take it over with bash \"$0\" claim $issue --take"
-      # A re-claim: the tracker is read again below, and the lock then names
-      # this session's current id and pid (/clear changes the one, --resume
-      # the other); $own stays, for the trap.
-      elif mine && [ "${own##* }" != pending ]; then again=1
-      elif mine; then own="" # mine, but it died before its tracker step: redo it as a fresh claim
+      # A re-claim: the lock then names this session's current id and pid
+      # (/clear changes the one, --resume the other); $own stays, for the trap.
+      elif mine; then again=1
       elif [ "${3-}" = --take ]; then note="taken over: $issue from session $sid (--take)"
       elif ! alive "$pid"; then note="taken over: $issue from session $sid (pid $pid is not running)"
       else die "issue $issue is claimed by session $sid (pid $pid, running). To take it over deliberately: bash \"$0\" claim $issue --take"
       fi
     fi
-    # A claim that fails from here on leaves no lock behind; a takeover that
-    # fails hands the lock back to its owner as it was. A kill runs no trap,
-    # so the owner line says pending until the tracker step went through.
+    # A claim whose owner line cannot be written leaves no lock behind; a
+    # takeover that fails hands the lock back to its owner as it was.
     trap 'if [ -n "$own" ]; then echo "$own" > "$lock/owner"; else rm -rf "$lock"; fi' EXIT
-    echo "$me ${CLAUDE_PID-} pending" > "$lock/owner" || die "could not record the claim"
-    # An open PR puts the issue past In Progress: the label stays off, but
-    # the assignee is what the PR check reads, so it is still taken.
-    branch=$(cat "$rec" 2>/dev/null)
-    [ -z "$branch" ] || read -r n state _ <<<"$(pr "$branch")"
-    if [ "$(cfg tracker)" != jira ]; then
-      # Whose the issue is in the tracker: "<logins> in progress|-". Someone
-      # else's is refused unless --take, which takes their assignment away; a
-      # re-claim reads it again, so a takeover from another machine is caught.
-      # ponytail: read-then-edit, so two machines claiming inside the same
-      # round trip both succeed; re-read the assignees after the edit and
-      # release if anyone else landed, if that ever bites.
-      has=$(gh issue view "$issue" --json assignees,labels --jq '([.assignees[].login] | join(",")) + " " + (if any(.labels[]; .name == "in progress") then "in progress" else "-" end)') || die "could not read #$issue"
-      # ponytail: gh api goes to github.com (or GH_HOST), not the repo's host,
-      # so GitHub Enterprise sets GH_HOST; upgrade: --hostname from the remote URL.
-      login=$(gh api user --jq .login) || die "could not read who gh is signed in as"
-      who="${has%% *}"
-      case ",$who," in *",$login,"*) ;; *) # not mine, from any machine
-        [ "${3-}" = --take ] || [ -z "$who" ] || die "#$issue is assigned to $who. To take it over deliberately: bash \"$0\" claim $issue --take"
-        [ "${3-}" = --take ] || [ "${has#* }" != "in progress" ] || die "#$issue is in progress (assigned to nobody). To take it over deliberately: bash \"$0\" claim $issue --take"
-        drop="${who:+--remove-assignee $who}"
-        [ -z "$who" ] || note="${note:+$note; }reassigned #$issue from $who" ;; # a lock refusal said nothing of them
-      esac
-      # Idempotent, so a re-claim changes nothing in the tracker.
-      if [ "$state" = OPEN ]; then
-        gh issue edit "$issue" --add-assignee @me $drop >/dev/null || die "could not assign #$issue"
-      else
-        gh label create "in progress" >/dev/null 2>&1
-        gh issue edit "$issue" --add-assignee @me $drop --add-label "in progress" >/dev/null || die "could not move #$issue to In Progress"
-        gh issue view "$issue" --json labels --jq '.labels[].name' | grep -qx "in progress" || die "#$issue does not carry the 'in progress' label"
-      fi
-    fi
-    # ponytail: Jira is reachable only through MCP tools, so for jira this
+    # ponytail: the tracker is reachable only through MCP tools, so this
     # records the transition the skill just made instead of verifying it.
-    # Upgrade path: a PostToolUse hook on the Atlassian transition tool.
+    # Upgrade path: a PostToolUse hook on the tracker's write tool.
     echo "$me ${CLAUDE_PID-}" > "$lock/owner" || die "could not record the claim"
     trap - EXIT
     [ -z "$note" ] || echo "$note"
-    if [ -n "$again" ]; then echo "in progress: $issue (already claimed by this session)"
-    elif [ "$state" = OPEN ]; then echo "claimed: $issue (PR #$n is open, assigned without the label)"
-    else echo "in progress: $issue"; fi ;;
+    if [ -n "$again" ]; then echo "claimed: $issue (already by this session)"; else echo "claimed: $issue"; fi ;;
 
   push)
     msg="${3-}"
@@ -324,8 +281,15 @@ case "$cmd" in
 
   sweep)
     # Runs at skill load (next, start): quiet, never failing, and whatever it
-    # cannot prove finished stays. Finished means the branch's PR is merged
-    # and the worktree holds nothing beyond that PR's last commit.
+    # cannot prove finished stays. Finished means the worktree's last commit
+    # reached $base on the remote through a merge commit and nothing is
+    # uncommitted: read from git alone, no tracker. On $base's own
+    # first-parent line that commit is a worktree started from $base with
+    # nothing of its own yet, which stays.
+    # ponytail: a squash or rebase merge leaves no ancestor, so that worktree
+    # stays until removed by hand; feed sweep the PR's state if that bites.
+    git fetch -q origin "$base" >/dev/null 2>&1
+    line=$(git rev-list --first-parent "origin/$base" 2>/dev/null)
     for rec in .git/coddy/*.branch; do
       issue=$(basename "$rec" .branch); wt=".worktrees/$issue"; branch=$(cat "$rec" 2>/dev/null)
       case "$issue" in ''|*[!A-Za-z0-9_-]*) continue ;; esac
@@ -333,25 +297,22 @@ case "$cmd" in
       # ponytail: compared as strings, so a session that reached its
       # worktree through a symlink is not recognised as being inside it.
       case "${CLAUDE_PROJECT_DIR-}/ $OLDPWD/" in *"$root/$wt/"*) continue ;; esac
-      read -r n state oid <<<"$(pr "$branch")"
-      [ "$state" = MERGED ] || continue
+      if [ "$tool" = jj ]; then
+        tip=$(jj -R "$wt" log --no-graph -r @- -T commit_id 2>/dev/null); dirty=$(jj -R "$wt" diff --summary 2>/dev/null)
+      else
+        tip=$(git -C "$wt" rev-parse HEAD 2>/dev/null); dirty=$(git -C "$wt" status --porcelain 2>/dev/null)
+      fi
+      [ -n "$tip" ] && git merge-base --is-ancestor "$tip" "origin/$base" 2>/dev/null || continue
+      case "$line" in *"$tip"*) continue ;; esac
       # Another session whose process still runs keeps its worktree, as the
       # guard and push hold to the lock's owner: a gone owner, a lock with no
       # owner or this session's own are swept. The owner line reads as in claim.
       me="${CLAUDE_CODE_SESSION_ID-}" own=$(cat ".git/coddy/$issue/owner" 2>/dev/null)
       sid="${own%% *}" pid="${own#* }"; pid="${pid%% *}"
       if [ -n "$sid" ] && ! mine && alive "$pid"; then
-        echo "kept: $issue (PR #$n merged, session $sid still holds it)"; continue
+        echo "kept: $issue (merged into $base, session $sid still holds it)"; continue
       fi
-      if [ "$tool" = jj ]; then
-        tip=$(jj -R "$wt" log --no-graph -r @- -T commit_id 2>/dev/null); dirty=$(jj -R "$wt" diff --summary 2>/dev/null)
-      else
-        tip=$(git -C "$wt" rev-parse HEAD 2>/dev/null); dirty=$(git -C "$wt" status --porcelain 2>/dev/null)
-      fi
-      [ -n "$tip" ] || continue
-      if [ -n "$dirty" ] || [ "$tip" != "$oid" ]; then
-        echo "kept: $issue (PR #$n merged, but $wt holds work that is not in it)"; continue
-      fi
+      if [ -n "$dirty" ]; then echo "kept: $issue (merged into $base, but $wt holds uncommitted work)"; continue; fi
       if [ "$tool" = jj ]; then
         jj workspace forget "$issue" >/dev/null 2>&1 || continue
         rm -rf "$wt"; jj bookmark forget "$branch" >/dev/null 2>&1
