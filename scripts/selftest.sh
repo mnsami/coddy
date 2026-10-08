@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs the scripts against a throwaway repo with a local bare remote and a
 # stub gh: both worktree tools, the claim and its lock, the push, the edit
-# guard, the shell tripwire and the PR check's run block.
+# guard, the shell tripwire, the PR check's run block and tree.sh's owners
+# line.
 # Usage: bash scripts/selftest.sh
 set -u
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -340,6 +341,22 @@ t 1 "config: the shell edit to a shared config is undone" grep -q '^verify: true
 mkdir -p .worktrees/other
 t 0 "tree.sh lists a claimed issue with its branch" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/tree.sh' | grep -q '^worktrees: .*43=feat/43-thing'"
 t 1 "tree.sh skips an unclaimed directory" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/tree.sh' | grep -q other"
+# owns <issue=owner> [session] [pid]: tree.sh, run as that session, lists that owner
+owns() { CLAUDE_CODE_SESSION_ID=${2-sess-a} CLAUDE_PID=${3-$$} CLAUDE_PROJECT_DIR="$repo" bash "$here/scripts/tree.sh" | grep -q "^owners: .*$1"; }
+t 0 "tree.sh owners: this session's claim is me" owns "43=me"
+t 0 "tree.sh owners: still me under a new session id (/clear)" owns "43=me" sess-b
+t 0 "tree.sh owners: still me from a new process (--resume)" owns "43=me" sess-a 1
+mkdir .git/coddy/other; echo "sess-d $(sh -c 'echo $$')" > .git/coddy/other/owner # that shell has exited
+t 0 "tree.sh owners: another session whose process exited is gone" owns "other=sess-d (gone)"
+echo "sess-e 1" > .git/coddy/other/owner
+t 0 "tree.sh owners: another session whose process runs is running" owns "other=sess-e (running)"
+echo "sess-e $$" > .git/coddy/other/owner
+PATH="$tmp/nops:$PATH" t 0 "tree.sh owners: a running process is running with no ps on PATH" owns "other=sess-e (running)" sess-a 1
+echo "sess-f " > .git/coddy/other/owner
+t 0 "tree.sh owners: another session without a pid is running, as claim reads it" owns "other=sess-f (running)"
+rm -r .git/coddy/other; : > .git/coddy/other
+t 0 "tree.sh owners: a marker from before locks is unknown" owns "other=unknown"
+rm .git/coddy/other
 t 0 "config.sh finds the config from inside a worktree" sh -c "CLAUDE_PROJECT_DIR='$repo/.worktrees/43' bash '$here/scripts/config.sh' | grep -q '^tracker:'"
 # detect <line> [VAR=value...]: detect.sh prints exactly that line
 detect() { line=$1; shift; env CLAUDE_PROJECT_DIR="$repo" "$@" "$BASH" "$here/scripts/detect.sh" 2>/dev/null | grep -qx "$line"; }
