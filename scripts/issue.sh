@@ -325,6 +325,14 @@ case "$cmd" in
       case "${CLAUDE_PROJECT_DIR-}/ $OLDPWD/" in *"$root/$wt/"*) continue ;; esac
       read -r n state oid <<<"$(pr "$branch")"
       [ "$state" = MERGED ] || continue
+      # Another session whose process still runs keeps its worktree, as the
+      # guard and push hold to the lock's owner: a gone owner, a lock with no
+      # owner or this session's own are swept. The owner line reads as in claim.
+      me="${CLAUDE_CODE_SESSION_ID-}" own=$(cat ".git/coddy/$issue/owner" 2>/dev/null)
+      sid="${own%% *}" pid="${own#* }"; pid="${pid%% *}"
+      if [ -n "$sid" ] && ! mine && alive "$pid"; then
+        echo "kept: $issue (PR #$n merged, session $sid still holds it)"; continue
+      fi
       if [ "$tool" = jj ]; then
         tip=$(jj -R "$wt" log --no-graph -r @- -T commit_id 2>/dev/null); dirty=$(jj -R "$wt" diff --summary 2>/dev/null)
       else
