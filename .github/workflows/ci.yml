@@ -1,0 +1,19 @@
+# What `verify` in .claude/coddy.yml runs locally, on every push to main and
+# every PR. jj comes from its release binary so the self-test runs both
+# worktree legs; git, jq and node are on the runner image already.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install jj
+        run: curl -fsSL https://github.com/jj-vcs/jj/releases/download/v0.46.0/jj-v0.46.0-x86_64-unknown-linux-musl.tar.gz | sudo tar -xz -C /usr/local/bin ./jj
+      - run: bash scripts/selftest.sh
+      - run: npm install -g @anthropic-ai/claude-code
+      # no --strict: the warning about CLAUDE.md at the plugin root is expected
+      - run: claude plugin validate .
