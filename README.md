@@ -80,9 +80,11 @@ the `in progress` label comes off as soon as the PR opens, and the check
 runs again on every push. It is keyed on the closing reference, not the
 branch name, so it is the one layer that holds for a cloud agent, or for
 any branch coddy did not name. GitHub Issues only: a Jira PR carries no
-closing reference and would fail it. GitHub links `Closes #<n>` only on a
-PR against the repository's default branch, so `default_branch` must be
-that branch, or link the issue by hand in the PR sidebar. `/coddy:onboard`
+closing reference and would fail it. GitHub computes the references only
+on a PR against the repository's default branch; on a PR stacked on
+another branch the check reads the closing keywords in the description
+itself, so there the keyword is what counts and a link made only in the
+sidebar is not seen. `/coddy:onboard`
 offers to copy it to `.github/workflows/coddy.yml`, or copy the file
 yourself, and makes it a required check when it is also protecting the
 default branch; otherwise add the check, `closes a claimed issue`, to the
