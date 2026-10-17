@@ -379,7 +379,7 @@ tripped 2 "config: rewriting it trips" 'echo "verify: true" >> .claude/coddy.yml
 t 0 "config: restored after the rewrite" same
 tripped 2 "config: removing .claude/ trips" 'rm -rf .claude'
 t 0 "config: restored after .claude/ was removed" same
-# A shared (committed) config that changes through git is not a bypass.
+# A shared (committed) config that changes through git is restored too: the user accepts it with /coddy:config.
 # The legs merged branches into main on the remote: the local commits above go on
 # top. git reset first: jj colocation left the untracked files as intent-to-add
 # index entries, which a rebase refuses to start over.
@@ -387,8 +387,8 @@ git reset -q && git pull -q --rebase origin main
 git add -f .claude/coddy.yml; git commit -q -m "share config"; git push -q origin HEAD:main
 git clone -q -b main "$tmp/origin.git" "$tmp/mate" 2>/dev/null
 (cd "$tmp/mate" && echo "roadmap: docs/ROADMAP.md" >> .claude/coddy.yml && git commit -q -am "roadmap" && git push -q origin HEAD:main)
-tripped 0 "config: a pulled change to a shared config stands" 'git fetch -q origin && git merge -q --ff-only origin/main'
-t 0 "config: the pulled change is kept" grep -q '^roadmap:' .claude/coddy.yml
+tripped 2 "config: a pulled change to a shared config is restored" 'git fetch -q origin && git merge -q --ff-only origin/main'
+t 1 "config: the pulled change waits for /coddy:config" grep -q '^roadmap:' .claude/coddy.yml
 tripped 2 "config: a shell edit to a shared config still trips" 'echo "verify: true" >> .claude/coddy.yml'
 t 1 "config: the shell edit to a shared config is undone" grep -q '^verify: true' .claude/coddy.yml
 

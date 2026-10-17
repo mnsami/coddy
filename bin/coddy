@@ -1,0 +1,596 @@
+#!/usr/bin/env bash
+# The coddy core: the mechanics of the workflow, and the guard that makes
+# its rules binding, with no agent dependency. Claude Code reaches it through
+# the shims under scripts/, which map its environment onto the inputs below.
+#   coddy start  <issue> <branch> [base-issue]   worktree at .worktrees/<issue> on <branch>, from default_branch or the base issue's branch (alias: create)
+#   coddy claim  <issue> [--take]   lock the issue for this session, move it to In Progress
+#   coddy ship   <issue> [message]  verify, then commit what is uncommitted and push (push: the push alone)
+#   coddy state  <issue> [key=value | key+=value ...]   print, or set, the issue's phase state for start and ship
+#   coddy verify <issue>            run the config's verify command in the issue's worktree, passing its exit code through
+#   coddy diff   <issue>            the worktree's diff against its base (default_branch on the remote, or the stacked issue's branch)
+#   coddy log    <issue> <path>...  the last 15 commits on the paths, on the issue's base
+#   coddy sweep                     remove what issues with a merged PR left behind
+#   coddy status                    the root, the config path and the claimed worktrees, for the prompts
+#   coddy config | detect           the config, or NOT_ONBOARDED; facts about the project for onboarding
+#   coddy guard                     PreToolUse hook on Edit/Write (hooks/hooks.json)
+#   coddy snap | trip               Pre/PostToolUse hooks on Bash
+# Inputs, all optional: CODDY_ROOT, where root resolution starts ($PWD
+# without it); CODDY_SESSION and CODDY_PID, the session id and process the
+# lock's owner line records and is compared with (a caller naming none is
+# not held to the owner); CODDY_AGENT_DIR, the agent's own directory under
+# the root, free to edit and skipped by snap, except its worktrees/<name>/,
+# held to <name>'s lock (none without it).
+# The config is .coddy.yml at the root, or .claude/coddy.yml from before.
+# An issue counts as In Progress once the lock .git/coddy/<issue>/ exists.
+# Only claim makes it (mkdir, so of two sessions claiming at once one wins;
+# a plain-file marker from before locks still counts until the next claim
+# replaces it with a lock); its owner file holds "<session> <pid>", and
+# another session's claim is refused unless --take is passed or the owner's
+# pid no longer runs. The tracker is reached only through MCP tools, so the
+# skill moves the issue to In Progress and claim records that it did.
+# guard rejects every edit that is not inside a claimed
+# worktree, or is inside one another session claimed (with "guard: warn" in
+# the config it lets the edit through and says so).
+# create records the issue's branch in .git/coddy/<issue>.branch, and push
+# pushes that branch and no other, for the lock's owner and no other session.
+# snap and trip fingerprint the main checkout around each shell command and
+# reject the command's result when it left new changes there.
+set -u
+
+# The project's main checkout, from CODDY_ROOT or the working directory: the
+# root, a subdirectory, an issue worktree (git or jj, whose workspace has no
+# .git and so reaches the main one) or an agent's own worktree. git names a
+# linked worktree's common dir by its real path, so the caller's own spelling
+# of it is put back: hook payloads use that one. Outside git, an issue
+# worktree is still stripped back to the root.
+dir="${CODDY_ROOT:-$PWD}"
+if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "$dir" && cd "$common/.." && pwd); then
+  rel=$(cd "$dir" && pwd -P); rel="${rel#"$root"/}"
+  case "$dir" in */"$rel") root="${dir%/"$rel"}" ;; esac
+else
+  root="$dir"
+  case "$root" in */.worktrees/*) root="${root%%/.worktrees/*}" ;; esac
+fi
+legacy=".claude/coddy.yml"
+# .coddy.yml when it exists, else the legacy file; trip asks again after it
+# has put the config back.
+confpath() { if [ -f "$root/.coddy.yml" ]; then conf="$root/.coddy.yml"; else conf="$root/$legacy"; fi; cname="${conf#"$root"/}"; }
+confpath
+self="${0##*/}" # how the caller names this command: coddy, or a shim's name
+code=1
+
+if [ "${1-}" = config ]; then
+  if [ -f "$conf" ]; then cat "$conf"; else echo "NOT_ONBOARDED"; fi; exit 0
+fi
+
+# Facts about the project that onboarding uses to pre-fill the config so it
+# only asks about what it cannot infer. Read-only and never fails loudly.
+if [ "${1-}" = detect ]; then
+  cd "$root" || exit 0
+  echo "config: $([ -f "$conf" ] && echo present || echo none)"
+  echo "legacy_config: $([ -f "$legacy" ] && echo present || echo none)"
+  echo "remote: $(git remote get-url origin 2>/dev/null || echo none)"
+  echo "jj: $(command -v jj >/dev/null 2>&1 && echo installed || echo missing)"
+  echo "jq: $(command -v jq >/dev/null 2>&1 && echo installed || echo missing)"
+  b=$( (git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main) | sed 's#^origin/##')
+  echo "default_branch: $b"
+  echo "pr_check: $([ -f .github/workflows/coddy.yml ] && echo present || echo none)"
+  echo "make_targets: $(grep -ohE '^[A-Za-z][A-Za-z0-9_-]*:' Makefile 2>/dev/null | tr -d : | tr '\n' ' ')"
+  echo "package_scripts: $(jq -r '.scripts // {} | keys | join(" ")' package.json 2>/dev/null)"
+  echo "go_modules: $(ls go.mod */go.mod 2>/dev/null | tr '\n' ' ')"
+  echo "roadmap: $(ls ROADMAP.md docs/ROADMAP.md .planning/ROADMAP.md 2>/dev/null | tr '\n' ' ')"
+  echo "config_ignored: $(git check-ignore -q .coddy.yml 2>/dev/null && echo yes || echo no)"
+  echo "recent_commits:"
+  git log --format='  %s' -n 15 2>/dev/null
+  echo "recent_branches:"
+  git for-each-ref --sort=-committerdate --format='  %(refname:short)' refs/heads refs/remotes 2>/dev/null | grep -v HEAD | head -8
+  exit 0
+fi
+
+# When process $1 started, as ps prints it with _ for spaces; empty when ps
+# cannot say (no ps, no such process).
+started() { [ -n "$1" ] && ps -o lstart= -p "$1" 2>/dev/null | awk '{$1=$1; gsub(/ /,"_")} 1'; }
+# The process $1 runs, and is the one that started at $2 when that is given:
+# a reused pid with another start time is gone. kill -0 needs no ps and sees
+# this user's processes; /proc sees everyone's on Linux, where images without
+# ps live; ps comes last, so a missing ps never reads as a dead owner, and a
+# start time ps cannot read counts as a match. No pid counts as running, as
+# claim reads it.
+alive() {
+  [ -z "$1" ] && return 0
+  kill -0 "$1" 2>/dev/null || [ -d "/proc/$1" ] || ps -p "$1" >/dev/null 2>&1 || return 1
+  now=$(started "$1"); [ -z "${2-}" ] || [ -z "$now" ] || [ "$now" = "$2" ]
+}
+die() { echo "coddy: $*" >&2; exit "$code"; }
+cfg() { sed -n "s/^$1:[[:space:]]*//p" "${2:-$conf}" | sed "s/[[:space:]]*#.*$//; s/^[\"']//; s/[\"']$//" | head -1; } # key $1, from the config or file $2
+# The lock's owner ($sid, $pid, $start) is this session ($me): the same
+# session id, or the same agent process, since Claude Code's /clear changes
+# the id and not the pid; a pid reused since the owner's start is not that process.
+mine() { [ "$sid" = "$me" ] || { [ -n "$pid" ] && [ "$pid" = "${CODDY_PID-}" ] && alive "$pid" "$start"; }; }
+# Issue $1's owner line, as claim wrote it ("<session> <pid> <start>"), into
+# $own, $sid, $pid and $start; all empty for a plain-file marker or a lock with
+# no owner yet, and $start for a line written before start times.
+owner() { own=$(cat "$root/.git/coddy/$1/owner" 2>/dev/null); read -r sid pid start _ <<<"$own"; }
+# This session's owner line.
+myline() { echo "$me ${CODDY_PID-} $(started "${CODDY_PID-}")"; }
+
+# The project root and its claimed issue worktrees, injected by /coddy:start,
+# /coddy:ship, /coddy:config and /coddy:next. A directory under .worktrees/
+# counts only once claim has recorded it, so worktrees coddy did not create
+# are never listed. Each is printed as issue=branch, with the branch create
+# recorded; under bases as issue=branch when create stacked it on another
+# issue's branch, which ship makes the PR's base; and under owners as
+# issue=<owner>: me when the lock is this session's (mine), another
+# session's id with (running) or (gone) by its pid (alive), or unknown for a
+# marker from before locks or an owner line that names no session.
+# Read-only and never fails loudly: its output is the prompt.
+if [ "${1-}" = status ]; then
+  cd "$root" || exit 0
+  me="${CODDY_SESSION-}" ws="" bases="" owners=""
+  for d in .worktrees/*/; do
+    n=$(basename "$d"); [ -e ".git/coddy/$n" ] || continue
+    b=$(cat ".git/coddy/$n.branch" 2>/dev/null); ws="$ws$n${b:+=$b} "
+    b=$(cat ".git/coddy/$n.base" 2>/dev/null); [ -z "$b" ] || bases="$bases$n=$b "
+    owner "$n"
+    if [ -z "$sid" ]; then o=unknown; elif mine; then o=me; elif alive "$pid" "$start"; then o="$sid (running)"; else o="$sid (gone)"; fi
+    owners="$owners$n=$o "
+  done
+  echo "root: $root"
+  echo "config: $([ -f "$conf" ] && echo "$cname" || echo none)"
+  echo "jj_repo: $([ -d .jj ] && echo yes || echo no)"
+  echo "worktrees: $ws"
+  echo "bases: $bases"
+  echo "owners: $owners"
+  exit 0
+fi
+
+if [ "${1-}" = guard ]; then
+  [ -f "$conf" ] || exit 0
+  code=2 # exit 2 is what blocks the tool call
+  # Without jq the path cannot be read, so every edit is blocked, in warn
+  # mode too: .coddy.yml must never go through unasked.
+  command -v jq >/dev/null || die "the edit guard needs jq"
+  # guard: warn lets the edit through and hands the agent the message as
+  # context instead. No permissionDecision, so the usual permission flow
+  # still applies.
+  if [ "$(cfg guard)" = warn ]; then
+    die() {
+      jq -cn --arg m "coddy warning, the edit was let through (guard: warn): $*" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $m}}'
+      exit 0
+    }
+  fi
+  # The hook's session_id is the editing session's CODDY_SESSION.
+  # jq once per field, not read per line: a path may hold a newline.
+  in=$(cat)
+  me=$(jq -r '.session_id // ""' <<<"$in")
+  f=$(jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' <<<"$in")
+  # A relative path is written against the hook's cwd, as the tool resolves it.
+  cwd=$(jq -r '.cwd // empty' <<<"$in"); case "$f" in ''|/*) ;; *) f="${cwd:-$PWD}/$f" ;; esac
+  # The physical path a write to $1 lands on: symlinks followed in every
+  # component (a dangling one creates its target), ./, // and .. collapsed.
+  # Fails when its directory does not exist, and no such path is the root.
+  # 40 links deep, as far as a kernel follows, so no chain a write can
+  # reach the file through is cut short here.
+  phys() { local p=$1 t i=0; while [ -L "$p" ] && [ "$i" -lt 40 ]; do t=$(readlink "$p"); case "$t" in /*) p=$t ;; *) p="${p%/*}/$t" ;; esac; i=$((i+1)); done; t="${p%/*}"; t=$(cd "${t:-/}" 2>/dev/null && pwd -P) && printf '%s/%s' "$t" "${p##*/}"; }
+  # The off switch for every hook here, and no sensitive-file prompt of the
+  # agent's own: the user allows each edit of it, in both modes, by whatever
+  # path the write reaches it: its own spelling or one with ./, // or ..; a
+  # symlink or hard link from a worktree or the agent dir (-ef: the same
+  # file); any case of its name, as a case-folding disk reads it.
+  at=$(phys "$f") || at=$f
+  if [ "$f" -ef "$root/.coddy.yml" ] || { [ "${at%/*}" = "$(cd "$root" && pwd -P)" ] && [ "$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')" = .coddy.yml ]; }; then
+    jq -cn --arg m "Editing .coddy.yml changes the coddy guardrails. Allow it only if you asked for this change (/coddy:config)." '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'
+    exit 0
+  fi
+  # ponytail: string-prefix match from here on, so a symlinked path into the
+  # project slips through; match on phys if that ever matters.
+  case "$f" in */../*) die "refusing a path containing '..': $f" ;; esac
+  agent="${CODDY_AGENT_DIR-}" issue=""
+  case "$f" in
+    "$root"/.worktrees/*) issue="${f#"$root"/.worktrees/}" ;;
+    "$root"/*)
+      # The agent's own directory is free, except its worktrees/<name>/,
+      # held to <name>'s lock as .worktrees/<name>/ is, or an unclaimed edit
+      # could hide there.
+      [ -z "$agent" ] || case "${f#"$root"/}" in
+        "$agent"/worktrees/*) issue="${f#"$root/$agent"/worktrees/}" ;;
+        "$agent"/*) exit 0 ;;
+      esac
+      [ -n "$issue" ] || die "edits belong in an issue worktree, not the main checkout. Run /coddy:start <issue>, then edit under .worktrees/<issue>/." ;;
+  esac
+  [ -n "$issue" ] || exit 0 # outside the project
+  issue="${issue%%/*}"
+  [ -e "$root/.git/coddy/$issue" ] || die "issue $issue is not In Progress yet. Run /coddy:start $issue."
+  # A lock with no owner line is a claim in flight, or one that died between
+  # its mkdir and that line.
+  [ ! -d "$root/.git/coddy/$issue" ] || [ -s "$root/.git/coddy/$issue/owner" ] || die "issue $issue's claim is in flight or died halfway. Run /coddy:start $issue."
+  # The lock's owner, as claim wrote it; a plain-file marker has none. A
+  # claim run by hand, or a hook payload without session_id, names no
+  # session, and then the edit is not held to the owner.
+  owner "$issue"
+  [ -z "$sid" ] || [ -z "$me" ] || mine ||
+    die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" && echo running || echo "not running")). Run /coddy:start $issue to take it over, or work on your own issue."
+  # The owner's edit from a new session id (/clear) or process (--resume)
+  # moves the lock along, as its re-claim would: a pid left behind reads
+  # as a dead owner to every other session.
+  [ -z "$sid" ] || [ -z "$me" ] || [ "$own" = "$(myline)" ] || myline > "$root/.git/coddy/$issue/owner" 2>/dev/null
+  exit 0
+fi
+
+# The main checkout's fingerprint: one line per dirty path with its content
+# hash, one for the default branch $b when it holds commits its remote branch
+# does not, and one for HEAD when it has left the default branch. A detached
+# HEAD on the default branch's own history counts as on it: that is where jj
+# leaves a synced checkout. Paths, not git status codes: jj colocation flips
+# untracked files to intent-to-add on its own.
+# Every dirty file is hashed by one git hash-object; a path holding a newline
+# is misread by --stdin-paths, as it already is by the line-based fingerprint.
+snap() {
+  cd "$root" 2>/dev/null || return 0
+  git merge-base --is-ancestor "refs/heads/$b" "refs/remotes/origin/$b" 2>/dev/null ||
+    { tip=$(git rev-parse -q --verify "refs/heads/$b" 2>/dev/null) && echo "commits on $b $tip"; }
+  at=$(git symbolic-ref -q --short HEAD 2>/dev/null); h=$(git rev-parse HEAD 2>/dev/null)
+  if [ -n "$at" ]; then
+    [ "$at" = "$b" ] || echo "branch $at $h"
+  elif ! git merge-base --is-ancestor HEAD "refs/remotes/origin/$b" 2>/dev/null; then
+    echo "detached HEAD $h"
+  fi
+  files=() n=0
+  while IFS= read -r -d '' e; do
+    # A staged rename or copy carries its source in the next field: a rename's
+    # source then reads as gone.
+    set -- "${e:3}"
+    case "$e" in [RC]*) IFS= read -r -d '' o; set -- "$1" "$o" ;; esac
+    for p; do
+      # The config paths are the lock's: a restored one differs from a pulled
+      # HEAD, and that is not the command's change to undo.
+      case "$p" in .coddy.yml|"$legacy") continue ;; esac
+      [ -z "${CODDY_AGENT_DIR-}" ] || case "$p" in "$CODDY_AGENT_DIR"/*) continue ;; esac
+      if [ -f "$p" ]; then files[n]="$p"; n=$((n+1)); else printf '%s gone\n' "$p"; fi
+    done
+  done < <(git status --porcelain -uall -z 2>/dev/null)
+  [ "$n" -gt 0 ] || return 0
+  printf '%s\n' "${files[@]}" | git hash-object --stdin-paths 2>/dev/null |
+    { i=0; while IFS= read -r hash; do printf '%s %s\n' "${files[i]}" "$hash"; i=$((i+1)); done; }
+}
+
+if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
+  # The snapshot is named by the tool use; an id that is not a plain word
+  # reads as none, so it cannot name a path outside TMPDIR.
+  id=$(jq -r '.tool_use_id // empty' 2>/dev/null)
+  case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
+  file="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
+  # What is at path $1: file, absent, dir, fifo or other (a dangling link, a
+  # socket, a device).
+  kind() { if [ -f "$1" ]; then echo file; elif [ -d "$1" ]; then echo dir; elif [ -p "$1" ]; then echo fifo; elif [ -e "$1" ] || [ -L "$1" ]; then echo other; else echo absent; fi; }
+  # Both config paths are kept, present or not: a .coddy.yml the command
+  # makes next to a live .claude/coddy.yml would shadow it. Each path's
+  # kind is recorded, with a copy of a file and the target of a link, so a
+  # record the command removed is told from a path that was absent. A
+  # config the user keeps as a link is kept as its content and its target.
+  if [ "$1" = snap ]; then
+    # A snapshot before every command, so trip can tell a command that
+    # removed it from one run outside the workflow: NOT_ONBOARDED alone where
+    # no config is, and the hooks stay inert.
+    rm -f "$file".*
+    [ -f "$conf" ] || { echo NOT_ONBOARDED > "$file"; exit 0; }
+    b=$(cfg default_branch); b="${b:-main}"
+    snap | LC_ALL=C sort > "$file"
+    for c in .coddy.yml "$legacy"; do
+      p="$root/$c" s="$file.${c//\//_}"
+      kind "$p" > "$s.kind"; [ ! -f "$p" ] || cp "$p" "$s"; [ ! -L "$p" ] || readlink "$p" > "$s.link"
+    done
+    exit 0
+  fi
+  code=2 msg="" keep=""
+  # The snapshot says whether the project was onboarded when the command
+  # started, so trip never looks at the config first: the command may have
+  # removed it, or made it. No snapshot, or one missing a path's record, or
+  # the copy a file's record promises, is one the command touched, and then
+  # what it did cannot be checked: rejected. Not onboarded then: quiet, the
+  # command that wrote the config included. The live config as snap saw it
+  # is the first path recorded as a file.
+  lost="that command left no snapshot of the main checkout at $file, so what it changed cannot be checked: a command may not touch the snapshot. Undo what it did."
+  [ -f "$file" ] || die "$lost"
+  grep -qx NOT_ONBOARDED "$file" && { rm -f "$file" "$file".*; exit 0; }
+  pre=""
+  for c in .coddy.yml "$legacy"; do
+    s="$file.${c//\//_}"; k=""; [ ! -f "$s.kind" ] || k=$(cat "$s.kind")
+    case "$k" in file) [ -f "$s" ] && pre="${pre:-$s}" ;; absent|dir|fifo|other) ;; *) false ;; esac || die "$lost"
+  done
+  [ -n "$pre" ] || die "$lost"
+  # The config is the off switch for every hook here, so a shell command may
+  # not change it: each path that changed is put back as it was, whatever
+  # the command did. A pull or checkout that brought another config is put
+  # back too, since nothing a shell command run as the same user can write
+  # (a ref, an object, a git config) tells it from a forged one; the report
+  # names /coddy:config, which accepts it from HEAD with the user's say-so.
+  # A link that was not there, or points elsewhere, or a directory in the
+  # file's place is a change whatever it holds: a link reaches a file the
+  # lock does not watch; a link the user keeps there, as it was, is not.
+  # What is put back is a plain file. TMPDIR is the command's to write too,
+  # so nothing there is opened unless it is a plain file: a FIFO planted at
+  # a snapshot name would hang trip. The legacy file is let go once
+  # .coddy.yml is live (settled first, above): it is ignored then and cannot
+  # change the effective config. The default branch is read from the
+  # snapshot's copy of the config, as snap read it, not from what the
+  # command left.
+  b=$(cfg default_branch "$pre" 2>/dev/null); b="${b:-main}"
+  for c in .coddy.yml "$legacy"; do
+    p="$root/$c" s="$file.${c//\//_}"
+    { [ "$c" = "$legacy" ] && [ -f "$root/.coddy.yml" ]; } && continue
+    # Unchanged: the same link target (none for a plain file), the same kind
+    # and, for a file, the same content.
+    was=""; [ ! -f "$s.link" ] || was=$(cat "$s.link")
+    k=""; [ ! -f "$s.kind" ] || k=$(cat "$s.kind")
+    [ "$(readlink "$p" 2>/dev/null)" = "$was" ] && [ "$(kind "$p")" = "$k" ] && { [ "$k" != file ] || cmp -s "$p" "$s"; } && continue
+    rm -rf "$p"
+    # A copy that cannot be written back is kept, and the report says so,
+    # rather than claiming the file is back.
+    if [ ! -f "$s" ]; then what=removed
+    elif mkdir -p "${p%/*}" && cp "$s" "$p"; then what=restored
+    else what="removed, and could not be put back: restore it by hand from the copy at $s"; keep=1
+    fi
+    msg="${msg}that command changed $c, which switches the coddy guardrails, so it has been $what. "
+  done
+  [ -z "$msg" ] || msg="${msg}If that came from git (a pull or checkout), accept it with /coddy:config; other settings change there too, and leaving the workflow is for the user to do by hand. "
+  confpath
+  # Only lines that are new count, so undoing a change never trips the wire.
+  added=$(snap | LC_ALL=C sort | LC_ALL=C comm -13 "$file" - | sed 's/ [^ ]*$//' | tr '\n' ' ' | sed 's/ $//')
+  rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*
+  [ -n "$added" ] && msg="${msg}that command changed the main checkout: $added. Issue work belongs in .worktrees/<issue>/. Undo it."
+  [ -z "$msg" ] && exit 0
+  die "$msg"
+fi
+
+[ -f "$conf" ] || { [ "${1-}" = sweep ] && exit 0; die "NOT_ONBOARDED"; }
+cd "$root" || die "cannot enter $root"
+cmd="${1-}" issue="${2-}"
+[ "$cmd" = sweep ] || case "$issue" in ''|*[!A-Za-z0-9_-]*) die "issue id must look like 42 or ABC-123, got '$issue'" ;; esac
+wt=".worktrees/$issue" rec=".git/coddy/$issue.branch"
+tool=$(cfg worktree); tool="${tool:-jj}"
+base=$(cfg default_branch); base="${base:-main}"
+
+# The worktree sits on branch $1: checked out (git), an ancestor of @ (jj).
+on() {
+  if [ "$tool" = jj ]; then
+    [ -n "$(jj -R "$wt" log --no-graph -r "bookmarks(exact:\"$1\") & ::@" -T '"x"' 2>/dev/null)" ]
+  else
+    [ "$(git -C "$wt" branch --show-current)" = "$1" ]
+  fi
+}
+record() { mkdir -p .git/coddy && echo "$branch" > "$rec" || die "could not record the branch"; }
+has() { [ -n "$(jj log --no-graph -r "$1" -T '"x"' 2>/dev/null)" ]; } # a jj revset matches
+# The config's verify command, run in the worktree; its exit code is the result.
+verify() {
+  [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
+  v=$(cfg verify); [ -n "$v" ] || die "no verify command in $cname"
+  (cd "$wt" && sh -c "$v")
+}
+
+case "$cmd" in
+  start|create)
+    branch="${3-}"; [ -n "$branch" ] || die "usage: $self $cmd <issue> <branch> [base-issue]"
+    [ "$branch" != "$base" ] || die "$base is the default branch, not an issue branch"
+    # A new branch starts from $base on the remote, or, given a base issue,
+    # from that issue's recorded branch as it stands here (pushed or not),
+    # which is recorded too and becomes the PR's base in ship.
+    onto="${4-}" from=""
+    if [ -n "$onto" ]; then
+      case "$onto" in *[!A-Za-z0-9_-]*) die "base issue id must look like 42 or ABC-123, got '$onto'" ;; esac
+      from=$(cat ".git/coddy/$onto.branch" 2>/dev/null); [ -n "$from" ] || die "issue $onto has no worktree here to stack on. Run /coddy:start $onto first."
+    fi
+    other=$(grep -lxF -- "$branch" .git/coddy/*.branch 2>/dev/null | grep -vxF -- "$rec" | head -1)
+    [ -z "$other" ] || die "branch $branch belongs to issue $(basename "$other" .branch)"
+    if [ -d "$wt" ]; then
+      if [ -s "$rec" ]; then
+        [ "$(cat "$rec")" = "$branch" ] || die "$wt is on $(cat "$rec"), not $branch"
+      else
+        # A worktree from before the branch was recorded: record it now, but
+        # only a branch the worktree really is on.
+        on "$branch" || die "$wt is not on $branch"
+        record
+      fi
+      echo "exists: $wt"; exit 0
+    fi
+    mkdir -p .worktrees
+    git check-ignore -q .worktrees || echo '.worktrees/' >> .git/info/exclude
+    # A branch that exists, here or only on the remote, is continued; any
+    # other name starts a new branch from $base.
+    if [ "$tool" = jj ]; then
+      command -v jj >/dev/null || die "jj is not installed. Install it or set 'worktree: git' in $cname."
+      [ -d .jj ] || die "this repo is not jj-backed. Ask the user, then run: jj git init --colocate && echo '.jj/' >> .git/info/exclude"
+      jj git fetch || die "fetch failed"
+      mine="bookmarks(exact:\"$branch\")"
+      if ! has "$mine" && has "remote_bookmarks(exact:\"$branch\", exact:\"origin\")"; then
+        jj bookmark track "$branch@origin" || die "could not track $branch@origin"
+      fi
+      if has "$mine"; then
+        jj workspace add --name "$issue" -r "\"$branch\"" "$wt" || die "could not create the jj workspace"
+      else
+        start="$base@origin"; [ -z "$from" ] || start="\"$from\""
+        jj workspace add --name "$issue" -r "$start" "$wt" || die "could not create the jj workspace"
+        jj -R "$wt" bookmark create "$branch" -r @ || die "could not create branch $branch"
+      fi
+    else
+      git fetch origin || die "fetch failed"
+      if git show-ref -q "refs/heads/$branch" "refs/remotes/origin/$branch"; then
+        git worktree add "$wt" "$branch" || die "could not create the git worktree"
+      else
+        git worktree add --no-track -b "$branch" "$wt" "${from:-origin/$base}" || die "could not create the git worktree"
+      fi
+    fi
+    record
+    [ -z "$from" ] || echo "$from" > ".git/coddy/$issue.base" || die "could not record the base"
+    echo "created: $wt on $branch${from:+ onto $from}" ;;
+
+  claim)
+    [ -d "$wt" ] || die "create the worktree first: $self create $issue <branch>"
+    lock=".git/coddy/$issue" me="${CODDY_SESSION-}" note="" own="" again=""
+    # A marker from before claims were locks is a plain file: nobody owns it;
+    # the claim replaces it. rm -f never removes the lock another session
+    # just made of it, so the mkdir race stays atomic.
+    [ -f "$lock" ] && rm -f "$lock"
+    mkdir -p .git/coddy || die "could not record the claim"
+    if ! mkdir "$lock" 2>/dev/null; then
+      for i in 1 2 3 4 5; do [ -s "$lock/owner" ] && break; sleep 0.1; done # the winner writes owner right after its mkdir
+      owner "$issue"
+      if [ ! -s "$lock/owner" ]; then
+        # A claim in flight, or one that died between its mkdir and its owner line.
+        [ "${3-}" = --take ] || die "issue $issue is being claimed right now, or that claim died halfway: retry, or take it over with bash \"$0\" claim $issue --take"
+      # A re-claim: the lock then names this session's current id and pid
+      # (/clear changes the one, --resume the other); $own stays, for the trap.
+      elif mine; then again=1
+      elif [ "${3-}" = --take ]; then note="taken over: $issue from session $sid (--take)"
+      elif ! alive "$pid" "$start"; then note="taken over: $issue from session $sid (pid $pid is not running)"
+      else die "issue $issue is claimed by session $sid (pid $pid, running). To take it over deliberately: bash \"$0\" claim $issue --take"
+      fi
+    fi
+    # A claim whose owner line cannot be written leaves no lock behind; a
+    # takeover that fails hands the lock back to its owner as it was.
+    trap 'if [ -n "$own" ]; then echo "$own" > "$lock/owner"; else rm -rf "$lock"; fi' EXIT
+    # ponytail: the tracker is reachable only through MCP tools, so this
+    # records the transition the skill just made instead of verifying it.
+    # Upgrade path: a PostToolUse hook on the tracker's write tool.
+    myline > "$lock/owner" || die "could not record the claim"
+    trap - EXIT
+    [ -z "$note" ] || echo "$note"
+    if [ -n "$again" ]; then echo "claimed: $issue (already by this session)"; else echo "claimed: $issue"; fi ;;
+
+  ship|push)
+    msg="${3-}"
+    [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
+    [ -e ".git/coddy/$issue" ] || die "issue $issue is not In Progress. Run /coddy:start $issue."
+    # Held to the lock's owner as the guard is: a lock or a push that names
+    # no session (a script run by hand) is not.
+    me="${CODDY_SESSION-}"; owner "$issue"
+    [ -z "$sid" ] || [ -z "$me" ] || mine || die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" && echo running || echo "not running")). Ship it from that session, or run /coddy:start $issue to take it over."
+    # The branch create recorded, never one read off the history: once $base
+    # is merged in, the history holds the branches of merged issues too.
+    branch=$(cat "$rec" 2>/dev/null)
+    [ -n "$branch" ] || die "no branch recorded for $issue. Record it: $self create $issue <branch>"
+    if [ "$cmd" = ship ]; then verify; r=$?; [ "$r" = 0 ] || die "verify failed (exit $r): fix it in $wt before shipping"; fi
+    [ "$branch" != "$base" ] && on "$branch" || die "$wt is not on issue branch $branch"
+    if [ "$tool" = jj ]; then dirty=$(jj -R "$wt" diff --summary); else dirty=$(git -C "$wt" status --porcelain); fi
+    if [ -n "$dirty" ]; then
+      [ -n "$msg" ] || die "uncommitted changes in $wt: pass a commit message"
+      if [ "$tool" = jj ]; then
+        jj -R "$wt" commit -m "$msg" || die "commit failed"
+      else
+        git -C "$wt" add -A && git -C "$wt" commit -q -m "$msg" || die "commit failed"
+      fi
+    fi
+    if [ "$tool" = jj ]; then
+      jj -R "$wt" bookmark set "$branch" -r @- || die "nothing committed on $branch"
+      jj -R "$wt" git push --bookmark "$branch" || die "push failed"
+    else
+      git -C "$wt" push -u origin HEAD || die "push failed"
+    fi
+    echo "pushed: $branch" ;;
+
+  sweep)
+    # Runs at skill load (next, start): quiet, never failing, and whatever it
+    # cannot prove finished stays. Finished means the worktree's work reached
+    # $base on the remote and nothing is uncommitted: read from git alone, no
+    # tracker. On $base's own first-parent line the last commit is a worktree
+    # started from $base with nothing of its own yet, which stays.
+    git fetch -q origin "$base" >/dev/null 2>&1
+    line=$(git rev-list --first-parent "origin/$base" 2>/dev/null)
+    # $tip landed in origin/$base: as an ancestor (a merge commit), as an
+    # upstream copy of every commit since the fork (a rebase merge), or as one
+    # upstream commit holding the fork's whole diff (a squash merge).
+    # ponytail: matched by patch id, so a squash or rebase whose conflicts
+    # were resolved upstream is not seen and stays; read the PR state if that bites.
+    landed() {
+      if git merge-base --is-ancestor "$tip" "origin/$base" 2>/dev/null; then
+        case "$line" in *"$tip"*) return 1 ;; esac; return 0
+      fi
+      fork=$(git merge-base "$tip" "origin/$base" 2>/dev/null) || return 1
+      cherry=$(git cherry "origin/$base" "$tip" "$fork" 2>/dev/null) || return 1
+      [ -n "$cherry" ] && ! grep -q '^+' <<<"$cherry" && return 0
+      id=$(git diff "$fork" "$tip" 2>/dev/null | git patch-id --stable | cut -d' ' -f1)
+      [ -n "$id" ] && git log -p --no-merges "$fork..origin/$base" 2>/dev/null | git patch-id --stable | grep -q "^$id "
+    }
+    for rec in .git/coddy/*.branch; do
+      issue=$(basename "$rec" .branch); wt=".worktrees/$issue"; branch=$(cat "$rec" 2>/dev/null)
+      case "$issue" in ''|*[!A-Za-z0-9_-]*) continue ;; esac
+      [ -n "$branch" ] && [ -e ".git/coddy/$issue" ] && [ -d "$wt" ] || continue
+      # ponytail: compared as strings, so a session that reached its
+      # worktree through a symlink is not recognised as being inside it.
+      case "${CODDY_ROOT-}/ ${OLDPWD-}/" in *"$root/$wt/"*) continue ;; esac
+      if [ "$tool" = jj ]; then
+        tip=$(jj -R "$wt" log --no-graph -r @- -T commit_id 2>/dev/null); dirty=$(jj -R "$wt" diff --summary 2>/dev/null)
+      else
+        tip=$(git -C "$wt" rev-parse HEAD 2>/dev/null); dirty=$(git -C "$wt" status --porcelain 2>/dev/null)
+      fi
+      [ -n "$tip" ] && landed || continue
+      # Another session whose process still runs keeps its worktree, as the
+      # guard and push hold to the lock's owner: a gone owner, a lock with no
+      # owner or this session's own are swept.
+      me="${CODDY_SESSION-}"; owner "$issue"
+      if [ -n "$sid" ] && ! mine && alive "$pid" "$start"; then
+        echo "kept: $issue (merged into $base, session $sid still holds it)"; continue
+      fi
+      if [ -n "$dirty" ]; then echo "kept: $issue (merged into $base, but $wt holds uncommitted work)"; continue; fi
+      if [ "$tool" = jj ]; then
+        jj workspace forget "$issue" >/dev/null 2>&1 || continue
+        rm -rf "$wt"; jj bookmark forget "$branch" >/dev/null 2>&1
+      else
+        git worktree remove "$wt" >/dev/null 2>&1 || continue
+        git branch -D "$branch" >/dev/null 2>&1
+      fi
+      rm -rf ".git/coddy/$issue" "$rec" ".git/coddy/$issue.base"; echo "cleaned: $issue"
+    done
+    exit 0 ;;
+
+  verify) verify; exit $? ;;
+
+  diff|log)
+    [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
+    # The stacked base, while its branch still resolves (a merged base is
+    # removed by sweep); else default_branch on the remote.
+    from=$(cat ".git/coddy/$issue.base" 2>/dev/null)
+    if [ -n "$from" ]; then
+      if [ "$tool" = jj ]; then has "\"$from\"" || from=""; else git rev-parse -q --verify "refs/heads/$from" >/dev/null || from=""; fi
+    fi
+    if [ "$cmd" = log ]; then
+      shift 2; git log --oneline -15 "${from:-origin/$base}" -- "$@"; exit $?
+    fi
+    if [ "$tool" = jj ]; then
+      if [ -n "$from" ]; then from="\"$from\""; else from="$base@origin"; fi
+      jj -R "$wt" diff -r "$from..@"
+    else
+      git -C "$wt" diff "${from:-origin/$base}...HEAD"
+    fi
+    exit $? ;;
+
+  state)
+    # start's phase state: key=value lines in the lock directory, so sweep
+    # removes them with the lock. Anyone may read; only the lock's owner
+    # writes, held as push is. Values are written, never evaluated.
+    lock=".git/coddy/$issue" f=".git/coddy/$issue/state"
+    [ -e "$lock" ] || die "issue $issue is not In Progress. Run /coddy:start $issue."
+    [ $# -gt 2 ] || { cat "$f" 2>/dev/null; exit 0; }
+    [ -d "$lock" ] || die "issue $issue's claim is from before locks. Run /coddy:start $issue to re-claim it."
+    me="${CODDY_SESSION-}"; owner "$issue"
+    [ -z "$sid" ] || [ -z "$me" ] || mine || die "the worktree of issue $issue belongs to session $sid. Run /coddy:start $issue to take it over."
+    shift 2
+    for kv; do # validate everything first: a bad argument writes nothing
+      case "$kv" in *=*) ;; *) die "state takes key=value or key+=value, got '$kv'" ;; esac
+      k="${kv%%=*}" v="${kv#*=}"
+      case "$k" in *+) k="${k%+}" ;; esac
+      case "$k" in ''|*[!a-z_]*) die "state keys are lower case words, got '$k'" ;; esac
+      case "$v" in *"
+"*) die "state values are one line" ;; esac
+    done
+    for kv; do
+      k="${kv%%=*}" v="${kv#*=}" add=""
+      case "$k" in *+) add=1 k="${k%+}" ;; esac
+      if [ -n "$add" ]; then
+        printf '%s=%s\n' "$k" "$v" >> "$f" || die "could not write $f"
+      else
+        { grep -v "^$k=" "$f" 2>/dev/null; printf '%s=%s\n' "$k" "$v"; } > "$f.tmp" && mv "$f.tmp" "$f" || die "could not write $f"
+      fi
+    done ;;
+  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | sweep | status | config | detect | guard" ;;
+esac

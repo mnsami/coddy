@@ -45,7 +45,7 @@ Go signals: still in use at the end of 4 weeks of dogfooding; at least 3 of 5 co
 
 ### M2 · Agent-agnostic core
 Extract a `coddy` CLI core with no Claude Code dependencies; Claude Code becomes the first adapter.
-- #27 Extract an agent-agnostic coddy CLI core
+- #27 Extract an agent-agnostic coddy CLI core: `bin/coddy` on `CODDY_*` inputs and `.coddy.yml`, with `scripts/*.sh` as the Claude Code adapter (done)
 - #28 Write an AGENTS.md section at onboarding and keep skills portable
 - #16 Post the restated acceptance criteria back to the issue (closed, folded into #88)
 
