@@ -4,7 +4,9 @@
 . "${0%/*}/root.sh"
 cd "$root" || exit 0
 echo "config: $([ -f .claude/coddy.yml ] && echo present || echo none)"
-echo "remote: $(git remote get-url origin 2>/dev/null || echo none)"
+remote=$(git remote get-url origin 2>/dev/null || echo none)
+remote=$(printf '%s\n' "$remote" | sed -E 's#(://)[^/@]*@#\1#')
+echo "remote: $remote"
 echo "jj: $(command -v jj >/dev/null 2>&1 && echo installed || echo missing)"
 echo "jq: $(command -v jq >/dev/null 2>&1 && echo installed || echo missing)"
 b=$( (git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main) | sed 's#^origin/##')

@@ -438,12 +438,23 @@ for d in "" /sub/dir /.worktrees/43 /.claude/worktrees/x; do t 0 "root: resolved
 git worktree remove --force .claude/worktrees/x; rm -r sub
 # detect <line> [VAR=value...]: detect.sh prints exactly that line
 detect() { line=$1; shift; env CLAUDE_PROJECT_DIR="$repo" "$@" "$BASH" "$here/scripts/detect.sh" 2>/dev/null | grep -qx "$line"; }
+detect_remote() {
+  local expected=$1 url=$2 output
+  git remote set-url origin "$url" || return 1
+  output=$(env CLAUDE_PROJECT_DIR="$repo" "$BASH" "$here/scripts/detect.sh" 2>/dev/null) || return 1
+  printf '%s\n' "$output" | grep -Fxq "remote: $expected" &&
+    ! printf '%s\n' "$output" | grep -Fq 'coddy-test-secret'
+}
 t 0 "detect.sh reports an installed jq" detect 'jq: installed'
 t 0 "detect.sh reports a missing jq" detect 'jq: missing' PATH="$tmp/bin"
 t 0 "detect.sh reports no PR check" detect 'pr_check: none'
 mkdir -p .github/workflows && : > .github/workflows/coddy.yml
 t 0 "detect.sh reports the PR check once its workflow exists" detect 'pr_check: present'
 rm -r .github
+t 0 "detect.sh strips credentials from an HTTPS remote" detect_remote 'https://host/x.git' 'https://u:coddy-test-secret@host/x.git'
+t 0 "detect.sh preserves an ordinary HTTPS remote" detect_remote 'https://host/x.git' 'https://host/x.git'
+t 0 "detect.sh preserves an SCP-style SSH remote" detect_remote 'git@example.com:owner/repo.git' 'git@example.com:owner/repo.git'
+git remote set-url origin "$tmp/origin.git"
 
 # The PR check's run block, as the workflow runs it (bash -e), with the stub
 # gh and the template's own env names, each set to itself, so the gh log
