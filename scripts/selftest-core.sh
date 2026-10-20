@@ -159,7 +159,7 @@ rm -r .claude/coddy
 # nothing; /coddy:migrate writes it. No version is 0, wherever the file is.
 mv .coddy.yml "$tmp/live.yml"
 printf '# team config\ntracker: github   # the tracker\nworktree: git\n\ndefault_branch: main\nverify: test -f ok.txt\n' > .claude/coddy.yml
-{ echo 'version: 1'; cat .claude/coddy.yml; } > "$tmp/v1.yml"
+{ echo 'version: 2'; cat .claude/coddy.yml; } > "$tmp/v1.yml"
 cp .claude/coddy.yml "$tmp/v0.yml"
 t 0 "migrate: a legacy file without version is 0" says '^from: 0$' run migrate
 t 0 "migrate: says it adds the version" says '^changed: add version: 1$' run migrate
@@ -171,14 +171,14 @@ git rm -q --cached .claude/coddy.yml
 printf 'version: 0\r\ntracker: github\r\n' > .claude/coddy.yml
 t 0 "migrate: a CRLF config reads its version" says '^from: 0$' run migrate
 cp "$tmp/v0.yml" .claude/coddy.yml
-t 0 "migrate: the file after --- is the expected v1, comments kept" sh -c "'$here/bin/coddy' migrate | sed '1,/^---\$/d' | cmp -s - '$tmp/v1.yml'"
+t 0 "migrate: the file after --- is the expected v2, comments kept" sh -c "'$here/bin/coddy' migrate | sed '1,/^---\$/d' | cmp -s - '$tmp/v1.yml'"
 t 0 "migrate: writes nothing" cmp -s .claude/coddy.yml "$tmp/v0.yml"
 t 1 "migrate: and makes no .coddy.yml" test -e .coddy.yml
 cp "$tmp/v1.yml" .coddy.yml
-t 0 "migrate: a v1 config next to a leftover legacy file says remove" says '^changed: remove .claude/coddy.yml$' run migrate
+t 0 "migrate: a current config next to a leftover legacy file says remove" says '^changed: remove .claude/coddy.yml$' run migrate
 t 1 "migrate: and prints no file" says '^---$' run migrate
 rm .claude/coddy.yml
-t 0 "migrate: a v1 config is current" says '^to: 1$' run migrate
+t 0 "migrate: a v2 config is current" says '^to: 2$' run migrate
 t 1 "migrate: and prints no change" says '^changed:' run migrate
 t 1 "migrate: nor a file" says '^---$' run migrate
 printf 'version: 99\ntracker: github\n' > .coddy.yml
@@ -189,14 +189,21 @@ t 0 "migrate: a version too long for bash is refused as newer" says 'update the 
 t 1 "migrate: with no bash error" says 'integer' run migrate
 printf 'version: 1 \ntracker: github\n' > .coddy.yml
 t 0 "migrate: a version with trailing whitespace is read" says '^from: 1$' run migrate
+t 0 "migrate: a v1 config moves to 2" says '^to: 2$' run migrate
+t 0 "migrate: says what step 2 changes" says '^changed: add version: 2, and worktree: jj when no worktree key is set$' run migrate
+t 1 "migrate: and runs no step 1" says '^changed: add version: 1$' run migrate
+printf 'version: 1\ntracker: github\n' > .coddy.yml; printf 'version: 2\nworktree: jj\ntracker: github\n' > "$tmp/want.yml"
+t 0 "migrate: a v1 config without worktree keeps jj" sh -c "'$here/bin/coddy' migrate | sed '1,/^---\$/d' | cmp -s - '$tmp/want.yml'"
+printf 'version: 1\ntracker: github\nworktree: git\n' > .coddy.yml; printf 'version: 2\ntracker: github\nworktree: git\n' > "$tmp/want.yml"
+t 0 "migrate: a v1 config with worktree gets the version alone" sh -c "'$here/bin/coddy' migrate | sed '1,/^---\$/d' | cmp -s - '$tmp/want.yml'"
 # after <file>: the file migrate prints after its first --- line is <file>
 after() { "$here/bin/coddy" migrate | sed '1,/^---$/d' | cmp -s - "$1"; }
 rm .coddy.yml
-printf -- '---\ntracker: github\n' > .claude/coddy.yml; printf -- '---\nversion: 1\ntracker: github\n' > "$tmp/want.yml"
+printf -- '---\ntracker: github\n' > .claude/coddy.yml; printf -- '---\nversion: 2\nworktree: jj\ntracker: github\n' > "$tmp/want.yml"
 t 0 "migrate: a leading --- keeps version below it" after "$tmp/want.yml"
-printf 'tracker: github\r\n' > .claude/coddy.yml; printf 'version: 1\r\ntracker: github\r\n' > "$tmp/want.yml"
+printf 'tracker: github\r\n' > .claude/coddy.yml; printf 'version: 2\r\nworktree: jj\r\ntracker: github\r\n' > "$tmp/want.yml"
 t 0 "migrate: a CRLF config gets a CRLF version line" after "$tmp/want.yml"
-printf 'tracker: github\n\n\n' > .claude/coddy.yml; printf 'version: 1\ntracker: github\n\n\n' > "$tmp/want.yml"
+printf 'tracker: github\n\n\n' > .claude/coddy.yml; printf 'version: 2\nworktree: jj\ntracker: github\n\n\n' > "$tmp/want.yml"
 t 0 "migrate: trailing blank lines are kept" after "$tmp/want.yml"
 cp "$tmp/v0.yml" .claude/coddy.yml
 ln -s missing.yml .coddy.yml

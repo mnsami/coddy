@@ -20,11 +20,11 @@ A section above shows a `bash` command rather than its output → this host does
 
 ## Keys
 
-- `version`: the schema version, `1` today. Written by `/coddy:onboard` and `/coddy:migrate` alone: any change to it here is refused.
+- `version`: the schema version, `2` today. Written by `/coddy:onboard` and `/coddy:migrate` alone: any change to it here is refused.
 - `tracker`: `github` or `jira`.
 - `repo`: `owner/name`. Required with `tracker: github`.
 - `jira.site`, `jira.project`: the Atlassian site URL and the project key. Required with `tracker: jira`.
-- `worktree`: `jj` or `git`.
+- `worktree`: `git` (the default) or `jj`.
 - `default_branch`: a branch that exists on `origin`.
 - `branch`, `commit`: patterns. `branch` must contain `{issue}`.
 - `verify`: a shell command that exits 0 when the work can ship.

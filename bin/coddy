@@ -434,11 +434,14 @@ fi
 # m1 puts version after a leading --- marker and ends it as the file's first line ends (CRLF).
 m1() { awk 'NR == 1 { e = /\r$/ ? "\r" : ""; if (/^---\r?$/) { print; print "version: 1" e; next }; print "version: 1" e }; !/^version:/; END { if (!NR) print "version: 1" }'; }
 d1="add version: 1"
+# m2 bumps version to 2 and, with no worktree key, pins worktree: jj, the default before 2.
+m2() { awk 'NR == 1 { e = /\r$/ ? "\r" : ""; k = 0 } { l[NR] = $0 } /^worktree:/ { k = 1 } END { for (i = 1; i <= NR; i++) { if (l[i] ~ /^version:/) { print "version: 2" e; if (!k) print "worktree: jj" e } else print l[i] } }'; }
+d2="add version: 2, and worktree: jj when no worktree key is set"
 if [ "${1-}" = migrate ]; then
   # The skill Reads and Writes these paths, which follow a link: only plain files.
   { [ -L .coddy.yml ] || { [ -e .coddy.yml ] && [ ! -f .coddy.yml ]; }; } && die ".coddy.yml is a link or not a plain file: replace it with the config itself by hand"
   [ "$cname" != "$legacy" ] || [ ! -L "$legacy" ] || die "$legacy is a link: replace it with the config itself by hand"
-  cur=1 v=$(cfg version | tr -d '[:space:]'); v=${v#"${v%%[!0]*}"}; v="${v:-0}"
+  cur=2 v=$(cfg version | tr -d '[:space:]'); v=${v#"${v%%[!0]*}"}; v="${v:-0}"
   case "$v" in *[!0-9]*) die "version in $cname is not a whole number: $v" ;; esac
   # by length first, so a number too long for bash is refused without its error
   { [ "${#v}" -le 9 ] && [ "$v" -le "$cur" ]; } || die "$cname is at version $v, newer than this coddy knows ($cur): update the coddy plugin"
@@ -460,7 +463,7 @@ fi
 cmd="${1-}" issue="${2-}"
 [ "$cmd" = sweep ] || case "$issue" in ''|*[!A-Za-z0-9_-]*) die "issue id must look like 42 or ABC-123, got '$issue'" ;; esac
 wt=".worktrees/$issue" rec=".git/coddy/$issue.branch"
-tool=$(cfg worktree); tool="${tool:-jj}"
+tool=$(cfg worktree); tool="${tool:-git}"
 base=$(cfg default_branch); base="${base:-main}"
 
 # The worktree sits on branch $1: checked out (git), an ancestor of @ (jj).
