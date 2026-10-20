@@ -196,6 +196,8 @@ printf 'version: 1\ntracker: github\n' > .coddy.yml; printf 'version: 2\nworktre
 t 0 "migrate: a v1 config without worktree keeps jj" sh -c "'$here/bin/coddy' migrate | sed '1,/^---\$/d' | cmp -s - '$tmp/want.yml'"
 printf 'version: 1\ntracker: github\nworktree: git\n' > .coddy.yml; printf 'version: 2\ntracker: github\nworktree: git\n' > "$tmp/want.yml"
 t 0 "migrate: a v1 config with worktree gets the version alone" sh -c "'$here/bin/coddy' migrate | sed '1,/^---\$/d' | cmp -s - '$tmp/want.yml'"
+printf 'version: 1\ntracker: github\nworktree:   # jj | git\n' > .coddy.yml; printf 'version: 2\ntracker: github\nworktree: jj\n' > "$tmp/want.yml"
+t 0 "migrate: an empty worktree key, read as jj before 2, becomes worktree: jj" sh -c "'$here/bin/coddy' migrate | sed '1,/^---\$/d' | cmp -s - '$tmp/want.yml'"
 # after <file>: the file migrate prints after its first --- line is <file>
 after() { "$here/bin/coddy" migrate | sed '1,/^---$/d' | cmp -s - "$1"; }
 rm .coddy.yml

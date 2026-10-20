@@ -434,8 +434,9 @@ fi
 # m1 puts version after a leading --- marker and ends it as the file's first line ends (CRLF).
 m1() { awk 'NR == 1 { e = /\r$/ ? "\r" : ""; if (/^---\r?$/) { print; print "version: 1" e; next }; print "version: 1" e }; !/^version:/; END { if (!NR) print "version: 1" }'; }
 d1="add version: 1"
-# m2 bumps version to 2 and, with no worktree key, pins worktree: jj, the default before 2.
-m2() { awk 'NR == 1 { e = /\r$/ ? "\r" : ""; k = 0 } { l[NR] = $0 } /^worktree:/ { k = 1 } END { for (i = 1; i <= NR; i++) { if (l[i] ~ /^version:/) { print "version: 2" e; if (!k) print "worktree: jj" e } else print l[i] } }'; }
+# m2 bumps version to 2 and, when the first worktree key is missing or empty (read as jj before 2),
+# pins worktree: jj: in place of an empty one, else after the version line.
+m2() { awk 'NR == 1 { e = /\r$/ ? "\r" : "" } { l[NR] = $0 } /^worktree:/ && !w { w = NR; if ($0 ~ /^worktree:[[:space:]]*["\047]?["\047]?[[:space:]]*(#.*)?\r?$/) r = NR } END { for (i = 1; i <= NR; i++) { if (i == r) print "worktree: jj" e; else if (l[i] ~ /^version:/) { if (!v++) { print "version: 2" e; if (!w) print "worktree: jj" e } } else print l[i] } }'; }
 d2="add version: 2, and worktree: jj when no worktree key is set"
 if [ "${1-}" = migrate ]; then
   # The skill Reads and Writes these paths, which follow a link: only plain files.
