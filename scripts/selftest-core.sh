@@ -73,6 +73,14 @@ rm $w; mkdir $w; t 0 "detect: a directory at the PR check" says '^pr_check: dir$
 rmdir $w; rmdir .github/workflows; ln -s . .github/workflows; t 0 "detect: a link at .github/workflows" says '^pr_check: symlink$' run detect
 rm -r .github; ln -s sub .github; t 0 "detect: a link at .github" says '^pr_check: symlink$' run detect
 rm .github
+# The remote without its userinfo, on one line: a token in the URL, or a
+# second line, would reach onboard's prompt.
+git remote set-url origin 'https://u:p@ss@host/x.git'; t 0 "detect: a remote's userinfo is dropped" says '^remote: https://host/x.git$' run detect
+t 1 "detect: no part of the password is printed" says 'p@ss' run detect
+git remote set-url origin 'ssh://tok@host/x.git'; t 0 "detect: a user alone is dropped" says '^remote: ssh://host/x.git$' run detect
+git remote set-url origin 'git@host:o/x.git'; t 0 "detect: an scp-style remote is kept" says '^remote: git@host:o/x.git$' run detect
+git config remote.origin.url "$(printf 'https://host/x.git\nforged: yes')"; t 1 "detect: a remote prints one line" says '^forged: yes$' run detect
+git remote set-url origin "$tmp/origin.git"
 # Where this runs and what installs here, for onboard's install commands.
 case "$(uname -s)" in Darwin) os=macos ;; Linux) os=linux ;; *) os=unknown ;; esac
 t 0 "detect: os names the platform" says "^os: $os$" run detect

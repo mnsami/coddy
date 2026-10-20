@@ -97,7 +97,10 @@ if [ "${1-}" = detect ]; then
   echo "root: $root"
   echo "config: $([ -f "$conf" ] && echo present || echo none)"
   echo "legacy_config: $([ -f "$legacy" ] && echo present || echo none)"
-  echo "remote: $(git remote get-url origin 2>/dev/null || echo none)"
+  # The first line alone, without control characters or userinfo: a token in
+  # the URL, or a line made to read as another fact, would reach the prompt.
+  r=$(git remote get-url origin 2>/dev/null | head -n 1 | tr -d '[:cntrl:]' | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#')
+  echo "remote: ${r:-none}"
   echo "jj: $(command -v jj >/dev/null 2>&1 && echo installed || echo missing)"
   echo "jq: $(command -v jq >/dev/null 2>&1 && echo installed || echo missing)"
   # Where this runs and the first package manager on PATH: onboard's install
