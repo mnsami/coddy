@@ -480,6 +480,15 @@ t 0 "githook: recording the one before" test "$(cat .git/coddy/hooks.previous)" 
 sums=$(cksum "$hooks"/* .git/coddy/hooks.previous); run start 1 feat/1-thing >/dev/null 2>&1
 t 0 "githook: a rerun changes nothing" test "$(cksum "$hooks"/* .git/coddy/hooks.previous)" = "$sums"
 t 0 "githook: and keeps core.hooksPath" test "$(git config core.hooksPath)" = "$hooks"
+# A hook cut short, or read while it is rewritten, runs as an empty script and
+# passes: start writes each aside and moves it in, so a failed write leaves the
+# live one whole.
+if [ "$(id -u)" != 0 ]; then # root writes anywhere
+  chmod a-w "$hooks"
+  t 1 "githook: start that cannot write a hook fails" run start 1 feat/1-thing
+  t 0 "githook: and leaves the live hooks whole" test "$(cksum "$hooks"/* .git/coddy/hooks.previous)" = "$sums"
+  chmod u+w "$hooks"
+fi
 ln -s "$repo" "$tmp/alias"; CODDY_ROOT="$tmp/alias" run start 1 feat/1-thing >/dev/null 2>&1
 t 0 "githook: a rerun by another spelling of the root keeps the record" test "$(cat .git/coddy/hooks.previous)" = "$tmp/prev"
 run start 1 feat/1-thing >/dev/null 2>&1

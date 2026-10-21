@@ -530,8 +530,10 @@ verify() {
 hooks() {
   local q="'\''" c d h p
   c="$(cd "${src%/*}" && pwd)/${src##*/}" && mkdir -p .git/coddy/hooks && d=$(cd .git/coddy/hooks && pwd) || die "could not write the git hooks"
+  # Each written aside and moved in: a hook cut short, or read while it is
+  # rewritten, would run as an empty script and pass.
   for h in pre-commit pre-push; do
-    printf '#!/bin/sh\n# Written by coddy start: coddy githook refuses a commit or push outside a claimed issue branch, then runs the hook core.hooksPath named before.\nc=%s\n[ -x "$c" ] || c=$(command -v coddy) || { echo "coddy: cannot find coddy to check this %s. Skip the check with --no-verify, or turn it off: git config --unset core.hooksPath" >&2; exit 1; }\n# git runs this at the top of the worktree, where coddy finds the root.\nunset CODDY_ROOT\nexec "$c" githook %s "$@"\n' "'${c//\'/$q}'" "${h#pre-}" "$h" > "$d/$h" && chmod +x "$d/$h" || die "could not write $d/$h"
+    printf '#!/bin/sh\n# Written by coddy start: coddy githook refuses a commit or push outside a claimed issue branch, then runs the hook core.hooksPath named before.\nc=%s\n[ -x "$c" ] || c=$(command -v coddy) || { echo "coddy: cannot find coddy to check this %s. Skip the check with --no-verify, or turn it off: git config --unset core.hooksPath" >&2; exit 1; }\n# git runs this at the top of the worktree, where coddy finds the root.\nunset CODDY_ROOT\nexec "$c" githook %s "$@"\n' "'${c//\'/$q}'" "${h#pre-}" "$h" > "$d/$h.$$" && chmod +x "$d/$h.$$" && mv -f "$d/$h.$$" "$d/$h" || die "could not write $d/$h"
   done
   [ "$(git config core.hooksPath)" != "$d" ] || return 0
   # this directory by another spelling of the root is not a hook to hand off to
