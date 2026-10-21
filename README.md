@@ -134,7 +134,8 @@ resolved on the way in is not, so remove that worktree by hand.
 
 ## How it enforces
 
-Five layers. The first three are hooks, live in every onboarded project.
+Six layers. The first three are Claude Code hooks, live in every onboarded
+project; the fourth is a pair of git hooks that `/coddy:start` installs.
 
 **Edit guard.** A hook rejects every file edit Claude attempts outside
 `.worktrees/<issue>/`. Inside, it rejects edits until `/coddy:start` has
@@ -167,6 +168,48 @@ through git, a pull of a shared config or a checkout, is undone too, since
 nothing on disk tells it from one a command forged: the message sends Claude
 to `/coddy:config`, which shows you the diff against `HEAD` and writes it
 only when you say so.
+
+**Git hooks.** `/coddy:start` points git's `core.hooksPath` at
+`.git/hooks/coddy/`. Its `pre-commit` and `pre-push` refuse a commit on the
+default branch, or a push to it, and on any branch no claimed issue owns,
+whichever session claimed it. They refuse people too. A commit on a detached
+`HEAD`, a tag, and deleting a branch other than the default one go through.
+Once the check passes, the hook `core.hooksPath` named before runs, or the
+one in `.git/hooks/`. Every other hook that directory holds, a `commit-msg`
+say, gets a pass-through to it, so pointing `core.hooksPath` elsewhere turns
+none of them off. A hook that cannot find coddy refuses and says how to get
+past it: `/coddy:start <issue>`, which rewrites them, `--no-verify`, or the
+command that puts the old `core.hooksPath` back. Their ceilings:
+
+- `git commit --no-verify` and `git push --no-verify` skip them, and
+  `git -c core.hooksPath=` runs without them.
+- jj runs no git hooks.
+- A tool that sets `core.hooksPath` itself, such as a hook manager's
+  install, turns them off until the next `/coddy:start`.
+- A tool that installs into git's hooks directory (lefthook,
+  `git lfs install`, simple-git-hooks) writes into `.git/hooks/coddy/` once
+  `/coddy:start` has run, and can replace coddy's own. `/coddy:start` then
+  stops on any file there it did not write, and names the old hooks
+  directory to move it to; it never deletes or overwrites one.
+- The hooks run coddy by the path `/coddy:start` ran it from, the plugin's
+  versioned directory. Claude Code deletes an old version's directory 14
+  days after an update, and from then a terminal without `coddy` on `PATH`
+  has every commit and push refused until the next `/coddy:start`.
+- The pass-throughs are written when `/coddy:start` runs: a hook added to
+  the old directory after that runs from the next `/coddy:start`.
+- `core.hooksPath` is an absolute path, so moving or renaming the checkout
+  turns every hook off, the old ones included, until the next `/coddy:start`.
+- `/coddy:start` stops when a `core.hooksPath` set where it overrides
+  `.git/config` (the worktree's own config, an include, an `includeIf` on
+  the issue's branch, `GIT_CONFIG_*`) would keep them off, at the root or in
+  the issue's worktree; `git config --show-origin core.hooksPath` there
+  finds it.
+- git runs hooks outside Claude Code's sandbox, so the sandbox keeps writes
+  out of `.git/hooks` and `.git/config`, where the hooks and the old
+  `core.hooksPath` live. The first `/coddy:start` in a repository stops
+  there: run it once from your own terminal, as its message says. Later runs
+  change nothing there and pass inside the sandbox.
+- A merge, cherry-pick or revert runs no `pre-commit`; the push catches it.
 
 **Branch protection.** The backstop for a command that edits, commits and
 pushes to the default branch in one go. Nothing in coddy can set it.

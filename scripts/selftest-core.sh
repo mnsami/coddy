@@ -445,6 +445,162 @@ t 0 "status lists the claimed issue as mine" says '^owners: 1=me' run status
 t 0 "sweep keeps the unmerged worktree" sh -c "'$here/bin/coddy' sweep; test -d '$repo/.worktrees/1'"
 t 0 "the whole flow left the main checkout alone" wire trip flow
 
+# start installs git hooks that refuse a commit or push outside a claimed
+# issue's branch, for people too; the flow above pushed through them.
+hooks="$repo/.git/hooks/coddy"
+t 0 "githook: start points core.hooksPath at the absolute hooks dir" test "$(git config core.hooksPath)" = "$hooks"
+t 0 "githook: and writes both hooks executable" test -x "$hooks/pre-commit" -a -x "$hooks/pre-push"
+# A verb run from stdin has no path of its own; start, whose hooks run coddy by it, says so.
+t 0 "a verb runs from stdin" sh -c "bash -s state 1 < '$here/bin/coddy'"
+t 1 "start from stdin fails" sh -c "bash -s start 1 feat/1-thing < '$here/bin/coddy'"
+t 0 "and says why" says 'not stdin' sh -c "bash -s start 1 feat/1-thing < '$here/bin/coddy'"
+t 1 "githook: a commit on the default branch is refused" git commit -q --allow-empty -m x
+t 0 "githook: naming /coddy:start" says '/coddy:start <issue>' git commit -q --allow-empty -m x
+t 0 "githook: and --no-verify" says 'commit with --no-verify' git commit -q --allow-empty -m x
+git checkout -q -b loose
+t 1 "githook: a commit on an unclaimed branch is refused" git commit -q --allow-empty -m x
+git checkout -q --detach origin/main # ahead of the remote, so only the hook stops a push of it
+t 0 "githook: a commit on a detached HEAD passes" git commit -q --allow-empty -m x
+d=$(git rev-parse HEAD); git checkout -q main
+t 0 "githook: a commit on a claimed issue's branch passes, in its worktree" git -C .worktrees/1 commit -q --allow-empty -m x
+t 1 "githook: a push to the default branch is refused" git push -q origin "$d:refs/heads/main"
+t 0 "githook: naming push --no-verify" says 'push with --no-verify' git push -q origin "$d:refs/heads/main"
+t 1 "githook: a push to an unclaimed branch is refused" git push -q origin loose
+t 0 "githook: a push of a claimed issue's branch passes" git -C .worktrees/1 push -q origin HEAD
+git push -q --no-verify origin loose
+t 0 "githook: deleting another branch passes" git push -q origin --delete loose
+t 0 "githook: deleting the default branch is refused" says 'push to main, the default branch' git push -q origin --delete main
+git tag t1 "$d"
+t 0 "githook: a tag passes" git push -q origin t1
+git branch -q -D loose
+# The hook core.hooksPath named before runs after coddy's check, with the same
+# arguments and stdin, its exit the hook's. start records it whenever
+# core.hooksPath is not coddy's (a hook manager re-set it), and a rerun keeps it.
+mkdir "$tmp/prev"
+for h in pre-commit pre-push commit-msg x.sample; do v=PREV_EXIT; [ $h != commit-msg ] || v=MSG_EXIT; printf '#!/bin/sh\necho "%s $*" >> "%s"; cat >> "%s"; exit ${%s:-0}\n' "$h" "$tmp/prev.log" "$tmp/prev.log" "$v" > "$tmp/prev/$h"; chmod +x "$tmp/prev/$h"; done
+git config core.hooksPath "$tmp/prev"
+# A core.hooksPath that overrides .git/config's (here the worktree's own
+# config) would keep git from running these hooks: start refuses, and puts
+# .git/config's back.
+git config extensions.worktreeConfig true; git config --worktree core.hooksPath "$tmp/elsewhere"
+t 1 "githook: start refuses under a core.hooksPath that overrides .git/config's" run start 1 feat/1-thing
+t 0 "githook: naming git config --show-origin" says 'git config --show-origin core.hooksPath' run start 1 feat/1-thing
+t 0 "githook: and puts .git/config's back" test "$(git config --local core.hooksPath)" = "$tmp/prev"
+t 0 "githook: recording nothing" test -z "$(git config --local coddy.previousHooksPath)"
+git config --worktree --unset core.hooksPath; git config --unset extensions.worktreeConfig
+run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: start puts core.hooksPath back" test "$(git config core.hooksPath)" = "$hooks"
+t 0 "githook: recording the one before in .git/config" test "$(git config --local coddy.previousHooksPath)" = "$tmp/prev"
+sums=$(cksum "$hooks"/*; git config --local coddy.previousHooksPath); run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: a rerun changes nothing" test "$(cksum "$hooks"/*; git config --local coddy.previousHooksPath)" = "$sums"
+t 0 "githook: and keeps core.hooksPath" test "$(git config core.hooksPath)" = "$hooks"
+# Every other hook the previous directory holds gets a pass-through, and no
+# other name does: reference-transaction would cost every ref update a shell.
+t 0 "githook: a pass-through for each other hook there, none for a non-hook name" test "$(ls "$hooks")" = "$(printf 'commit-msg\npre-commit\npre-push')"
+# A hook cut short, or read while it is rewritten, runs as an empty script and
+# passes: start writes each aside and moves it in, so a failed write leaves the
+# live one whole.
+# A sandbox (Claude Code's) keeps every write out of .git/hooks and
+# .git/config, since git runs hooks outside it: a rerun with nothing to change
+# writes to neither, so it passes there.
+if [ "$(id -u)" != 0 ]; then # root writes anywhere
+  chmod a-w "$hooks"; : > .git/config.lock
+  t 0 "githook: a rerun with nothing to change passes where neither the hooks nor .git/config can be written" run start 1 feat/1-thing
+  rm .git/config.lock; cp "$tmp/prev/commit-msg" "$tmp/prev/post-commit"
+  t 1 "githook: start that cannot write a hook fails" run start 1 feat/1-thing
+  t 0 "githook: and leaves the live hooks whole" test "$(cksum "$hooks"/*; git config --local coddy.previousHooksPath)" = "$sums"
+  chmod u+w "$hooks"; rm "$tmp/prev/post-commit"
+fi
+ln -s "$repo" "$tmp/alias"; CODDY_ROOT="$tmp/alias" run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: a rerun by another spelling of the root keeps the record" test "$(git config --local coddy.previousHooksPath)" = "$tmp/prev"
+# core.hooksPath set by one spelling of the root is set for every other: a
+# rerun by the real path writes no .git/config, so a sandbox lets it pass.
+git config core.hooksPath "$tmp/prev"; CODDY_ROOT="$tmp/alias" run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: start through a symlinked root sets core.hooksPath by that spelling" test "$(git config core.hooksPath)" = "$tmp/alias/.git/hooks/coddy"
+: > .git/config.lock
+t 0 "githook: a rerun by the real path sees it set, so .git/config it cannot write stops nothing" run start 1 feat/1-thing
+rm .git/config.lock; git config core.hooksPath "$hooks"
+# start writes into a directory of its own and overwrites only what it wrote:
+# lefthook, git lfs install and simple-git-hooks write into git's hooks path,
+# which is this directory now.
+cp "$hooks/commit-msg" "$tmp/cm"; echo foreign > "$hooks/commit-msg"
+t 1 "githook: start stops on a file it did not write at a hook's name" run start 1 feat/1-thing
+t 0 "githook: naming it and where it belongs" says "$hooks/commit-msg is not a hook coddy start wrote.*Move it to $tmp/prev," run start 1 feat/1-thing
+t 0 "githook: and leaves it as it was" test "$(cat "$hooks/commit-msg")" = foreign
+mv "$tmp/cm" "$hooks/commit-msg"; mkdir "$hooks/post-merge"
+t 1 "githook: start stops on a name that is not a plain file" run start 1 feat/1-thing
+rmdir "$hooks/post-merge"; : > "$hooks/.pre-commit.1"
+t 0 "githook: and passes over another run's temp" run start 1 feat/1-thing
+rm "$hooks/.pre-commit.1"; mv "$hooks" "$tmp/hooks"; mkdir "$tmp/target"; echo n > "$tmp/target/notes"; ln -s "$tmp/target" "$hooks"
+t 1 "githook: start stops when the hooks directory is a symlink" run start 1 feat/1-thing
+t 0 "githook: and deletes nothing behind it" test "$(ls "$tmp/target")" = notes
+rm "$hooks"; mv "$tmp/hooks" "$hooks"
+# A conditional include can set core.hooksPath in the issue's worktree alone:
+# start reads it back there too, before it writes any pass-through.
+printf '[core]\n\thooksPath = %s\n' "$tmp/elsewhere" > "$tmp/off.inc"; git config 'includeIf.onbranch:feat/**.path' "$tmp/off.inc"
+cp "$tmp/prev/commit-msg" "$tmp/prev/post-commit"; sums=$(cksum "$hooks"/*)
+t 1 "githook: start refuses when an onbranch include turns the hooks off in the issue's worktree" run start 1 feat/1-thing
+t 0 "githook: having written no pass-through" test "$(cksum "$hooks"/*)" = "$sums"
+git config --remove-section 'includeIf.onbranch:feat/**'; rm "$tmp/prev/post-commit"
+: > "$tmp/prev.log"; git commit -q --allow-empty -m x >/dev/null 2>&1
+t 1 "githook: a refused commit runs no previous hook" test -s "$tmp/prev.log"
+t 0 "githook: a passed commit runs the previous pre-commit" sh -c "git -C .worktrees/1 commit -q --allow-empty -m x && grep -qx 'pre-commit ' '$tmp/prev.log'"
+PREV_EXIT=1 t 1 "githook: whose failure fails the commit" git -C .worktrees/1 commit -q --allow-empty -m x
+PREV_EXIT=1 t 1 "githook: a previous pre-push's failure fails the push" git -C .worktrees/1 push -q origin HEAD
+t 0 "githook: which gets the push's arguments and stdin" sh -c "git -C .worktrees/1 push -q origin HEAD && grep -q '^pre-push origin ' '$tmp/prev.log' && grep -q ' refs/heads/feat/1-thing [0-9a-f]*\$' '$tmp/prev.log'"
+t 0 "githook: a commit runs the previous commit-msg" sh -c "git -C .worktrees/1 commit -q --allow-empty -m x && grep -q '^commit-msg .*COMMIT_EDITMSG\$' '$tmp/prev.log'"
+MSG_EXIT=1 t 1 "githook: whose failure fails the commit" git -C .worktrees/1 commit -q --allow-empty -m x
+t 0 "githook: a pass-through hands on its arguments and stdin" sh -c "echo in | '$hooks/commit-msg' a b && grep -qx 'commit-msg a b' '$tmp/prev.log' && grep -qx in '$tmp/prev.log'"
+mv "$tmp/prev/commit-msg" "$tmp/msg"
+t 0 "githook: one whose hook has gone passes" git -C .worktrees/1 commit -q --allow-empty -m x
+mv "$tmp/msg" "$tmp/prev/commit-msg"
+# A .git/config start cannot write fails it with git's own error (a stale
+# lock here); only Operation not permitted names a sandbox.
+git config --unset core.hooksPath; : > .git/config.lock
+t 1 "githook: start that cannot write .git/config fails" run start 1 feat/1-thing
+t 0 "githook: with git's own error" says 'could not set core.hooksPath in .git/config: .*could not lock config file' run start 1 feat/1-thing
+t 1 "githook: naming no sandbox" says sandbox run start 1 feat/1-thing
+rm .git/config.lock
+# Claude Code's sandbox refuses the write with Operation not permitted, so the
+# first start there stops, and says how the user installs the hooks once.
+mkdir "$tmp/eperm"; printf '#!/bin/sh\n[ "$#:$1:$2" != 3:config:core.hooksPath ] || { echo "error: could not lock config file .git/config: Operation not permitted" >&2; exit 255; }\nexec %s "$@"\n' "$(command -v git)" > "$tmp/eperm/git"; chmod +x "$tmp/eperm/git"
+PATH="$tmp/eperm:$PATH" t 1 "githook: start that a sandbox keeps out of .git/config fails" run start 1 feat/1-thing
+PATH="$tmp/eperm:$PATH" t 0 "githook: naming the sandbox and the user's one run from their own terminal" says 'sandbox.*Install them once from your own terminal, not through an agent: cd .* start 1 feat/1-thing\.' run start 1 feat/1-thing
+run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: none before is recorded as none" sh -c 'v=$(git config --local coddy.previousHooksPath) && [ -z "$v" ]'
+t 1 "githook: under .git/hooks, its coddy directory gets no pass-through" test -e "$hooks/coddy"
+cp "$tmp/prev/pre-commit" .git/hooks/pre-commit
+PREV_EXIT=1 t 1 "githook: and then .git/hooks/ runs after coddy's check" git -C .worktrees/1 commit -q --allow-empty -m x
+rm .git/hooks/pre-commit
+# On a case-insensitive file system PRE-COMMIT is pre-commit: a pass-through by
+# that name would replace coddy's own. Either way coddy's stays.
+printf '#!/bin/sh\nexit 0\n' > .git/hooks/PRE-COMMIT; chmod +x .git/hooks/PRE-COMMIT; run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: a previous PRE-COMMIT leaves coddy's pre-commit in place" grep -q 'githook pre-commit' "$hooks/pre-commit"
+t 1 "githook: which still refuses a commit on the default branch" git commit -q --allow-empty -m x
+rm .git/hooks/PRE-COMMIT
+# A hook that cannot find the coddy that wrote it uses one on PATH, else refuses.
+mkdir "$tmp/moved" "$tmp/onpath"; cp "$here/bin/coddy" "$tmp/moved/"; ln -s "$here/bin/coddy" "$tmp/onpath/coddy"
+(cd .worktrees/1 && ../../../moved/coddy start 1 feat/1-thing) >/dev/null 2>&1
+t 0 "githook: start run by a relative path, away from the root, writes that coddy's absolute path" grep -qxF "c='$tmp/moved/coddy'" "$hooks/pre-commit"
+rm "$tmp/moved/coddy"
+PATH="$tmp/nojq" t 1 "githook: a hook that cannot find coddy refuses" git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$tmp/nojq" t 0 "githook: naming --no-verify" says 'skip the check with --no-verify' git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$tmp/nojq" t 0 "githook: and, none recorded, how to turn it off" says 'git config --unset core.hooksPath' git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$tmp/nojq" t 0 "githook: and /coddy:start, which rewrites them" says 'Run /coddy:start <issue> to rewrite these hooks' git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$tmp/onpath:$PATH" t 0 "githook: one on PATH runs it" git -C .worktrees/1 commit -q --allow-empty -m x
+# The recorded path as recorded: echo in sh would read its backslash as an escape.
+b="$tmp/pr\\ev"; cp "$here/bin/coddy" "$tmp/moved/"; git config core.hooksPath "$b"; "$tmp/moved/coddy" start 1 feat/1-thing >/dev/null 2>&1; rm "$tmp/moved/coddy"
+PATH="$tmp/nojq" t 0 "githook: and, one recorded, how to put it back, backslash and all" sh -c 'git -C .worktrees/1 commit -q --allow-empty -m x 2>&1 | grep -qF -- "$1"' _ "git config core.hooksPath $(printf %q "$b")"
+git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
+# Not onboarded, coddy's check is off.
+pp() { echo "refs/heads/main $d refs/heads/main $d" | "$hooks/pre-push" origin x; }
+t 1 "githook: run by hand, pre-commit on the default branch refuses" "$hooks/pre-commit"
+t 1 "githook: and pre-push to it" pp
+mv .coddy.yml "$tmp/aside"
+t 0 "githook: not onboarded, pre-commit passes" "$hooks/pre-commit"
+t 0 "githook: and pre-push" pp
+mv "$tmp/aside" .coddy.yml
+
 # get.sh installs main from CODDY_REPO_URL into CODDY_HOME and links coddy
 # into CODDY_BIN, run as curl pipes it (the script on stdin), with no network.
 src="$tmp/src" gh="$tmp/gethome"; cs="$gh/.coddy"
