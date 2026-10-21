@@ -152,7 +152,7 @@ alive() {
   now=$(started "$1"); [ -z "${2-}" ] || [ -z "$now" ] || [ "$now" = "$2" ]
 }
 die() { echo "coddy: $*" >&2; exit "$code"; }
-cfg() { sed -n "s/^$1:[[:space:]]*//p" "${2:-$conf}" | sed -e $'s/\r$//' -e "s/[[:space:]]*#.*$//; s/^[\"']//; s/[\"']$//" | head -1; } # key $1, from the config or file $2, a CRLF line's \r dropped
+cfg() { sed -n "s/^$1:[[:space:]]*//p" "${2:-$conf}" | sed -e $'s/\r$//' -e "s/[[:space:]]*#.*$//; s/[[:space:]]*$//; s/^[\"']//; s/[\"']$//" | head -1; } # key $1, from the config or file $2, a CRLF line's \r and trailing blanks dropped
 # The lock's owner ($sid, $pid, $start) is this session ($me): the same
 # session id, or the same agent process, since Claude Code's /clear changes
 # the id and not the pid; a pid reused since the owner's start is not that process.
