@@ -480,6 +480,9 @@ t 0 "githook: recording the one before" test "$(cat .git/coddy/hooks.previous)" 
 sums=$(cksum "$hooks"/* .git/coddy/hooks.previous); run start 1 feat/1-thing >/dev/null 2>&1
 t 0 "githook: a rerun changes nothing" test "$(cksum "$hooks"/* .git/coddy/hooks.previous)" = "$sums"
 t 0 "githook: and keeps core.hooksPath" test "$(git config core.hooksPath)" = "$hooks"
+ln -s "$repo" "$tmp/alias"; CODDY_ROOT="$tmp/alias" run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: a rerun by another spelling of the root keeps the record" test "$(cat .git/coddy/hooks.previous)" = "$tmp/prev"
+run start 1 feat/1-thing >/dev/null 2>&1
 : > "$tmp/prev.log"; git commit -q --allow-empty -m x >/dev/null 2>&1
 t 1 "githook: a refused commit runs no previous hook" test -s "$tmp/prev.log"
 t 0 "githook: a passed commit runs the previous pre-commit" sh -c "git -C .worktrees/1 commit -q --allow-empty -m x && grep -qx 'pre-commit ' '$tmp/prev.log'"
@@ -493,7 +496,9 @@ PREV_EXIT=1 t 1 "githook: and then .git/hooks/ runs after coddy's check" git -C 
 rm .git/hooks/pre-commit
 # A hook that cannot find the coddy that wrote it uses one on PATH, else refuses.
 mkdir "$tmp/moved" "$tmp/onpath"; cp "$here/bin/coddy" "$tmp/moved/"; ln -s "$here/bin/coddy" "$tmp/onpath/coddy"
-"$tmp/moved/coddy" start 1 feat/1-thing >/dev/null 2>&1; rm "$tmp/moved/coddy"
+(cd .worktrees/1 && ../../../moved/coddy start 1 feat/1-thing) >/dev/null 2>&1
+t 0 "githook: start run by a relative path, away from the root, writes that coddy's absolute path" grep -qxF "c='$tmp/moved/coddy'" "$hooks/pre-commit"
+rm "$tmp/moved/coddy"
 PATH="$tmp/nojq" t 1 "githook: a hook that cannot find coddy refuses" git -C .worktrees/1 commit -q --allow-empty -m x
 PATH="$tmp/nojq" t 0 "githook: naming --no-verify" says 'Skip the check with --no-verify' git -C .worktrees/1 commit -q --allow-empty -m x
 PATH="$tmp/nojq" t 0 "githook: and how to turn it off" says 'git config --unset core.hooksPath' git -C .worktrees/1 commit -q --allow-empty -m x
