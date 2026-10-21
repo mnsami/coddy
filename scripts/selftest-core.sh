@@ -447,7 +447,7 @@ t 0 "the whole flow left the main checkout alone" wire trip flow
 
 # start installs git hooks that refuse a commit or push outside a claimed
 # issue's branch, for people too; the flow above pushed through them.
-hooks="$repo/.git/coddy/hooks"
+hooks="$repo/.git/hooks/coddy"
 t 0 "githook: start points core.hooksPath at the absolute hooks dir" test "$(git config core.hooksPath)" = "$hooks"
 t 0 "githook: and writes both hooks executable" test -x "$hooks/pre-commit" -a -x "$hooks/pre-push"
 # A verb run from stdin has no path of its own; start, whose hooks run coddy by it, says so.
@@ -486,13 +486,13 @@ git config extensions.worktreeConfig true; git config --worktree core.hooksPath 
 t 1 "githook: start refuses under a core.hooksPath that overrides .git/config's" run start 1 feat/1-thing
 t 0 "githook: naming git config --show-origin" says 'git config --show-origin core.hooksPath' run start 1 feat/1-thing
 t 0 "githook: and puts .git/config's back" test "$(git config --local core.hooksPath)" = "$tmp/prev"
-t 0 "githook: recording nothing" test ! -s .git/coddy/hooks.previous
+t 0 "githook: recording nothing" test -z "$(git config --local coddy.previousHooksPath)"
 git config --worktree --unset core.hooksPath; git config --unset extensions.worktreeConfig
 run start 1 feat/1-thing >/dev/null 2>&1
 t 0 "githook: start puts core.hooksPath back" test "$(git config core.hooksPath)" = "$hooks"
-t 0 "githook: recording the one before" test "$(cat .git/coddy/hooks.previous)" = "$tmp/prev"
-sums=$(cksum "$hooks"/* .git/coddy/hooks.previous); run start 1 feat/1-thing >/dev/null 2>&1
-t 0 "githook: a rerun changes nothing" test "$(cksum "$hooks"/* .git/coddy/hooks.previous)" = "$sums"
+t 0 "githook: recording the one before in .git/config" test "$(git config --local coddy.previousHooksPath)" = "$tmp/prev"
+sums=$(cksum "$hooks"/*; git config --local coddy.previousHooksPath); run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: a rerun changes nothing" test "$(cksum "$hooks"/*; git config --local coddy.previousHooksPath)" = "$sums"
 t 0 "githook: and keeps core.hooksPath" test "$(git config core.hooksPath)" = "$hooks"
 # Every other hook the previous directory holds gets a pass-through, and no
 # other name does: reference-transaction would cost every ref update a shell.
@@ -500,15 +500,26 @@ t 0 "githook: a pass-through for each other hook there, none for a non-hook name
 # A hook cut short, or read while it is rewritten, runs as an empty script and
 # passes: start writes each aside and moves it in, so a failed write leaves the
 # live one whole.
+# A sandbox (Claude Code's) keeps every write out of .git/hooks and
+# .git/config, since git runs hooks outside it: a rerun with nothing to change
+# writes to neither, so it passes there.
 if [ "$(id -u)" != 0 ]; then # root writes anywhere
-  chmod a-w "$hooks"
+  chmod a-w "$hooks"; : > .git/config.lock
+  t 0 "githook: a rerun with nothing to change passes where neither the hooks nor .git/config can be written" run start 1 feat/1-thing
+  rm .git/config.lock; cp "$tmp/prev/commit-msg" "$tmp/prev/post-commit"
   t 1 "githook: start that cannot write a hook fails" run start 1 feat/1-thing
-  t 0 "githook: and leaves the live hooks whole" test "$(cksum "$hooks"/* .git/coddy/hooks.previous)" = "$sums"
-  chmod u+w "$hooks"
+  t 0 "githook: and leaves the live hooks whole" test "$(cksum "$hooks"/*; git config --local coddy.previousHooksPath)" = "$sums"
+  chmod u+w "$hooks"; rm "$tmp/prev/post-commit"
 fi
 ln -s "$repo" "$tmp/alias"; CODDY_ROOT="$tmp/alias" run start 1 feat/1-thing >/dev/null 2>&1
-t 0 "githook: a rerun by another spelling of the root keeps the record" test "$(cat .git/coddy/hooks.previous)" = "$tmp/prev"
-run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: a rerun by another spelling of the root keeps the record" test "$(git config --local coddy.previousHooksPath)" = "$tmp/prev"
+# core.hooksPath set by one spelling of the root is set for every other: a
+# rerun by the real path writes no .git/config, so a sandbox lets it pass.
+git config core.hooksPath "$tmp/prev"; CODDY_ROOT="$tmp/alias" run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: start through a symlinked root sets core.hooksPath by that spelling" test "$(git config core.hooksPath)" = "$tmp/alias/.git/hooks/coddy"
+: > .git/config.lock
+t 0 "githook: a rerun by the real path sees it set, so .git/config it cannot write stops nothing" run start 1 feat/1-thing
+rm .git/config.lock; git config core.hooksPath "$hooks"
 # start writes into a directory of its own and overwrites only what it wrote:
 # lefthook, git lfs install and simple-git-hooks write into git's hooks path,
 # which is this directory now.
@@ -543,13 +554,21 @@ t 0 "githook: a pass-through hands on its arguments and stdin" sh -c "echo in | 
 mv "$tmp/prev/commit-msg" "$tmp/msg"
 t 0 "githook: one whose hook has gone passes" git -C .worktrees/1 commit -q --allow-empty -m x
 mv "$tmp/msg" "$tmp/prev/commit-msg"
-# A sandbox that blocks writes to .git/config (Claude Code's, by default)
-# fails the first start; a stale lock fails the write the same way here.
+# A .git/config start cannot write fails it with git's own error (a stale
+# lock here); only Operation not permitted names a sandbox.
 git config --unset core.hooksPath; : > .git/config.lock
 t 1 "githook: start that cannot write .git/config fails" run start 1 feat/1-thing
-t 0 "githook: naming a sandbox and both ways out" says 'sandbox blocks writes to .git/config. Allow git config writes in the sandbox, or run this command once outside it' run start 1 feat/1-thing
-rm .git/config.lock; run start 1 feat/1-thing >/dev/null 2>&1
-t 0 "githook: none before is recorded as none" test ! -s .git/coddy/hooks.previous
+t 0 "githook: with git's own error" says 'could not set core.hooksPath in .git/config: .*could not lock config file' run start 1 feat/1-thing
+t 1 "githook: naming no sandbox" says sandbox run start 1 feat/1-thing
+rm .git/config.lock
+# Claude Code's sandbox refuses the write with Operation not permitted, so the
+# first start there stops, and says how the user installs the hooks once.
+mkdir "$tmp/eperm"; printf '#!/bin/sh\n[ "$#:$1:$2" != 3:config:core.hooksPath ] || { echo "error: could not lock config file .git/config: Operation not permitted" >&2; exit 255; }\nexec %s "$@"\n' "$(command -v git)" > "$tmp/eperm/git"; chmod +x "$tmp/eperm/git"
+PATH="$tmp/eperm:$PATH" t 1 "githook: start that a sandbox keeps out of .git/config fails" run start 1 feat/1-thing
+PATH="$tmp/eperm:$PATH" t 0 "githook: naming the sandbox and the user's one run from their own terminal" says 'sandbox.*Install them once from your own terminal, not through an agent: cd .* start 1 feat/1-thing\.' run start 1 feat/1-thing
+run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: none before is recorded as none" sh -c 'v=$(git config --local coddy.previousHooksPath) && [ -z "$v" ]'
+t 1 "githook: under .git/hooks, its coddy directory gets no pass-through" test -e "$hooks/coddy"
 cp "$tmp/prev/pre-commit" .git/hooks/pre-commit
 PREV_EXIT=1 t 1 "githook: and then .git/hooks/ runs after coddy's check" git -C .worktrees/1 commit -q --allow-empty -m x
 rm .git/hooks/pre-commit

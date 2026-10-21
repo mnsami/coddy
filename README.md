@@ -170,7 +170,7 @@ to `/coddy:config`, which shows you the diff against `HEAD` and writes it
 only when you say so.
 
 **Git hooks.** `/coddy:start` points git's `core.hooksPath` at
-`.git/coddy/hooks/`. Its `pre-commit` and `pre-push` refuse a commit on the
+`.git/hooks/coddy/`. Its `pre-commit` and `pre-push` refuse a commit on the
 default branch, or a push to it, and on any branch no claimed issue owns,
 whichever session claimed it. They refuse people too. A commit on a detached
 `HEAD`, a tag, and deleting a branch other than the default one go through.
@@ -187,7 +187,7 @@ command that puts the old `core.hooksPath` back. Their ceilings:
 - A tool that sets `core.hooksPath` itself, such as a hook manager's
   install, turns them off until the next `/coddy:start`.
 - A tool that installs into git's hooks directory (lefthook,
-  `git lfs install`, simple-git-hooks) writes into `.git/coddy/hooks/` once
+  `git lfs install`, simple-git-hooks) writes into `.git/hooks/coddy/` once
   `/coddy:start` has run, and can replace coddy's own. `/coddy:start` then
   stops on any file there it did not write, and names the old hooks
   directory to move it to; it never deletes or overwrites one.
@@ -204,10 +204,11 @@ command that puts the old `core.hooksPath` back. Their ceilings:
   the issue's branch, `GIT_CONFIG_*`) would keep them off, at the root or in
   the issue's worktree; `git config --show-origin core.hooksPath` there
   finds it.
-- Claude Code's sandbox blocks writes to `.git/config` by default, so the
-  first `/coddy:start` in a repository stops there. Set
-  `sandbox.filesystem.allowGitConfig: true`, or run that `start` once
-  outside the sandbox: later runs do not write `core.hooksPath`.
+- git runs hooks outside Claude Code's sandbox, so the sandbox keeps writes
+  out of `.git/hooks` and `.git/config`, where the hooks and the old
+  `core.hooksPath` live. The first `/coddy:start` in a repository stops
+  there: run it once from your own terminal, as its message says. Later runs
+  change nothing there and pass inside the sandbox.
 - A merge, cherry-pick or revert runs no `pre-commit`; the push catches it.
 
 **Branch protection.** The backstop for a command that edits, commits and
