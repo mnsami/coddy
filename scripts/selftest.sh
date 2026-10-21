@@ -29,6 +29,12 @@ guard() { local s=${2-sess-a} p=1; [ "$s" != sess-a ] || p=$$; printf '{%s"tool_
 wire() { printf '{"tool_use_id":"%s"}' "$2" | run "$1"; }
 # tripped <expected exit> <name> <shell snippet run in the main checkout>
 tripped() { wire snap w; (cd "$repo" && eval "$3") >/dev/null 2>&1; t "$1" "$2" wire trip w; }
+# shell <command> [dir]: snap before a Bash command run in dir (the main
+# checkout unless named), as Claude Code calls it; noted <text> <command>:
+# snap lets it through and hands Claude a message holding that text
+payload() { jq -cn --arg c "$1" --arg d "${2-$repo}" '{tool_use_id: "sh", cwd: $d, tool_input: {command: $c}}'; }
+shell() { payload "$@" | run snap; }
+noted() { out=$(shell "$2") && printf %s "$out" | jq -e --arg s "$1" '.hookSpecificOutput | .hookEventName == "PreToolUse" and (.additionalContext | contains($s))'; }
 
 # The stub gh, for the PR check's run block alone. GH_LINKED: the "<number>
 # <state> <assignees>" lines "api graphql" reports, or fail. GH_ISSUE: the
@@ -46,6 +52,8 @@ EOF
 chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log"
 # A ps that is not there, as in a container image without procps: on PATH first when a case asks.
 mkdir "$tmp/nops"; printf '#!/bin/sh\nexit 127\n' > "$tmp/nops/ps"; chmod +x "$tmp/nops/ps"
+# A PATH with everything snap needs but jq.
+mkdir "$tmp/nojq"; for x in bash sed awk cat grep git cmp sort comm tr cut cksum mkdir cp rm head; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
 # kept <what>: sweep leaves worktree $p alone
 kept() { run sweep >/dev/null 2>&1; t 0 "$tool: sweep keeps $1" test -d ".worktrees/$p"; }
 
@@ -346,6 +354,7 @@ t 0 "warn: guard says nothing about .claude/" test -z "$(guard "$repo/.claude/co
 tripped 2 "warn: the tripwire still trips" 'echo x > stray.txt'; rm -f stray.txt
 tripped 2 "warn: the config lock still holds" 'rm .claude/coddy.yml'
 t 0 "warn: the config came back as it was" grep -qx 'guard: warn' .claude/coddy.yml
+t 0 "warn: a git worktree add outside .worktrees/ is let through with the message" noted '/coddy:start <issue>' 'git worktree add ../x'
 for v in block wran; do
   printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
   t 2 "guard: $v blocks the main checkout" guard "$repo/README.md"
@@ -413,6 +422,63 @@ git checkout -q side
 tripped 0 "tripwire: quiet on the switch back to a default branch with local commits" 'git checkout -q main'
 git branch -q -D side
 tripped 2 "tripwire: local commit that was pushed to another branch" 'git commit -q --no-verify --allow-empty -m oops2 && git push -q --no-verify origin HEAD:refs/heads/elsewhere'
+
+# A git worktree add or jj workspace add that would make a worktree outside
+# .worktrees/<id>/ and .claude/worktrees/<name>/ is refused before it runs,
+# read from the command's text, however it is written.
+for g in 'git worktree add' 'jj workspace add'; do
+  t 2 "$g: outside the project is refused" shell "$g ../x"
+  t 0 "$g: that refusal names /coddy:start" says '/coddy:start <issue>' shell "$g ../x"
+  t 2 "$g: in the main checkout is refused" shell "$g x"
+  t 0 "$g: inside .worktrees/<id>/ passes" shell "$g .worktrees/77"
+  t 0 "$g: inside .claude/worktrees/<name>/ passes" shell "$g .claude/worktrees/x"
+  t 2 "$g: resolved against the command's directory" shell "$g x" "$tmp"
+  t 0 "$g: from a subdirectory, into .worktrees/, passes" shell "$g ../.worktrees/77" "$repo/.claude"
+  t 2 "$g: after a cd is refused" shell "cd .worktrees && $g ../../x"
+  t 0 "$g: after a cd into .worktrees/ passes" shell "cd .worktrees && $g 77"
+  t 2 "$g: in any segment of a compound command is refused" shell "echo a | grep a; true && $g /tmp/x"
+  t 2 "$g: behind env prefixes is refused" shell "A=1 env B=2 command $g ../x"
+  t 0 "$g: quoted as text passes" shell "echo '$g ../x'"
+  t 0 "$g: in a heredoc body passes" shell $'cat <<EOF >/dev/null\n'"$g"$' ../x\nEOF'
+done
+t 2 "git worktree add: an option's value is not the path" shell 'git worktree add -b .worktrees/77 ../x'
+t 0 "git worktree add: the path after the option's value is read" shell 'git worktree add -fb ../x .worktrees/77 main 2>/dev/null'
+t 2 "git worktree add: after -- is refused" shell 'git worktree add --lock --reason "r s" -- ../x'
+t 2 "git -C: the path resolves against its directory" shell 'git -c a=b -C .worktrees worktree add ../../x'
+t 0 "git -C: into .claude/worktrees/ passes" shell 'git -C .claude worktree add worktrees/x'
+t 2 "jj -R, --name and -r: refused outside" shell 'jj -R . workspace add --name x -r @ ../x'
+t 0 "jj --name and -r: inside passes" shell 'jj workspace add --name x -r@- .worktrees/77'
+t 0 "a cd in a subshell ends at its parenthesis" shell '(cd /tmp && true); git worktree add .worktrees/77'
+t 0 "coddy's own start passes" shell "bash '$here/scripts/issue.sh' create 77 feat/77-worktree"
+# A path the text cannot fix, or no jq, passes and says so.
+for c in 'p=../x; git worktree add "$p"' 'git worktree add `echo ../x`' 'git worktree add ../x*' 'cd "$d" && jj workspace add x'; do
+  t 0 "unresolved, passes with a message: $c" noted 'could not tell where' "$c"
+done
+nojq() { payload "$1" | PATH="$tmp/nojq" run snap; }
+t 0 "without jq: a git worktree add passes" nojq 'git worktree add ../x'
+t 0 "without jq: and says so" says 'jq is missing' nojq 'git worktree add ../x'
+# After the command: a worktree outside coddy's, made by any spelling, trips;
+# one inside, or one that was there before, does not.
+wo=$(cd "$tmp" && pwd -P)/out
+tripped 0 "tripwire: a git worktree in .worktrees/<id>/ is quiet" 'git worktree add -q --detach .worktrees/88'
+tripped 0 "tripwire: a git worktree in .claude/worktrees/ is quiet" 'git worktree add -q --detach .claude/worktrees/y'
+wire snap w; (cd "$repo" && git worktree add -q --detach "$wo") >/dev/null 2>&1
+wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: a git worktree outside trips" test "$got" = 2
+t 0 "tripwire: and names it with how to remove it" grep -qF "$wo (remove it: git worktree remove $wo)" "$tmp/trip.err"
+tripped 0 "tripwire: a worktree outside from before the command is quiet" 'true'
+t 0 "dodged: a git worktree add from a variable passes snap" noted 'could not tell where' 'p=../dodge; git worktree add -q --detach "$p"'
+(cd "$repo" && p=../dodge; git worktree add -q --detach "$p") >/dev/null 2>&1
+t 2 "dodged: and trips once it has run" wire trip sh
+git worktree remove --force "$wo"; git worktree remove --force "$tmp/dodge"; git worktree remove --force .worktrees/88; git worktree remove --force .claude/worktrees/y
+if [ -d .jj ]; then
+  tripped 0 "tripwire: a jj workspace in .worktrees/<id>/ is quiet" 'jj workspace add --name 89 .worktrees/89'
+  wire snap w; (cd "$repo" && jj workspace add --name out "$wo") >/dev/null 2>&1
+  wire trip w 2>"$tmp/trip.err"; got=$?
+  t 0 "tripwire: a jj workspace outside trips" test "$got" = 2
+  t 0 "tripwire: and names it with how to remove it" grep -qF "$wo (remove it: jj workspace forget out && rm -rf $wo)" "$tmp/trip.err"
+  jj workspace forget 89 out >/dev/null 2>&1; rm -rf "$wo" .worktrees/89
+fi
 
 # The config switches every hook off when it goes, so a shell command may not touch it.
 cp .claude/coddy.yml "$tmp/conf.orig"

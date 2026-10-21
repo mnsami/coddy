@@ -152,12 +152,22 @@ taken over on its own.
 
 `guard: warn` turns the rejection into a notice. The edit goes through, and
 Claude is told it landed outside a claimed worktree, or in one another
-session claimed, and which command to run. The other layers do not read the
-key.
+session claimed, and which command to run. Of the other layers, only the
+tripwire's worktree check before a command reads the key.
 
 **Shell tripwire.** Shell commands cannot be checked in advance. So a second
 hook compares the main checkout before and after each one, and tells Claude
-to undo any change it left there.
+to undo any change it left there. It also lists every git worktree and jj
+workspace outside `.worktrees/<issue>/` and `.claude/worktrees/`, and reports
+a new one with the command that removes it, however the command made it.
+
+Before a command runs, the hook reads its text for a `git worktree add` or
+`jj workspace add` that would put a worktree anywhere else, and refuses it,
+naming `/coddy:start <issue>`; `guard: warn` turns that into a notice. The
+reading follows quotes, `cd`, `git -C`, options and compound commands, but a
+path it cannot work out (`"$p"`, a backtick, a glob) or a missing `jq` lets
+the command through with a notice, and the check afterwards still catches
+the worktree, except from a command run in the background.
 
 **Config lock.** `.coddy.yml` is the off switch for all of this. A shell
 command from Claude that removes or rewrites it is undone, and so is one
