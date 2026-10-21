@@ -379,6 +379,11 @@ t 2 "agent dir: .claude/ is not it" guard "$repo/.claude/notes.md"
 tripped 0 "agent dir: a change under it is quiet" 'mkdir -p .codex && echo x > .codex/notes.md'; rm -r .codex
 unset CODDY_AGENT_DIR
 
+# cfg drops a CRLF line's \r: worktree: jj\r reads as jj, not as an unknown tool run as git.
+cp .coddy.yml "$tmp/conf.yml"; printf 'version: 2\r\ntracker: github\r\nworktree: jj\r\ndefault_branch: main\r\n' > .coddy.yml
+t 0 "cfg: a CRLF worktree: jj reads as jj" says 'jj' run start 9 feat/9-crlf
+t 1 "cfg: so no git worktree is made" test -e .worktrees/9
+cp "$tmp/conf.yml" .coddy.yml
 # start is create, ship is verify then push; the aliases stay.
 t 0 "start makes the worktree" says 'created: .worktrees/1 on feat/1-thing' run start 1 feat/1-thing
 t 0 "create is its alias" says 'exists: .worktrees/1' run create 1 feat/1-thing
