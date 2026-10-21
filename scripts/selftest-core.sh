@@ -543,7 +543,12 @@ t 0 "githook: a pass-through hands on its arguments and stdin" sh -c "echo in | 
 mv "$tmp/prev/commit-msg" "$tmp/msg"
 t 0 "githook: one whose hook has gone passes" git -C .worktrees/1 commit -q --allow-empty -m x
 mv "$tmp/msg" "$tmp/prev/commit-msg"
-git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
+# A sandbox that blocks writes to .git/config (Claude Code's, by default)
+# fails the first start; a stale lock fails the write the same way here.
+git config --unset core.hooksPath; : > .git/config.lock
+t 1 "githook: start that cannot write .git/config fails" run start 1 feat/1-thing
+t 0 "githook: naming a sandbox and both ways out" says 'sandbox blocks writes to .git/config. Allow git config writes in the sandbox, or run this command once outside it' run start 1 feat/1-thing
+rm .git/config.lock; run start 1 feat/1-thing >/dev/null 2>&1
 t 0 "githook: none before is recorded as none" test ! -s .git/coddy/hooks.previous
 cp "$tmp/prev/pre-commit" .git/hooks/pre-commit
 PREV_EXIT=1 t 1 "githook: and then .git/hooks/ runs after coddy's check" git -C .worktrees/1 commit -q --allow-empty -m x

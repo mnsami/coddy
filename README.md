@@ -204,6 +204,10 @@ command that puts the old `core.hooksPath` back. Their ceilings:
   the issue's branch, `GIT_CONFIG_*`) would keep them off, at the root or in
   the issue's worktree; `git config --show-origin core.hooksPath` there
   finds it.
+- Claude Code's sandbox blocks writes to `.git/config` by default, so the
+  first `/coddy:start` in a repository stops there. Set
+  `sandbox.filesystem.allowGitConfig: true`, or run that `start` once
+  outside the sandbox: later runs do not write `core.hooksPath`.
 - A merge, cherry-pick or revert runs no `pre-commit`; the push catches it.
 
 **Branch protection.** The backstop for a command that edits, commits and

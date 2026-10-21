@@ -567,7 +567,7 @@ hooks() {
   # back and nothing recorded. A first install racing another can fail on
   # .git/config.lock, which is fine once the value is this one.
   o=$(git config --local core.hooksPath)
-  [ -z "$new" ] || git config core.hooksPath "$d" || [ "$(git config core.hooksPath)" = "$d" ] || die "could not set core.hooksPath"
+  [ -z "$new" ] || git config core.hooksPath "$d" || [ "$(git config core.hooksPath)" = "$d" ] || die "could not set core.hooksPath in .git/config, likely because a sandbox blocks writes to .git/config. Allow git config writes in the sandbox, or run this command once outside it: core.hooksPath is set once, and later runs do not write it."
   if [ "$(git config core.hooksPath)" != "$d" ] || [ "$(git -C "$wt" config core.hooksPath)" != "$d" ]; then
     if [ -n "$o" ]; then git config core.hooksPath "$o"; else git config --unset core.hooksPath; fi
     die "core.hooksPath is set where it overrides .git/config, so git would not run the coddy git hooks. Find it with git config --show-origin core.hooksPath, at the root and in $wt, remove it, then run /coddy:start $issue again."
