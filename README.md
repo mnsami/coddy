@@ -178,21 +178,32 @@ Once the check passes, the hook `core.hooksPath` named before runs, or the
 one in `.git/hooks/`. Every other hook that directory holds, a `commit-msg`
 say, gets a pass-through to it, so pointing `core.hooksPath` elsewhere turns
 none of them off. A hook that cannot find coddy refuses and says how to get
-past it: `--no-verify`, or the command that puts the old `core.hooksPath`
-back. Their ceilings:
+past it: `/coddy:start <issue>`, which rewrites them, `--no-verify`, or the
+command that puts the old `core.hooksPath` back. Their ceilings:
 
 - `git commit --no-verify` and `git push --no-verify` skip them, and
   `git -c core.hooksPath=` runs without them.
 - jj runs no git hooks.
 - A tool that sets `core.hooksPath` itself, such as a hook manager's
   install, turns them off until the next `/coddy:start`.
+- A tool that installs into git's hooks directory (lefthook,
+  `git lfs install`, simple-git-hooks) writes into `.git/coddy/hooks/` once
+  `/coddy:start` has run, and can replace coddy's own. `/coddy:start` then
+  stops on any file there it did not write, and names the old hooks
+  directory to move it to; it never deletes or overwrites one.
+- The hooks run coddy by the path `/coddy:start` ran it from, the plugin's
+  versioned directory. Claude Code deletes an old version's directory 14
+  days after an update, and from then a terminal without `coddy` on `PATH`
+  has every commit and push refused until the next `/coddy:start`.
 - The pass-throughs are written when `/coddy:start` runs: a hook added to
   the old directory after that runs from the next `/coddy:start`.
 - `core.hooksPath` is an absolute path, so moving or renaming the checkout
   turns every hook off, the old ones included, until the next `/coddy:start`.
 - `/coddy:start` stops when a `core.hooksPath` set where it overrides
-  `.git/config` (the worktree's own config, an include, `GIT_CONFIG_*`)
-  would keep them off; `git config --show-origin core.hooksPath` finds it.
+  `.git/config` (the worktree's own config, an include, an `includeIf` on
+  the issue's branch, `GIT_CONFIG_*`) would keep them off, at the root or in
+  the issue's worktree; `git config --show-origin core.hooksPath` there
+  finds it.
 - A merge, cherry-pick or revert runs no `pre-commit`; the push catches it.
 
 **Branch protection.** The backstop for a command that edits, commits and

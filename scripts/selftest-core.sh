@@ -509,6 +509,28 @@ fi
 ln -s "$repo" "$tmp/alias"; CODDY_ROOT="$tmp/alias" run start 1 feat/1-thing >/dev/null 2>&1
 t 0 "githook: a rerun by another spelling of the root keeps the record" test "$(cat .git/coddy/hooks.previous)" = "$tmp/prev"
 run start 1 feat/1-thing >/dev/null 2>&1
+# start writes into a directory of its own and overwrites only what it wrote:
+# lefthook, git lfs install and simple-git-hooks write into git's hooks path,
+# which is this directory now.
+cp "$hooks/commit-msg" "$tmp/cm"; echo foreign > "$hooks/commit-msg"
+t 1 "githook: start stops on a file it did not write at a hook's name" run start 1 feat/1-thing
+t 0 "githook: naming it and where it belongs" says "$hooks/commit-msg is not a hook coddy start wrote.*Move it to $tmp/prev," run start 1 feat/1-thing
+t 0 "githook: and leaves it as it was" test "$(cat "$hooks/commit-msg")" = foreign
+mv "$tmp/cm" "$hooks/commit-msg"; mkdir "$hooks/post-merge"
+t 1 "githook: start stops on a name that is not a plain file" run start 1 feat/1-thing
+rmdir "$hooks/post-merge"; : > "$hooks/.pre-commit.1"
+t 0 "githook: and passes over another run's temp" run start 1 feat/1-thing
+rm "$hooks/.pre-commit.1"; mv "$hooks" "$tmp/hooks"; mkdir "$tmp/target"; echo n > "$tmp/target/notes"; ln -s "$tmp/target" "$hooks"
+t 1 "githook: start stops when the hooks directory is a symlink" run start 1 feat/1-thing
+t 0 "githook: and deletes nothing behind it" test "$(ls "$tmp/target")" = notes
+rm "$hooks"; mv "$tmp/hooks" "$hooks"
+# A conditional include can set core.hooksPath in the issue's worktree alone:
+# start reads it back there too, before it writes any pass-through.
+printf '[core]\n\thooksPath = %s\n' "$tmp/elsewhere" > "$tmp/off.inc"; git config 'includeIf.onbranch:feat/**.path' "$tmp/off.inc"
+cp "$tmp/prev/commit-msg" "$tmp/prev/post-commit"; sums=$(cksum "$hooks"/*)
+t 1 "githook: start refuses when an onbranch include turns the hooks off in the issue's worktree" run start 1 feat/1-thing
+t 0 "githook: having written no pass-through" test "$(cksum "$hooks"/*)" = "$sums"
+git config --remove-section 'includeIf.onbranch:feat/**'; rm "$tmp/prev/post-commit"
 : > "$tmp/prev.log"; git commit -q --allow-empty -m x >/dev/null 2>&1
 t 1 "githook: a refused commit runs no previous hook" test -s "$tmp/prev.log"
 t 0 "githook: a passed commit runs the previous pre-commit" sh -c "git -C .worktrees/1 commit -q --allow-empty -m x && grep -qx 'pre-commit ' '$tmp/prev.log'"
@@ -523,21 +545,28 @@ t 0 "githook: one whose hook has gone passes" git -C .worktrees/1 commit -q --al
 mv "$tmp/msg" "$tmp/prev/commit-msg"
 git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
 t 0 "githook: none before is recorded as none" test ! -s .git/coddy/hooks.previous
-t 0 "githook: a hook the previous directory no longer holds loses its pass-through" test "$(ls "$hooks")" = "$(printf 'pre-commit\npre-push')"
 cp "$tmp/prev/pre-commit" .git/hooks/pre-commit
 PREV_EXIT=1 t 1 "githook: and then .git/hooks/ runs after coddy's check" git -C .worktrees/1 commit -q --allow-empty -m x
 rm .git/hooks/pre-commit
+# On a case-insensitive file system PRE-COMMIT is pre-commit: a pass-through by
+# that name would replace coddy's own. Either way coddy's stays.
+printf '#!/bin/sh\nexit 0\n' > .git/hooks/PRE-COMMIT; chmod +x .git/hooks/PRE-COMMIT; run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: a previous PRE-COMMIT leaves coddy's pre-commit in place" grep -q 'githook pre-commit' "$hooks/pre-commit"
+t 1 "githook: which still refuses a commit on the default branch" git commit -q --allow-empty -m x
+rm .git/hooks/PRE-COMMIT
 # A hook that cannot find the coddy that wrote it uses one on PATH, else refuses.
 mkdir "$tmp/moved" "$tmp/onpath"; cp "$here/bin/coddy" "$tmp/moved/"; ln -s "$here/bin/coddy" "$tmp/onpath/coddy"
 (cd .worktrees/1 && ../../../moved/coddy start 1 feat/1-thing) >/dev/null 2>&1
 t 0 "githook: start run by a relative path, away from the root, writes that coddy's absolute path" grep -qxF "c='$tmp/moved/coddy'" "$hooks/pre-commit"
 rm "$tmp/moved/coddy"
 PATH="$tmp/nojq" t 1 "githook: a hook that cannot find coddy refuses" git -C .worktrees/1 commit -q --allow-empty -m x
-PATH="$tmp/nojq" t 0 "githook: naming --no-verify" says 'Skip the check with --no-verify' git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$tmp/nojq" t 0 "githook: naming --no-verify" says 'skip the check with --no-verify' git -C .worktrees/1 commit -q --allow-empty -m x
 PATH="$tmp/nojq" t 0 "githook: and, none recorded, how to turn it off" says 'git config --unset core.hooksPath' git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$tmp/nojq" t 0 "githook: and /coddy:start, which rewrites them" says 'Run /coddy:start <issue> to rewrite these hooks' git -C .worktrees/1 commit -q --allow-empty -m x
 PATH="$tmp/onpath:$PATH" t 0 "githook: one on PATH runs it" git -C .worktrees/1 commit -q --allow-empty -m x
-cp "$here/bin/coddy" "$tmp/moved/"; git config core.hooksPath "$tmp/prev"; "$tmp/moved/coddy" start 1 feat/1-thing >/dev/null 2>&1; rm "$tmp/moved/coddy"
-PATH="$tmp/nojq" t 0 "githook: and, one recorded, how to put it back" says "git config core.hooksPath $tmp/prev\$" git -C .worktrees/1 commit -q --allow-empty -m x
+# The recorded path as recorded: echo in sh would read its backslash as an escape.
+b="$tmp/pr\\ev"; cp "$here/bin/coddy" "$tmp/moved/"; git config core.hooksPath "$b"; "$tmp/moved/coddy" start 1 feat/1-thing >/dev/null 2>&1; rm "$tmp/moved/coddy"
+PATH="$tmp/nojq" t 0 "githook: and, one recorded, how to put it back, backslash and all" sh -c 'git -C .worktrees/1 commit -q --allow-empty -m x 2>&1 | grep -qF -- "$1"' _ "git config core.hooksPath $(printf %q "$b")"
 git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
 # Not onboarded, coddy's check is off.
 pp() { echo "refs/heads/main $d refs/heads/main $d" | "$hooks/pre-push" origin x; }
