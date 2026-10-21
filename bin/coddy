@@ -449,7 +449,7 @@ fi
 
 [ -f "$conf" ] || { [ "${1-}" = sweep ] && exit 0; die "NOT_ONBOARDED"; }
 # This file by a path the cd below leaves valid, for the git hooks start writes.
-src="${BASH_SOURCE[0]}"; case "$src" in /*) ;; *) src="$PWD/$src" ;; esac
+src="${BASH_SOURCE[0]-}"; case "$src" in /*|'') ;; *) src="$PWD/$src" ;; esac
 cd "$root" || die "cannot enter $root"
 # The answers onboarding saved go once the config is written, and only then
 # (above: NOT_ONBOARDED before); starting over is removing the file by hand.
@@ -522,29 +522,56 @@ verify() {
   v=$(cfg verify); [ -n "$v" ] || die "no verify command in $cname"
   (cd "$wt" && sh -c "$v")
 }
-# The git hooks, .git/coddy/hooks/pre-commit and pre-push: each runs githook
-# through this coddy, else one on PATH, else refuses. core.hooksPath names
-# their directory by its absolute path (git resolves a relative one per
-# worktree); the one it named before, none included, is recorded whenever it
-# was not this one, so a rerun keeps the record, for githook to hand off to.
+# The git hooks, .git/coddy/hooks/: pre-commit and pre-push run githook
+# through this coddy, else one on PATH, else refuse; each other hook the
+# previous directory holds gets a pass-through in sh that never starts coddy,
+# and a name it does not hold gets no file, so a hook git fires often
+# (reference-transaction, on every ref update) costs nothing the project did
+# not already pay. core.hooksPath names the directory by its absolute path
+# (git resolves a relative one per worktree); the one it named before, none
+# included, is recorded whenever it was not this one, so a rerun keeps the
+# record, for githook and the pass-throughs to hand off to.
 hooks() {
-  local q="'\''" c d h p
+  local q="'\''" c d f g h p o m new=""
   c="$(cd "${src%/*}" && pwd)/${src##*/}" && mkdir -p .git/coddy/hooks && d=$(cd .git/coddy/hooks && pwd) || die "could not write the git hooks"
+  p=$(cat .git/coddy/hooks.previous 2>/dev/null)
+  if [ "$(git config core.hooksPath)" != "$d" ]; then
+    new=1 o=$(git config --type=path core.hooksPath)
+    # this directory by another spelling of the root is not a hook to hand off to
+    { [ -n "$o" ] && [ "$o" -ef "$d" ]; } || p=$o
+  fi
+  g="${p:-${d%/coddy/hooks}/hooks}"
+  # git hook names hold no dot (a .sample does); never this directory again, or it would loop
+  pass() { case "$1" in pre-commit|pre-push|*.*) return 1 ;; esac; [ -f "$g/$1" ] && [ -x "$g/$1" ] && [ ! "$g" -ef "$d" ]; }
+  if [ -n "$p" ]; then o="git config core.hooksPath $(printf %q "$p")"; else o="git config --unset core.hooksPath"; fi
   # Each written aside and moved in: a hook cut short, or read while it is
   # rewritten, would run as an empty script and pass.
   for h in pre-commit pre-push; do
-    printf '#!/bin/sh\n# Written by coddy start: coddy githook refuses a commit or push outside a claimed issue branch, then runs the hook core.hooksPath named before.\nc=%s\n[ -x "$c" ] || c=$(command -v coddy) || { echo "coddy: cannot find coddy to check this %s. Skip the check with --no-verify, or turn it off: git config --unset core.hooksPath" >&2; exit 1; }\n# git runs this at the top of the worktree, where coddy finds the root.\nunset CODDY_ROOT\nexec "$c" githook %s "$@"\n' "'${c//\'/$q}'" "${h#pre-}" "$h" > "$d/$h.$$" && chmod +x "$d/$h.$$" && mv -f "$d/$h.$$" "$d/$h" || die "could not write $d/$h"
+    m="coddy: cannot find coddy to check this ${h#pre-}. Skip the check with --no-verify, or turn it off: $o"
+    printf '#!/bin/sh\n# Written by coddy start: coddy githook refuses a commit or push outside a claimed issue branch, then runs the hook core.hooksPath named before.\nc=%s\n[ -x "$c" ] || c=$(command -v coddy) || { echo %s >&2; exit 1; }\n# git runs this at the top of the worktree, where coddy finds the root.\nunset CODDY_ROOT\nexec "$c" githook %s "$@"\n' "'${c//\'/$q}'" "'${m//\'/$q}'" "$h" > "$d/$h.$$" && chmod +x "$d/$h.$$" && mv -f "$d/$h.$$" "$d/$h" || die "could not write $d/$h"
   done
-  [ "$(git config core.hooksPath)" != "$d" ] || return 0
-  # this directory by another spelling of the root is not a hook to hand off to
-  p=$(git config --type=path core.hooksPath)
-  { [ -n "$p" ] && [ "$p" -ef "$d" ]; } || printf %s "$p" > .git/coddy/hooks.previous || die "could not set core.hooksPath"
+  for f in "$g"/*; do
+    h=${f##*/}; pass "$h" || continue; f="'${g//\'/$q}/${h//\'/$q}'"
+    printf '#!/bin/sh\n# Written by coddy start: runs the hook of this name core.hooksPath named before.\n[ -x %s ] || exit 0\nexec %s "$@"\n' "$f" "$f" > "$d/$h.$$" && chmod +x "$d/$h.$$" && mv -f "$d/$h.$$" "$d/$h" || die "could not write $d/$h"
+  done
+  for f in "$d"/*; do h=${f##*/}; case "$h" in pre-commit|pre-push) ;; *) pass "$h" || rm -f "$f" ;; esac; done
+  [ -n "$new" ] || return 0
+  # Read back as git resolves it: a value set where it overrides .git/config
+  # (the worktree's own config, an include after [core], GIT_CONFIG_*) would
+  # keep these hooks off, so .git/config's is put back and nothing recorded.
+  o=$(git config --local core.hooksPath)
   git config core.hooksPath "$d" || die "could not set core.hooksPath"
+  if [ "$(git config core.hooksPath)" != "$d" ]; then
+    if [ -n "$o" ]; then git config core.hooksPath "$o"; else git config --unset core.hooksPath; fi
+    die "core.hooksPath is set where it overrides .git/config, so git would not run the coddy git hooks. Find it with git config --show-origin core.hooksPath, remove it, then run /coddy:start $issue again."
+  fi
+  printf %s "$p" > .git/coddy/hooks.previous || die "could not record the previous core.hooksPath"
 }
 
 case "$cmd" in
   start|create)
     branch="${3-}"; [ -n "$branch" ] || die "usage: $self $cmd <issue> <branch> [base-issue]"
+    [ -n "$src" ] || die "$cmd needs to run from its file, not stdin: the git hooks it installs run coddy by that path"
     [ "$branch" != "$base" ] || die "$base is the default branch, not an issue branch"
     # A new branch starts from $base on the remote, or, given a base issue,
     # from that issue's recorded branch as it stands here (pushed or not),
