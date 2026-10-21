@@ -218,8 +218,9 @@ review_rounds: 3             # optional; 1-5 (default 3)
 ```
 
 - `worktree` picks what creates each issue's worktree: `git` (`git worktree
-  add`, the default, also when the key is absent) or `jj` (`jj workspace
-  add`, colocating the repo on first use).
+  add`, the default, also when the key is absent at version 2) or `jj` (`jj
+  workspace add`, colocating the repo on first use). Below version 2 an
+  absent key means `jj`, and `/coddy:migrate` writes it in.
   `/coddy:config` refuses to switch it while an issue worktree exists.
 - `guard: warn` is described under the edit guard above. `/coddy:onboard`
   leaves the key out; set it with `/coddy:config guard=warn`.

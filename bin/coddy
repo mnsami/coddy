@@ -464,7 +464,9 @@ fi
 cmd="${1-}" issue="${2-}"
 [ "$cmd" = sweep ] || case "$issue" in ''|*[!A-Za-z0-9_-]*) die "issue id must look like 42 or ABC-123, got '$issue'" ;; esac
 wt=".worktrees/$issue" rec=".git/coddy/$issue.branch"
-tool=$(cfg worktree); tool="${tool:-git}"
+# No worktree key is git from version 2, jj below it (no version is 0, read as migrate does).
+tool=$(cfg worktree)
+if [ -z "$tool" ]; then v=$(cfg version | tr -d '[:space:]'); v=${v#"${v%%[!0]*}"}; case "$v" in ''|1) tool=jj ;; *) tool=git ;; esac; fi
 base=$(cfg default_branch); base="${base:-main}"
 
 # The worktree sits on branch $1: checked out (git), an ancestor of @ (jj).

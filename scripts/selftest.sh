@@ -355,15 +355,20 @@ leg git 43
 git -C .worktrees/43 checkout -q -b feat/43-other
 t 1 "git: push refuses a worktree that left its recorded branch" run push 43
 git -C .worktrees/43 checkout -q feat/43-thing
-cp .claude/coddy.yml "$tmp/conf.yml"; printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml
-t 0 "no worktree key: create makes a worktree" run create 44 feat/44-thing
-t 0 "no worktree key: and it is git's, not jj's" sh -c 'test -e .worktrees/44/.git && ! test -e .worktrees/44/.jj'
+cp .claude/coddy.yml "$tmp/conf.yml"; printf 'version: 2\ntracker: github\ndefault_branch: main\n' > .claude/coddy.yml
+t 0 "no worktree key at version 2: create makes a worktree" run create 44 feat/44-thing
+t 0 "no worktree key at version 2: and it is git's, not jj's" sh -c 'test -e .worktrees/44/.git && ! test -e .worktrees/44/.jj'
 git worktree remove --force .worktrees/44; git branch -qD feat/44-thing; rm -f .git/coddy/44.branch; cp "$tmp/conf.yml" .claude/coddy.yml
 if command -v jj >/dev/null; then
   printf 'tracker: github\nworktree: jj\ndefault_branch: main\n' > .claude/coddy.yml
   t 1 "jj: create refuses a repo that is not jj-backed" run create 41 feat/41-thing
   jj git init --colocate >/dev/null 2>&1; echo '.jj/' >> .git/info/exclude
   leg jj 42
+  printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml
+  t 0 "no worktree key, no version: create makes a worktree" run create 45 feat/45-thing
+  t 0 "no worktree key, no version: and it is jj's, until migrated" sh -c 'test -d .worktrees/45/.jj && ! test -e .worktrees/45/.git'
+  jj workspace forget 45 >/dev/null 2>&1; rm -rf .worktrees/45; jj bookmark delete feat/45-thing >/dev/null 2>&1; rm -f .git/coddy/45.branch
+  printf 'tracker: github\nworktree: jj\ndefault_branch: main\n' > .claude/coddy.yml
 else
   echo "skip jj leg (jj not installed)"
 fi
