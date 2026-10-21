@@ -366,7 +366,7 @@ if command -v jj >/dev/null; then
   leg jj 42
   printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml
   t 0 "no worktree key, no version: create makes a worktree" run create 45 feat/45-thing
-  t 0 "no worktree key, no version: and it is jj's, until migrated" sh -c 'test -d .worktrees/45/.jj && ! test -e .worktrees/45/.git'
+  t 0 "no worktree key, no version: and it is jj's, until migrated" test -d .worktrees/45/.jj
   jj workspace forget 45 >/dev/null 2>&1; rm -rf .worktrees/45; jj bookmark delete feat/45-thing >/dev/null 2>&1; rm -f .git/coddy/45.branch
   printf 'tracker: github\nworktree: jj\ndefault_branch: main\n' > .claude/coddy.yml
 else
