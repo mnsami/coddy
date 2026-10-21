@@ -445,6 +445,69 @@ t 0 "status lists the claimed issue as mine" says '^owners: 1=me' run status
 t 0 "sweep keeps the unmerged worktree" sh -c "'$here/bin/coddy' sweep; test -d '$repo/.worktrees/1'"
 t 0 "the whole flow left the main checkout alone" wire trip flow
 
+# start installs git hooks that refuse a commit or push outside a claimed
+# issue's branch, for people too; the flow above pushed through them.
+hooks="$repo/.git/coddy/hooks"
+t 0 "githook: start points core.hooksPath at the absolute hooks dir" test "$(git config core.hooksPath)" = "$hooks"
+t 0 "githook: and writes both hooks executable" test -x "$hooks/pre-commit" -a -x "$hooks/pre-push"
+t 1 "githook: a commit on the default branch is refused" git commit -q --allow-empty -m x
+t 0 "githook: naming /coddy:start" says '/coddy:start <issue>' git commit -q --allow-empty -m x
+t 0 "githook: and --no-verify" says 'commit with --no-verify' git commit -q --allow-empty -m x
+git checkout -q -b loose
+t 1 "githook: a commit on an unclaimed branch is refused" git commit -q --allow-empty -m x
+git checkout -q --detach origin/main # ahead of the remote, so only the hook stops a push of it
+t 0 "githook: a commit on a detached HEAD passes" git commit -q --allow-empty -m x
+d=$(git rev-parse HEAD); git checkout -q main
+t 0 "githook: a commit on a claimed issue's branch passes, in its worktree" git -C .worktrees/1 commit -q --allow-empty -m x
+t 1 "githook: a push to the default branch is refused" git push -q origin "$d:refs/heads/main"
+t 0 "githook: naming push --no-verify" says 'push with --no-verify' git push -q origin "$d:refs/heads/main"
+t 1 "githook: a push to an unclaimed branch is refused" git push -q origin loose
+t 0 "githook: a push of a claimed issue's branch passes" git -C .worktrees/1 push -q origin HEAD
+git push -q --no-verify origin loose
+t 0 "githook: deleting another branch passes" git push -q origin --delete loose
+t 0 "githook: deleting the default branch is refused" says 'push to main, the default branch' git push -q origin --delete main
+git tag t1 "$d"
+t 0 "githook: a tag passes" git push -q origin t1
+git branch -q -D loose
+# The hook core.hooksPath named before runs after coddy's check, with the same
+# arguments and stdin, its exit the hook's. start records it whenever
+# core.hooksPath is not coddy's (a hook manager re-set it), and a rerun keeps it.
+mkdir "$tmp/prev"
+for h in pre-commit pre-push; do printf '#!/bin/sh\necho "%s $*" >> "%s"; cat >> "%s"; exit ${PREV_EXIT:-0}\n' "$h" "$tmp/prev.log" "$tmp/prev.log" > "$tmp/prev/$h"; chmod +x "$tmp/prev/$h"; done
+git config core.hooksPath "$tmp/prev"; run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: start puts core.hooksPath back" test "$(git config core.hooksPath)" = "$hooks"
+t 0 "githook: recording the one before" test "$(cat .git/coddy/hooks.previous)" = "$tmp/prev"
+sums=$(cksum "$hooks"/* .git/coddy/hooks.previous); run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: a rerun changes nothing" test "$(cksum "$hooks"/* .git/coddy/hooks.previous)" = "$sums"
+t 0 "githook: and keeps core.hooksPath" test "$(git config core.hooksPath)" = "$hooks"
+: > "$tmp/prev.log"; git commit -q --allow-empty -m x >/dev/null 2>&1
+t 1 "githook: a refused commit runs no previous hook" test -s "$tmp/prev.log"
+t 0 "githook: a passed commit runs the previous pre-commit" sh -c "git -C .worktrees/1 commit -q --allow-empty -m x && grep -qx 'pre-commit ' '$tmp/prev.log'"
+PREV_EXIT=1 t 1 "githook: whose failure fails the commit" git -C .worktrees/1 commit -q --allow-empty -m x
+PREV_EXIT=1 t 1 "githook: a previous pre-push's failure fails the push" git -C .worktrees/1 push -q origin HEAD
+t 0 "githook: which gets the push's arguments and stdin" sh -c "git -C .worktrees/1 push -q origin HEAD && grep -q '^pre-push origin ' '$tmp/prev.log' && grep -q ' refs/heads/feat/1-thing [0-9a-f]*\$' '$tmp/prev.log'"
+git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "githook: none before is recorded as none" test ! -s .git/coddy/hooks.previous
+cp "$tmp/prev/pre-commit" .git/hooks/pre-commit
+PREV_EXIT=1 t 1 "githook: and then .git/hooks/ runs after coddy's check" git -C .worktrees/1 commit -q --allow-empty -m x
+rm .git/hooks/pre-commit
+# A hook that cannot find the coddy that wrote it uses one on PATH, else refuses.
+mkdir "$tmp/moved" "$tmp/onpath"; cp "$here/bin/coddy" "$tmp/moved/"; ln -s "$here/bin/coddy" "$tmp/onpath/coddy"
+"$tmp/moved/coddy" start 1 feat/1-thing >/dev/null 2>&1; rm "$tmp/moved/coddy"
+PATH="$tmp/nojq" t 1 "githook: a hook that cannot find coddy refuses" git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$tmp/nojq" t 0 "githook: naming --no-verify" says 'Skip the check with --no-verify' git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$tmp/nojq" t 0 "githook: and how to turn it off" says 'git config --unset core.hooksPath' git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$tmp/onpath:$PATH" t 0 "githook: one on PATH runs it" git -C .worktrees/1 commit -q --allow-empty -m x
+run start 1 feat/1-thing >/dev/null 2>&1
+# Not onboarded, coddy's check is off.
+pp() { echo "refs/heads/main $d refs/heads/main $d" | "$hooks/pre-push" origin x; }
+t 1 "githook: run by hand, pre-commit on the default branch refuses" "$hooks/pre-commit"
+t 1 "githook: and pre-push to it" pp
+mv .coddy.yml "$tmp/aside"
+t 0 "githook: not onboarded, pre-commit passes" "$hooks/pre-commit"
+t 0 "githook: and pre-push" pp
+mv "$tmp/aside" .coddy.yml
+
 # get.sh installs main from CODDY_REPO_URL into CODDY_HOME and links coddy
 # into CODDY_BIN, run as curl pipes it (the script on stdin), with no network.
 src="$tmp/src" gh="$tmp/gethome"; cs="$gh/.coddy"

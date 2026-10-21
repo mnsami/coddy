@@ -18,6 +18,7 @@
 #   coddy doctor                    the install this runs from: its directory, how it got there, version and commit
 #   coddy guard                     PreToolUse hook on Edit/Write (hooks/hooks.json)
 #   coddy snap | trip               Pre/PostToolUse hooks on Bash
+#   coddy githook pre-commit|pre-push   the git hooks start installs under .git/coddy/hooks
 # Inputs, all optional: CODDY_ROOT, where root resolution starts ($PWD
 # without it); CODDY_SESSION and CODDY_PID, the session id and process the
 # lock's owner line records and is compared with (a caller naming none is
@@ -412,6 +413,40 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   die "$msg"
 fi
 
+# The git hooks start writes (hooks, below), for everyone, people included: a
+# git commit on a branch, or a push to one, passes only on a branch a claimed
+# issue owns, whichever session holds the claim, and never on the default
+# branch. A detached HEAD commits (jj leaves the main checkout there); a tag,
+# and the delete of a branch other than the default one, push. Then the hook
+# core.hooksPath named before runs with the same arguments and stdin, and its
+# exit is the hook's; not onboarded, that hook alone. git runs a hook at the
+# top of its worktree, where the root is found.
+if [ "${1-}" = githook ]; then
+  h="${2-}"; case "$h" in pre-commit|pre-push) shift 2 ;; *) die "usage: $self githook pre-commit|pre-push" ;; esac
+  in=""; [ "$h" = pre-commit ] || { in=$(cat; echo x); in=${in%x}; }
+  if [ -f "$conf" ]; then
+    b=$(cfg default_branch); b="${b:-main}"
+    no="is refused: issue work belongs on a claimed issue's branch. Run /coddy:start <issue>, or ${h#pre-} with --no-verify."
+    claimed() { for r in "$root"/.git/coddy/*.branch; do [ "$(cat "$r" 2>/dev/null)" = "$1" ] && [ -e "${r%.branch}" ] && return 0; done; return 1; }
+    if [ "$h" = pre-commit ]; then
+      n=$(git symbolic-ref -q HEAD); n=${n#refs/heads/}
+      [ -z "$n" ] || [ "$n" != "$b" ] || die "a commit on $b, the default branch, $no"
+      [ -z "$n" ] || claimed "$n" || die "a commit on $n, which no claimed issue owns, $no"
+    else
+      while read -r _ lo r _; do
+        case "$r" in refs/heads/*) n=${r#refs/heads/} ;; *) continue ;; esac
+        [ "$n" != "$b" ] || die "a push to $b, the default branch, $no"
+        case "$lo" in *[!0]*) claimed "$n" || die "a push to $n, which no claimed issue owns, $no" ;; esac
+      done <<<"$in"
+    fi
+  fi
+  p=$(cat "$root/.git/coddy/hooks.previous" 2>/dev/null); p="${p:-$root/.git/hooks}/$h"
+  # Never this hook again: a previous path that is another spelling of it would loop.
+  { [ -x "$p" ] && [ ! "$p" -ef "$root/.git/coddy/hooks/$h" ]; } || exit 0
+  [ "$h" = pre-push ] || exec "$p" "$@"
+  printf %s "$in" | "$p" "$@"; exit
+fi
+
 [ -f "$conf" ] || { [ "${1-}" = sweep ] && exit 0; die "NOT_ONBOARDED"; }
 cd "$root" || die "cannot enter $root"
 # The answers onboarding saved go once the config is written, and only then
@@ -485,6 +520,21 @@ verify() {
   v=$(cfg verify); [ -n "$v" ] || die "no verify command in $cname"
   (cd "$wt" && sh -c "$v")
 }
+# The git hooks, .git/coddy/hooks/pre-commit and pre-push: each runs githook
+# through this coddy, else one on PATH, else refuses. core.hooksPath names
+# their directory by its absolute path (git resolves a relative one per
+# worktree); the one it named before, none included, is recorded whenever it
+# was not this one, so a rerun keeps the record, for githook to hand off to.
+hooks() {
+  local s="${BASH_SOURCE[0]}" q="'\''" c d h
+  case "$s" in */*) ;; *) s="./$s" ;; esac
+  c="$(cd "${s%/*}" && pwd)/${s##*/}" && mkdir -p .git/coddy/hooks && d=$(cd .git/coddy/hooks && pwd) || die "could not write the git hooks"
+  for h in pre-commit pre-push; do
+    printf '#!/bin/sh\n# Written by coddy start: coddy githook refuses a commit or push outside a claimed issue branch, then runs the hook core.hooksPath named before.\nc=%s\n[ -x "$c" ] || c=$(command -v coddy) || { echo "coddy: cannot find coddy to check this %s. Skip the check with --no-verify, or turn it off: git config --unset core.hooksPath" >&2; exit 1; }\n# git runs this at the top of the worktree, where coddy finds the root.\nunset CODDY_ROOT\nexec "$c" githook %s "$@"\n' "'${c//\'/$q}'" "${h#pre-}" "$h" > "$d/$h" && chmod +x "$d/$h" || die "could not write $d/$h"
+  done
+  [ "$(git config core.hooksPath)" != "$d" ] || return 0
+  { git config --type=path core.hooksPath; true; } > .git/coddy/hooks.previous && git config core.hooksPath "$d" || die "could not set core.hooksPath"
+}
 
 case "$cmd" in
   start|create)
@@ -509,7 +559,7 @@ case "$cmd" in
         on "$branch" || die "$wt is not on $branch"
         record
       fi
-      echo "exists: $wt"; exit 0
+      hooks; echo "exists: $wt"; exit 0
     fi
     mkdir -p .worktrees
     git check-ignore -q .worktrees || echo '.worktrees/' >> .git/info/exclude
@@ -540,6 +590,7 @@ case "$cmd" in
     fi
     record
     [ -z "$from" ] || echo "$from" > ".git/coddy/$issue.base" || die "could not record the base"
+    hooks
     echo "created: $wt on $branch${from:+ onto $from}" ;;
 
   claim)
@@ -710,5 +761,5 @@ case "$cmd" in
         { grep -v "^$k=" "$f" 2>/dev/null; printf '%s=%s\n' "$k" "$v"; } > "$f.tmp" && mv "$f.tmp" "$f" || die "could not write $f"
       fi
     done ;;
-  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | sweep | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard" ;;
+  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | sweep | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard | githook pre-commit|pre-push" ;;
 esac

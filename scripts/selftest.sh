@@ -408,11 +408,11 @@ tripped 0 "tripwire: quiet on the switch back" 'git checkout -q main'
 tripped 0 "tripwire: quiet for a detached HEAD on the default branch" 'git checkout -q --detach origin/main'
 tripped 2 "tripwire: detached HEAD on a pushed commit off the default branch" 'git checkout -q --detach origin/feat/43-thing'
 git checkout -q main
-tripped 2 "tripwire: local commit in the main checkout" 'git commit -q --allow-empty -m oops'
+tripped 2 "tripwire: local commit in the main checkout, past the git hooks" 'git commit -q --no-verify --allow-empty -m oops'
 git checkout -q side
 tripped 0 "tripwire: quiet on the switch back to a default branch with local commits" 'git checkout -q main'
 git branch -q -D side
-tripped 2 "tripwire: local commit that was pushed to another branch" 'git commit -q --allow-empty -m oops2 && git push -q origin HEAD:refs/heads/elsewhere'
+tripped 2 "tripwire: local commit that was pushed to another branch" 'git commit -q --no-verify --allow-empty -m oops2 && git push -q --no-verify origin HEAD:refs/heads/elsewhere'
 
 # The config switches every hook off when it goes, so a shell command may not touch it.
 cp .claude/coddy.yml "$tmp/conf.orig"
@@ -429,7 +429,7 @@ t 0 "config: restored after .claude/ was removed" same
 # top. git reset first: jj colocation left the untracked files as intent-to-add
 # index entries, which a rebase refuses to start over.
 git reset -q && git pull -q --rebase origin main
-git add -f .claude/coddy.yml; git commit -q -m "share config"; git push -q origin HEAD:main
+git add -f .claude/coddy.yml; git commit -q --no-verify -m "share config"; git push -q --no-verify origin HEAD:main # past the git hooks start installed
 git clone -q -b main "$tmp/origin.git" "$tmp/mate" 2>/dev/null
 (cd "$tmp/mate" && echo "roadmap: docs/ROADMAP.md" >> .claude/coddy.yml && git commit -q -am "roadmap" && git push -q origin HEAD:main)
 tripped 2 "config: a pulled change to a shared config is restored" 'git fetch -q origin && git merge -q --ff-only origin/main'

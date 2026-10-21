@@ -134,7 +134,8 @@ resolved on the way in is not, so remove that worktree by hand.
 
 ## How it enforces
 
-Five layers. The first three are hooks, live in every onboarded project.
+Six layers. The first three are Claude Code hooks, live in every onboarded
+project; the fourth is a pair of git hooks that `/coddy:start` installs.
 
 **Edit guard.** A hook rejects every file edit Claude attempts outside
 `.worktrees/<issue>/`. Inside, it rejects edits until `/coddy:start` has
@@ -167,6 +168,24 @@ through git, a pull of a shared config or a checkout, is undone too, since
 nothing on disk tells it from one a command forged: the message sends Claude
 to `/coddy:config`, which shows you the diff against `HEAD` and writes it
 only when you say so.
+
+**Git hooks.** `/coddy:start` points git's `core.hooksPath` at
+`.git/coddy/hooks/`. Its `pre-commit` and `pre-push` refuse a commit on the
+default branch, or a push to it, and on any branch no claimed issue owns,
+whichever session claimed it. They refuse people too. A commit on a detached
+`HEAD`, a tag, and deleting a branch other than the default one go through.
+Once the check passes, the hook `core.hooksPath` named before runs, or the
+one in `.git/hooks/`. A hook that cannot find coddy refuses and says how to
+get past it. Their ceilings:
+
+- `git commit --no-verify` and `git push --no-verify` skip them, and
+  `git -c core.hooksPath=` runs without them.
+- jj runs no git hooks.
+- A tool that sets `core.hooksPath` itself, such as a hook manager's
+  install, turns them off until the next `/coddy:start`.
+- Only `pre-commit` and `pre-push` hand off: another hook in the old
+  directory, a `commit-msg` say, no longer runs.
+- A merge, cherry-pick or revert runs no `pre-commit`; the push catches it.
 
 **Branch protection.** The backstop for a command that edits, commits and
 pushes to the default branch in one go. Nothing in coddy can set it.
