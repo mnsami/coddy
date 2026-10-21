@@ -152,7 +152,7 @@ alive() {
   now=$(started "$1"); [ -z "${2-}" ] || [ -z "$now" ] || [ "$now" = "$2" ]
 }
 die() { echo "coddy: $*" >&2; exit "$code"; }
-cfg() { sed -n "s/^$1:[[:space:]]*//p" "${2:-$conf}" | sed "s/[[:space:]]*#.*$//; s/^[\"']//; s/[\"']$//" | head -1; } # key $1, from the config or file $2
+cfg() { sed -n "s/^$1:[[:space:]]*//p" "${2:-$conf}" | sed -e $'s/\r$//' -e "s/[[:space:]]*#.*$//; s/[[:space:]]*$//; s/^[\"']//; s/[\"']$//" | head -1; } # key $1, from the config or file $2, a CRLF line's \r and trailing blanks dropped
 # The lock's owner ($sid, $pid, $start) is this session ($me): the same
 # session id, or the same agent process, since Claude Code's /clear changes
 # the id and not the pid; a pid reused since the owner's start is not that process.
@@ -434,11 +434,15 @@ fi
 # m1 puts version after a leading --- marker and ends it as the file's first line ends (CRLF).
 m1() { awk 'NR == 1 { e = /\r$/ ? "\r" : ""; if (/^---\r?$/) { print; print "version: 1" e; next }; print "version: 1" e }; !/^version:/; END { if (!NR) print "version: 1" }'; }
 d1="add version: 1"
+# m2 bumps version to 2 and, when the first worktree key is missing or empty (read as jj before 2),
+# pins worktree: jj: in place of an empty one, else after the version line.
+m2() { awk 'NR == 1 { e = /\r$/ ? "\r" : "" } { l[NR] = $0 } /^worktree:/ && !w { w = NR; if ($0 ~ /^worktree:[[:space:]]*["\047]?["\047]?[[:space:]]*(#.*)?\r?$/) r = NR } END { for (i = 1; i <= NR; i++) { if (i == r) print "worktree: jj" e; else if (l[i] ~ /^version:/) { if (!v++) { print "version: 2" e; if (!w) print "worktree: jj" e } } else print l[i] } }'; }
+d2="add version: 2, and worktree: jj when no worktree key is set"
 if [ "${1-}" = migrate ]; then
   # The skill Reads and Writes these paths, which follow a link: only plain files.
   { [ -L .coddy.yml ] || { [ -e .coddy.yml ] && [ ! -f .coddy.yml ]; }; } && die ".coddy.yml is a link or not a plain file: replace it with the config itself by hand"
   [ "$cname" != "$legacy" ] || [ ! -L "$legacy" ] || die "$legacy is a link: replace it with the config itself by hand"
-  cur=1 v=$(cfg version | tr -d '[:space:]'); v=${v#"${v%%[!0]*}"}; v="${v:-0}"
+  cur=2 v=$(cfg version | tr -d '[:space:]'); v=${v#"${v%%[!0]*}"}; v="${v:-0}"
   case "$v" in *[!0-9]*) die "version in $cname is not a whole number: $v" ;; esac
   # by length first, so a number too long for bash is refused without its error
   { [ "${#v}" -le 9 ] && [ "$v" -le "$cur" ]; } || die "$cname is at version $v, newer than this coddy knows ($cur): update the coddy plugin"
@@ -460,7 +464,9 @@ fi
 cmd="${1-}" issue="${2-}"
 [ "$cmd" = sweep ] || case "$issue" in ''|*[!A-Za-z0-9_-]*) die "issue id must look like 42 or ABC-123, got '$issue'" ;; esac
 wt=".worktrees/$issue" rec=".git/coddy/$issue.branch"
-tool=$(cfg worktree); tool="${tool:-jj}"
+# No worktree key is git from version 2, jj below it (no version is 0, read as migrate does).
+tool=$(cfg worktree)
+if [ -z "$tool" ]; then v=$(cfg version | tr -d '[:space:]'); v=${v#"${v%%[!0]*}"}; case "$v" in ''|1) tool=jj ;; *) tool=git ;; esac; fi
 base=$(cfg default_branch); base="${base:-main}"
 
 # The worktree sits on branch $1: checked out (git), an ancestor of @ (jj).

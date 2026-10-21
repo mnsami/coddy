@@ -62,11 +62,11 @@ The plugin keeps its own copy and does not use `~/.coddy`.
 You also need:
 
 - `jq`. The edit guard needs it and blocks every edit without it.
-- `jj` ([Jujutsu](https://jj-vcs.github.io)), unless you pick `worktree: git`
-  at onboarding. `/coddy:onboard` installs either one that is missing
-  (Homebrew, apt-get, dnf or winget) through a shell command you allow;
-  `jj` has no apt-get package, so there it names the install page and
-  recommends `worktree: git`.
+- Optionally `jj` ([Jujutsu](https://jj-vcs.github.io)), for `worktree: jj`;
+  `worktree: git`, the default, needs nothing more. `/coddy:onboard`
+  installs either one that is missing (Homebrew, apt-get, dnf or winget)
+  through a shell command you allow; `jj` has no apt-get package, so there
+  it names the install page and recommends `worktree: git`.
 - For GitHub Issues: the GitHub plugin, enabled and signed in with a token
   that can read and write the repository's issues and pull requests.
 - For Jira: the Atlassian plugin.
@@ -198,13 +198,13 @@ copy under `.claude/coddy/backup/`; commit it yourself. Its ceilings:
 by `/coddy:config`:
 
 ```yaml
-version: 1                   # schema version; set by /coddy:onboard and /coddy:migrate
+version: 2                   # schema version; set by /coddy:onboard and /coddy:migrate
 tracker: github              # github | jira
 repo: owner/name             # github only
 # jira:                      # jira only, in place of repo
 #   site: https://acme.atlassian.net
 #   project: KEY
-worktree: jj                 # jj (default) | git
+worktree: git                # git (default) | jj
 default_branch: main
 branch: "{type}/{issue}-{slug}"
 commit: "{type}({issue}): {summary}"
@@ -217,8 +217,10 @@ review_block: high           # optional; critical | high | medium | low (default
 review_rounds: 3             # optional; 1-5 (default 3)
 ```
 
-- `worktree` picks what creates each issue's worktree: `jj` (`jj workspace
-  add`, colocating the repo on first use) or `git` (`git worktree add`).
+- `worktree` picks what creates each issue's worktree: `git` (`git worktree
+  add`, the default, also when the key is absent at version 2) or `jj` (`jj
+  workspace add`, colocating the repo on first use). Below version 2 an
+  absent key means `jj`, and `/coddy:migrate` writes it in.
   `/coddy:config` refuses to switch it while an issue worktree exists.
 - `guard: warn` is described under the edit guard above. `/coddy:onboard`
   leaves the key out; set it with `/coddy:config guard=warn`.
