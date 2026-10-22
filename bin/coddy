@@ -372,7 +372,7 @@ adds() {
         if (e) { w = ""; o = 0; b = 0 }
         if (r) {
           op = c
-          while (index(" << <<< <<- <& <> >> >& >| &> &>> ", " " op ch[i + 1] " ")) op = op ch[++i]
+          while (i < n && index(" << <<< <<- <& <> >> >& >| &> &>> ", " " op ch[i + 1] " ")) op = op ch[++i]
           want = op == "<<" || op == "<<-" ? "hd" : "skip"; strip = op == "<<-"
         }
         if (e == 2) {
@@ -398,6 +398,56 @@ coddywt() {
   [ -n "${CODDY_AGENT_DIR-}" ] && case "$1" in "$R/$CODDY_AGENT_DIR"/worktrees/?*) return 0 ;; esac
   return 1
 }
+# A real directory sits at path $1, physically: not gone, moved or a link.
+real() { [ -d "$1" ] && [ "$(cd "$1" 2>/dev/null && pwd -P)" = "$1" ]; }
+# $1 holds no control character (C0, DEL, C1), backslash or double quote.
+clean() { local LC_ALL=C; case "$1" in *[[:cntrl:]\\\"]*|*$'\xc2'[$'\x80'-$'\x9f']*) return 1 ;; esac; }
+# $1 as one inert word, whatever the shell: in single quotes, a quote as '\'',
+# and each byte of a control character (C0, DEL, C1) as \ooo, so it shows and
+# keeps to one line; only a word given no command holds one.
+q() {
+  local LC_ALL=C s=$1 o="'" c x
+  while [ -n "$s" ]; do
+    c=${s:0:1} s=${s:1}
+    case "$c${s:0:1}" in
+      \'*) o+="'\\''"; continue ;;
+      $'\xc2'[$'\x80'-$'\x9f']) c+=${s:0:1} s=${s:1} ;;
+      [[:cntrl:]]*) ;;
+      *) o+=$c; continue ;;
+    esac
+    while [ -n "$c" ]; do printf -v x %d "'${c:0:1}"; printf -v x '\\%03o' $(((x + 256) % 256)); o+=$x c=${c:1}; done
+  done
+  printf '%s\n' "$o'"
+}
+# $1 as jj's escape_json writes it, its quotes aside.
+json() {
+  local LC_ALL=C s=$1 o="" c x
+  while [ -n "$s" ]; do
+    c=${s:0:1} s=${s:1}
+    case "$c" in
+      \"|\\) c="\\$c" ;;
+      $'\b') c='\b' ;; $'\t') c='\t' ;; $'\n') c='\n' ;; $'\f') c='\f' ;; $'\r') c='\r' ;;
+      [[:cntrl:]]) printf -v x %d "'$c"; [ "$x" = 127 ] || printf -v c '\\u%04x' "$x" ;;
+    esac
+    o+=$c
+  done
+  printf '%s\n' "$o"
+}
+# git worktree list --porcelain -z, or, from a git before 2.36, without -z:
+# each path as one field, and one not followed by its HEAD or bare line
+# taken with the lines up to it, so it holds a line break and reads as odd.
+gitwts() {
+  git worktree list --porcelain -z 2>/dev/null && return
+  local l p=""
+  while IFS= read -r l; do
+    case "$l" in
+      "HEAD "*|bare) [ -z "$p" ] || printf '%s\0' "$p"; p="" ;;
+      "worktree "*) p=${p:+$p$'\n'}$l ;;
+      *) [ -z "$p" ] || p+=$'\n'$l ;;
+    esac
+  done < <(git worktree list --porcelain 2>/dev/null)
+  [ -z "$p" ] || printf '%s\n\0' "$p"
+}
 
 # The main checkout's fingerprint: one line per dirty path with its content
 # hash, one for the default branch $b when it holds commits its remote branch
@@ -405,15 +455,19 @@ coddywt() {
 # HEAD on the default branch's own history counts as on it: that is where jj
 # leaves a synced checkout. Paths, not git status codes: jj colocation flips
 # untracked files to intent-to-add on its own. One line, ending in a
-# parenthesis, per git worktree and jj workspace outside coddy's (coddywt),
-# the main checkout aside, so one a command made is reported however it
-# spelled it; jj names a workspace's path from 0.38 on, and not once its
+# parenthesis, per git worktree and jj workspace outside coddy's (coddywt,
+# and real: one moved away or reached through a link is listed), the main
+# checkout aside, so one a command made is reported however it spelled it;
+# jj names a workspace's path from 0.38 on and, before 0.46, not once its
 # directory has gone, so such a workspace is left out. Each is read whole
-# (NUL-separated from git, JSON-escaped from jj), and one whose path or name
-# holds a control character, a quote or a backslash, or whose path is not
-# absolute, is always listed, escaped and with no command: built to read as
-# other entries, it would aim that command elsewhere. No line deletes a
-# directory: jj prints a link's target, which an rm would empty.
+# (NUL-separated from git, JSON-escaped from jj; line by line from a git
+# before 2.36, gitwts), every path and name is printed quoted (q), and one
+# whose path or name holds a control character, a quote or a backslash, or
+# whose path is not absolute, is listed with no command: built to read as
+# other entries, it would aim that command elsewhere. The root is matched as
+# it is spelled (as jj escapes it, J), and only what follows it is held to
+# that test before an entry is skipped as the root or coddy's own. No line
+# deletes a directory: jj prints a link's target, which an rm would empty.
 # Every dirty file is hashed by one git hash-object; a path holding a newline
 # is misread by --stdin-paths, as it already is by the line-based fingerprint.
 snap() {
@@ -429,21 +483,25 @@ snap() {
   odd="coddy gives no command for it: check it by hand"
   while IFS= read -r -d '' p; do
     case "$p" in "worktree "*) p=${p#worktree } ;; *) continue ;; esac
-    case "$p" in
-      *[[:cntrl:]\\\"]*|[!/]*|'') echo "git worktree at $(printf %q "$p") ($odd)" ;;
-      *) [ "$p" = "$R" ] || coddywt "$p" || echo "$p (remove it: git worktree remove $(printf %q "$p"))" ;;
-    esac
-  done < <(git worktree list --porcelain -z 2>/dev/null)
+    r=${p#"$R"}
+    if [ "$r" != "$p" ] && clean "$r" && { [ -z "$r" ] || coddywt "$p"; }; then
+      [ -z "$r" ] || real "$p" || echo "git worktree at $(q "$p") ($odd)"
+    elif clean "$p" && [ "${p#/}" != "$p" ]; then echo "$(q "$p") (remove it: git worktree remove $(q "$p"))"
+    else echo "git worktree at $(q "$p") ($odd)"
+    fi
+  done < <(gitwts)
   # No colour, whatever ui.color says, and the name as forget takes it, not
-  # jj's quoted display form; -- for a name that starts with a dash.
-  [ ! -d .jj ] || while IFS=$'\t' read -r p w; do
-    case "$p$w" in
-      *[[:cntrl:]\\]*) echo "jj workspace $w at $p ($odd)" ;;
-      \"/*\"\"*\") p=${p:1:${#p}-2} w=${w:1:${#w}-2}
-        [ "$p" = "$R" ] || coddywt "$p" || echo "$p (remove it: jj workspace forget -- $(printf %q "$w"), then check that directory and delete it by hand)" ;;
-      *) echo "jj workspace $w at $p ($odd)" ;;
-    esac
-  done < <(jj workspace list --ignore-working-copy --color=never -T 'if(root, stringify(root).escape_json() ++ "\t" ++ stringify(name).escape_json() ++ "\n")' 2>/dev/null)
+  # jj's quoted display form; -- for a name that starts with a dash. The root
+  # is matched in its escaped form, J.
+  [ ! -d .jj ] || { J=$(json "$R"); while IFS=$'\t' read -r p w; do
+    [[ $p == \"*\" && $w == \"*\" ]] || { echo "jj workspace $(q "$w") at $(q "$p") ($odd)"; continue; }
+    pi=${p:1:${#p}-2} wi=${w:1:${#w}-2}; r=${pi#"$J"}
+    if [ "$r" != "$pi" ] && clean "$r$wi" && { [ -z "$r" ] || coddywt "$R$r"; }; then
+      [ -z "$r" ] || real "$R$r" || echo "jj workspace $(q "$w") at $(q "$p") ($odd)"
+    elif clean "$pi$wi" && [ "${pi#/}" != "$pi" ]; then echo "$(q "$pi") (remove it: jj workspace forget -- $(q "$wi"), then check that directory and delete it by hand)"
+    else echo "jj workspace $(q "$w") at $(q "$p") ($odd)"
+    fi
+  done < <(jj workspace list --ignore-working-copy --color=never -T 'if(root, stringify(root).escape_json() ++ "\t" ++ stringify(name).escape_json() ++ "\n")' 2>/dev/null); }
   files=() n=0
   while IFS= read -r -d '' e; do
     # A staged rename or copy carries its source in the next field: a rename's
