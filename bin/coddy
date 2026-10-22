@@ -508,11 +508,12 @@ out() {
 # an entry is skipped as the root or coddy's own. No line is a command.
 # Every dirty file is hashed by one git hash-object; a path holding a newline
 # is misread by --stdin-paths. A dirty path that is not clean is printed
-# quoted (q), so none spans two lines. No submodule shows, neither its
-# commit nor its work tree (--ignore-submodules=all): git reads a submodule
-# under its own config, which a command can plant (its fsmonitor, filters
-# and hooks). No git or jj call here runs in a worktree the command could
-# have made.
+# quoted (q), so none spans two lines. A submodule shows as one gone line
+# once its commit leaves the one recorded for it, and not again while it
+# stays off it; never for its work tree (--ignore-submodules=dirty): git
+# reads the submodule's config, which a command can plant (its fsmonitor,
+# filters and hooks), but runs nothing in it. No git or jj call here runs
+# in a worktree the command could have made.
 # On fd 3, one line each (git's as %q, jj's as it escapes them): every
 # worktree's path, every git admin id (read from each worktree's .git and
 # from the common dir, so one whose directory is gone is there too) and
@@ -562,7 +563,7 @@ snap() {
       [ -z "${CODDY_AGENT_DIR-}" ] || case "$p" in "$CODDY_AGENT_DIR"/*) continue ;; esac
       if [ -f "$p" ]; then files[n]="$p"; n=$((n+1)); else clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"; fi
     done
-  done < <(git status --porcelain -uall -z --ignore-submodules=all 2>/dev/null)
+  done < <(git status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null)
   [ "$n" -gt 0 ] || return 0
   printf '%s\n' "${files[@]}" | git hash-object --stdin-paths 2>/dev/null |
     { i=0; while IFS= read -r hash; do p=${files[i]}; clean "$p" || p=$(q "$p"); printf '%s %s\n' "$p" "$hash"; i=$((i+1)); done; }

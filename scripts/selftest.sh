@@ -527,7 +527,8 @@ for c in 'echo "gitdir: $tmp/evil/.git" > "$wo/.git"' 'echo "$tmp/evil/.git" > "
   rm -rf "$wo"; git worktree prune
 done
 rm -f "$tmp/fsm"; wire snap w; (git update-index --add --cacheinfo "160000,$(git rev-parse HEAD),sub" && mkdir sub && echo "gitdir: $tmp/evil/.git" > sub/.git) >/dev/null 2>&1
-t 0 "tripwire: a submodule of the main checkout is not seen" wire trip w
+wire trip w 2>/dev/null; got=$?
+t 0 "tripwire: a submodule of the main checkout off the commit recorded for it trips" test "$got" = 2
 wire snap w; wire trip w 2>/dev/null
 t 1 "tripwire: a planted submodule of the main checkout runs none of its programs" test -e "$tmp/fsm"
 git rm -q --cached sub; rm -rf sub
