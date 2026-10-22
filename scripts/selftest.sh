@@ -530,12 +530,35 @@ rm -f "$tmp/fsm"; wire snap w; (git update-index --add --cacheinfo "160000,$(git
 wire trip w 2>/dev/null; wire snap w; wire trip w 2>/dev/null
 t 1 "tripwire: a planted submodule of the main checkout runs none of its programs" test -e "$tmp/fsm"
 git rm -q --cached sub; rm -rf sub
+# A commondir in the main checkout's git dir, which git never writes there,
+# points git at another repository's config, whether the root stays (a copy
+# of .git in it) or moves (a repository elsewhere, holding a config of its
+# own): the hooks run no git and refuse every edit and command, from the
+# main checkout or a linked worktree, until it is removed by hand. A linked
+# worktree's own commondir is by design: the hooks work from it.
+git worktree add -q --detach .worktrees/82; cp -R .git .evilgit; git --git-dir=.evilgit config core.fsmonitor "$tmp/fsm.sh"
+printf 'tracker: github\nworktree: git\n' > "$tmp/evil/.coddy.yml"
+lw() { printf '{"tool_use_id":"%s"}' "$2" | CLAUDE_PROJECT_DIR="$repo/.worktrees/82" bash "$here/scripts/issue.sh" "$1"; }
+lw snap w; t 0 "commondir: a linked worktree's own leaves the hooks working from it" lw trip w
+for cd in ../.evilgit "$tmp/evil/.git"; do
+  rm -f "$tmp/fsm"; wire snap w; echo "$cd" > .git/commondir
+  wire trip w 2>"$tmp/trip.err"; got=$?
+  t 0 "commondir: the command that plants one trips: $cd" test "$got" = 2
+  t 0 "commondir: and the report names it" grep -qF "/.git/commondir, which git never writes in a main checkout" "$tmp/trip.err"
+  t 2 "commondir: snap refuses every command after it: $cd" wire snap w
+  t 2 "commondir: guard refuses every edit: $cd" guard "$repo/.claude/x"
+  t 2 "commondir: from a linked worktree too: $cd" lw snap w
+  t 1 "commondir: and git ran none of its programs: $cd" test -e "$tmp/fsm"
+  rm .git/commondir
+done
+rm -rf .evilgit "$tmp/evil/.coddy.yml"; git worktree remove --force .worktrees/82
+tripped 0 "commondir: removed, the hooks are back" 'true'
 git worktree add -q --detach .worktrees/84
 # A worktree git moved out of .worktrees/<id>/ was not made.
 wire snap w; git worktree move .worktrees/84 "$wo" >/dev/null 2>&1
 wire trip w 2>"$tmp/trip.err"; got=$?
 t 0 "tripwire: a git worktree moved out of .worktrees/<id>/ by git trips" test "$got" = 2
-t 0 "tripwire: and is reported moved, not made" grep -qF "git worktree at '$wo', moved, renamed or re-created (check what it holds before removing it with git worktree remove)" "$tmp/trip.err"
+t 0 "tripwire: and is reported moved, not made" grep -qF "git worktree at '$wo', moved, renamed or re-created (put it back with git worktree move, or check what it holds before removing it with git worktree remove)" "$tmp/trip.err"
 t 1 "tripwire: with no command line" cmdline
 git worktree move "$wo" .worktrees/84
 # One moved by hand, its directory gone when snap runs, and repaired by the
@@ -544,7 +567,7 @@ mv .worktrees/84 "$wo"
 wire snap w; git worktree repair "$wo" >/dev/null 2>&1
 wire trip w 2>"$tmp/trip.err"; got=$?
 t 0 "tripwire: a git worktree moved by hand and repaired trips" test "$got" = 2
-t 0 "tripwire: and is reported moved, not made" grep -qF "git worktree at '$wo', moved, renamed or re-created (check what it holds before removing it with git worktree remove)" "$tmp/trip.err"
+t 0 "tripwire: and is reported moved, not made" grep -qF "git worktree at '$wo', moved, renamed or re-created (put it back with git worktree move, or check what it holds before removing it with git worktree remove)" "$tmp/trip.err"
 t 1 "tripwire: with no command line" cmdline
 git worktree move "$wo" .worktrees/84
 git worktree remove --force .worktrees/84
@@ -555,6 +578,29 @@ wire trip w 2>"$tmp/trip.err"
 t 0 "tripwire: a backslash in a path prints as \\134" grep -qF "'$wo/b\\134001'" "$tmp/trip.err"
 t 0 "tripwire: and a control byte as \\ooo, a line of its own" grep -qF "'$wo/b\\001'" "$tmp/trip.err"
 git worktree remove --force "$bs"; git worktree remove --force "$cc"; rm -rf "$wo"
+# A worktree's .git is read no further than a NUL or 1024 characters, so a
+# huge one stalls no hook, and what snap records of it stays small.
+sf="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-w"
+git worktree add -q --detach .worktrees/83; cp .worktrees/83/.git "$tmp/g83"
+{ printf 'gitdir: /a/b'; head -c 4000000 /dev/zero | tr '\0' x; } > .worktrees/83/.git
+t 0 "tripwire: a 4 MB .git in a worktree stalls no snap" prompt wire snap w
+t 0 "tripwire: and is recorded no further than 1024 characters" test $(wc -c < "$sf.wt") -lt 65536
+t 0 "tripwire: nor trip" prompt wire trip w
+cp "$tmp/g83" .worktrees/83/.git; git worktree remove --force .worktrees/83
+# A dirty path holding line breaks is printed quoted, on one line: one built
+# to read as a worktree's line is not reported as one, and does not hide the
+# real one a later command makes at that path.
+fake=$'x\n'"git worktree at '$wo' (git worktree remove)"$'\ny'
+wire snap w; mkdir -p "${fake%/*}"; ln -s nowhere "$fake"
+wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: a dirty path holding a worktree's line trips" test "$got" = 2
+t 0 "tripwire: as a change to the main checkout" grep -qF "changed the main checkout: 'x\\012git worktree at" "$tmp/trip.err"
+t 1 "tripwire: never as a worktree" grep -qF "'$wo', made" "$tmp/trip.err"
+wire snap w; git worktree add -q --detach "$wo" >/dev/null 2>&1
+wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: a real worktree made at that path afterwards trips" test "$got" = 2
+t 0 "tripwire: and is named made" grep -qF "git worktree at '$wo', made (" "$tmp/trip.err"
+git worktree remove --force "$wo"; rm -rf "${fake%%/*}" "$wo"
 # A path that is the root, a newline and more is no root: it trips.
 R=$(pwd -P); nl="$R"$'\n'x
 wire snap w; git worktree add -q --detach "$nl" >/dev/null 2>&1
@@ -606,7 +652,7 @@ if [ -d .jj ]; then
   wire snap w; (cd "$wp" && jj workspace rename o3) >/dev/null 2>&1
   wire trip w 2>"$tmp/trip.err"; got=$?
   t 0 "tripwire: a jj workspace outside, renamed, trips" test "$got" = 2
-  t 0 "tripwire: and is reported renamed, not made" grep -qF "jj workspace 'o3' at '$wp', moved, renamed or re-created (check what it holds before removing it with jj workspace forget)" "$tmp/trip.err"
+  t 0 "tripwire: and is reported renamed, not made" grep -qF "jj workspace 'o3' at '$wp', moved, renamed or re-created (put it back with jj workspace rename, or check what it holds before removing it with jj workspace forget)" "$tmp/trip.err"
   t 1 "tripwire: with no command line" cmdline
   # One whose directory is gone when snap runs, which jj before 0.46 lists
   # with no path, put back by the command: not made.

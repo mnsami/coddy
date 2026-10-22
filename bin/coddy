@@ -68,10 +68,24 @@ fi
 # linked worktree's common dir by its real path, so the caller's own spelling
 # of it is put back: hook payloads use that one. Outside git, an issue
 # worktree is still stripped back to the root.
-dir="${CODDY_ROOT:-$PWD}"
+# A main checkout's git dir is its own: a commondir in it, which git never
+# writes there, points every git call in the checkout at another
+# repository's config, whose programs (core.fsmonitor) git runs, and moves
+# the root there. So the nearest .git up from $dir, when a directory, and
+# the root's .git, which must be one, are read for it without git, and odd
+# names what is wrong: the root stays the checkout's, and the hooks, which
+# run git outside any sandbox, refuse (oddly). A linked worktree's own git
+# dir holds a commondir by design.
+dir="${CODDY_ROOT:-$PWD}" odd=""
 if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "$dir" && cd "$common/.." && pwd); then
-  rel=$(cd "$dir" && pwd -P); rel="${rel#"$root"/}"
+  rel=$(cd "$dir" && pwd -P); g=$rel
+  while [ -n "$g" ] && [ ! -e "$g/.git" ] && [ ! -L "$g/.git" ]; do g=${g%/*}; done
+  if [ -d "$g/.git" ] && { [ -e "$g/.git/commondir" ] || [ -L "$g/.git/commondir" ]; }; then
+    odd="$g/.git/commondir"; if [ "$rel" = "$g" ]; then root=$(cd "$dir" && pwd); else root=$g; fi
+  fi
+  rel="${rel#"$root"/}"
   case "$dir" in */"$rel") root="${dir%/"$rel"}" ;; esac
+  [ -n "$odd" ] || if [ ! -d "$root/.git" ]; then odd="$root/.git"; elif [ -e "$root/.git/commondir" ] || [ -L "$root/.git/commondir" ]; then odd="$root/.git/commondir"; fi
 else
   root="$dir"
   case "$root" in */.worktrees/*) root="${root%%/.worktrees/*}" ;; esac
@@ -172,6 +186,17 @@ note() { jq -cn --arg m "$*" '{hookSpecificOutput: {hookEventName: "PreToolUse",
 # guard: warn lets the $1 (edit, command) through and hands the agent die's
 # message as context instead.
 warnmode() { [ "$(cfg guard)" = warn ] || return 0; wm=$1; die() { note "coddy warning, the $wm was let through (guard: warn): $*"; exit 0; }; }
+# The hooks run git outside any sandbox: with the main checkout's git dir
+# not its own (odd) they run none and refuse every edit and command, in
+# either guard mode, after trip's report so far, $1.
+oddly() {
+  [ -n "$odd" ] || return 0
+  code=2
+  case "$odd" in
+    */commondir) die "${1-}$odd, which git never writes in a main checkout, points git there at another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you remove that file by hand." ;;
+    *) die "${1-}$odd is not a directory, so git there reads another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you put the main checkout's .git directory back by hand." ;;
+  esac
+}
 
 # Onboarding's one write outside the agent dir, here so the skill's command
 # text holds no path and no wildcard: the agent's coddy/ directory (answers,
@@ -225,6 +250,7 @@ fi
 if [ "${1-}" = guard ]; then
   [ -f "$conf" ] || exit 0
   code=2 # exit 2 is what blocks the tool call
+  oddly
   # Without jq the path cannot be read, so every edit is blocked, in warn
   # mode too: .coddy.yml must never go through unasked.
   command -v jq >/dev/null || die "the edit guard needs jq"
@@ -450,13 +476,17 @@ gitwts() {
   done < <(git worktree list --porcelain 2>/dev/null)
   [ -z "$p" ] || printf '%s\n\0' "$p"
 }
-# gi: the git admin id worktree $1's .git names, when it is a plain file.
-gid() { local l=""; [ -f "$1/.git" ] && { read -r l < "$1/.git"; } 2>/dev/null; case "$l" in "gitdir: "*/?*) gi=${l##*/} ;; *) return 1 ;; esac; }
+# gi: the git admin id worktree $1's .git names, when it is a plain file;
+# its first line, read no further than a NUL or 1024 characters, so a huge
+# or sparse file stalls no hook.
+gid() { local l=""; [ -f "$1/.git" ] && { read -r -d '' -n 1024 l < "$1/.git"; } 2>/dev/null; l=${l%%$'\n'*}; case "$l" in "gitdir: "*/?*) gi=${l##*/} ;; *) return 1 ;; esac; }
 # Outside worktree line $1, with its fd 3 records $2 and $3 ($3 may be
-# empty); on trip's side, on fd 4 too when snap recorded either ($seen).
+# empty); on fd 4 too, as "moved <line>" when snap recorded either ($seen,
+# trip's alone), else "made <line>": trip tells a worktree line by that
+# record, never by its text.
 out() {
   echo "$1"
-  [[ -n $seen && ( $seen == *$'\n'"$2"$'\n'* || -n $3 && $seen == *$'\n'"$3"$'\n'* ) ]] && echo "$1" >&4
+  if [[ -n $seen && ( $seen == *$'\n'"$2"$'\n'* || -n $3 && $seen == *$'\n'"$3"$'\n'* ) ]]; then echo "moved $1"; else echo "made $1"; fi >&4
 }
 
 # The main checkout's fingerprint: one line per dirty path with its content
@@ -477,8 +507,10 @@ out() {
 # control character, quote or backslash (clean), is held to the test before
 # an entry is skipped as the root or coddy's own. No line is a command.
 # Every dirty file is hashed by one git hash-object; a path holding a newline
-# is misread by --stdin-paths, as it already is by the line-based fingerprint.
-# A submodule shows when its commit changes, never for its work tree: git
+# is misread by --stdin-paths. A dirty path that is not clean is printed
+# quoted (q), so none spans two lines. A submodule shows as one gone line
+# once its commit leaves the one recorded for it, and not again while it
+# stays off it; never for its work tree: git
 # would read that in a git status of its own, run under the submodule's
 # config, which a command can plant (its fsmonitor, filters and hooks). No
 # git or jj call here runs in a worktree the command could have made.
@@ -529,12 +561,12 @@ snap() {
       # HEAD, and that is not the command's change to undo.
       case "$p" in .coddy.yml|"$legacy") continue ;; esac
       [ -z "${CODDY_AGENT_DIR-}" ] || case "$p" in "$CODDY_AGENT_DIR"/*) continue ;; esac
-      if [ -f "$p" ]; then files[n]="$p"; n=$((n+1)); else printf '%s gone\n' "$p"; fi
+      if [ -f "$p" ]; then files[n]="$p"; n=$((n+1)); else clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"; fi
     done
   done < <(git status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null)
   [ "$n" -gt 0 ] || return 0
   printf '%s\n' "${files[@]}" | git hash-object --stdin-paths 2>/dev/null |
-    { i=0; while IFS= read -r hash; do printf '%s %s\n' "${files[i]}" "$hash"; i=$((i+1)); done; }
+    { i=0; while IFS= read -r hash; do p=${files[i]}; clean "$p" || p=$(q "$p"); printf '%s %s\n' "$p" "$hash"; i=$((i+1)); done; }
 }
 
 if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
@@ -560,16 +592,22 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   if [ "$1" = snap ]; then
     # A snapshot before every command, so trip can tell a command that
     # removed it from one run outside the workflow: NOT_ONBOARDED alone where
-    # no config is, and the hooks stay inert.
-    rm -f "$file".*
-    [ -f "$conf" ] || { echo NOT_ONBOARDED > "$file"; exit 0; }
+    # no config is, and the hooks stay inert. TMPDIR is the command's to
+    # write too, so every record is a new file (set -C, O_EXCL), never one
+    # through a link a command planted at its name, written before the
+    # fingerprint's git calls give one time to; a write that fails drops
+    # the snapshot, which trip reports as lost.
+    set -C; rm -f "$file" "$file".*
+    [ -f "$conf" ] || { echo NOT_ONBOARDED > "$file" || rm -f "$file"; exit 0; }
+    oddly
     common
-    b=$(cfg default_branch); b="${b:-main}"
-    snap 3>"$file.wt" | LC_ALL=C sort -u > "$file"
+    b=$(cfg default_branch); b="${b:-main}" ok=1
     for c in .coddy.yml "$legacy"; do
       p="$root/$c" s="$file.${c//\//_}"
-      kind "$p" > "$s.kind"; [ ! -f "$p" ] || cp "$p" "$s"; [ ! -L "$p" ] || readlink "$p" > "$s.link"
+      kind "$p" > "$s.kind" && { [ ! -f "$p" ] || cat -- "$p" > "$s"; } && { [ ! -L "$p" ] || readlink "$p" > "$s.link"; } || ok=""
     done
+    { snap 4>/dev/null | LC_ALL=C sort -u > "$file"; } 3>"$file.wt" || ok=""
+    [ -n "$ok" ] || rm -f "$file"
     # A git worktree add or jj workspace add that would make a worktree
     # outside coddy's (coddywt) is refused before it runs, read from the
     # command's text (adds): a spelling it cannot read passes, saying so, and
@@ -643,25 +681,31 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   done
   [ -z "$msg" ] || msg="${msg}If that came from git (a pull or checkout), accept it with /coddy:config; other settings change there too, and leaving the workflow is for the user to do by hand. "
   confpath
+  [ -z "$odd" ] || { rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*; oddly "$msg"; }
   # Only lines that are new count, so undoing a change never trips the wire.
-  # A worktree's line ends in a parenthesis, a dirty path's in its hash.
   # Every line is unique by design, so a repeat is no new line: git lists a
-  # worktree twice once a command copies its admin dir. A new worktree line
-  # snap put on fd 4 too (out) is one whose path, git admin id or jj name it
-  # recorded before the command ($file.wt, opened only as a plain file):
-  # moved, renamed or re-created; any other the command made. Each names the
-  # tool that removes it, as text: what the directory holds is checked first.
+  # worktree twice once a command copies its admin dir. A new line is a
+  # worktree's when the fingerprint wrote it on fd 4 too (out), never by its
+  # text, which a dirty path's could copy: moved, renamed or re-created when
+  # snap recorded its path, git admin id or jj name before the command
+  # ($file.wt, opened only as a plain file), made otherwise. Each names, as
+  # text, the tool that removes it, once what the directory holds is
+  # checked, and, unless made, the one that puts it back. Any other line is
+  # the main checkout's, its last word, a hash or gone, dropped.
   [ ! -f "$file.wt" ] || seen=$'\n'$(cat "$file.wt")$'\n'
-  moved=$(mktemp 2>/dev/null) || moved=/dev/null
-  new=$(snap 3>/dev/null 4>"$moved" | LC_ALL=C sort -u | LC_ALL=C comm -13 "$file" -)
-  added=$(printf '%s\n' "$new" | grep -v ')$' | sed 's/ [^ ]*$//' | tr '\n' ' ' | sed 's/ $//')
-  wts=""
+  lab=$(mktemp 2>/dev/null) || lab=/dev/null
+  new=$(snap 3>/dev/null 4>"$lab" | LC_ALL=C sort -u | LC_ALL=C comm -13 "$file" -)
+  added="" wts=""
   while IFS= read -r l; do
-    case "$l" in *\)) ;; *) continue ;; esac
-    t=made; ! grep -qxF -- "$l" "$moved" || t="moved, renamed or re-created"
-    wts="${wts:+$wts; }${l% (*}, $t (check what it holds before removing it with ${l##* (}"
+    [ -n "$l" ] || continue
+    if grep -qxF -- "made $l" "$lab"; then t=made a=""
+    elif grep -qxF -- "moved $l" "$lab"; then
+      t="moved, renamed or re-created" a="git worktree move"; case "$l" in jj*) a="jj workspace rename" ;; esac; a="put it back with $a, or "
+    else added="${added:+$added }${l% *}"; continue
+    fi
+    wts="${wts:+$wts; }${l% (*}, $t (${a}check what it holds before removing it with ${l##* (}"
   done <<<"$new"
-  rm -f "$file"; [ "$moved" = /dev/null ] || rm -f "$moved"; [ -n "$keep" ] || rm -f "$file".*
+  rm -f "$file"; [ "$lab" = /dev/null ] || rm -f "$lab"; [ -n "$keep" ] || rm -f "$file".*
   [ -n "$added" ] && msg="${msg}that command changed the main checkout: $added. Issue work belongs in .worktrees/<issue>/. Undo it. "
   [ -n "$wts" ] && msg="${msg}that command made, moved or renamed a worktree outside .worktrees/<issue>/: $wts. Issue work belongs in .worktrees/<issue>/: run /coddy:start <issue>, which makes it."
   [ -z "$msg" ] && exit 0

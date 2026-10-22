@@ -158,11 +158,13 @@ tripwire's worktree check before a command reads the key.
 **Shell tripwire.** Shell commands cannot be checked in advance. So a second
 hook compares the main checkout before and after each one, and tells Claude
 to undo any change it left there. Changes inside a submodule's work tree in
-the main checkout are not seen, only a submodule moving to another commit.
+the main checkout are not seen, and a submodule is seen once, when it leaves
+the commit recorded for it, not again while it stays off it.
 It also lists every git worktree and jj workspace outside
 `.worktrees/<issue>/` and `.claude/worktrees/`, and reports a new one,
 however the command made it: its path, whether the command made it or moved,
-renamed or re-created it, and which tool removes it, `git worktree remove`
+renamed or re-created it, which tool puts a moved one back, `git worktree
+move` or `jj workspace rename`, and which removes it, `git worktree remove`
 or `jj workspace forget`, once you have checked what the directory holds.
 The report gives no command to paste. Every path and name in it is in single
 quotes, with backslashes and control characters escaped, so none can pass

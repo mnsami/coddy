@@ -259,6 +259,21 @@ t 0 "config: and the file is back" same .coddy.yml
 mv .coddy.yml "$tmp/linked"; ln -s "$tmp/linked" .coddy.yml
 tripped 0 "config: a config that was a link already is left alone" 'true'
 t 0 "config: and is still that link" test -L .coddy.yml
+# TMPDIR is the command's to write too: snap writes no record through a link
+# a background command plants at its name once snap has cleared it, to a file
+# or to nothing, and the snapshot is lost. A stub head, which cfg runs after
+# the clearing, plants one at every name.
+mkdir "$tmp/plant"
+for v in "$tmp/victim" "$tmp/nothing"; do
+  echo keep > "$tmp/victim"
+  printf '#!/bin/sh\nfor n in "" .wt ..coddy.yml ..coddy.yml.kind ..coddy.yml.link ..claude_coddy.yml ..claude_coddy.yml.kind ..claude_coddy.yml.link; do ln -s "%s" "%s$n" 2>/dev/null; done\nexec "%s" "$@"\n' "$v" "$snapfile" "$(command -v head)" > "$tmp/plant/head"; chmod +x "$tmp/plant/head"
+  PATH="$tmp/plant:$PATH" wire snap w 2>/dev/null
+  t 0 "snapshot: a link planted at each name is not written through: ${v##*/}" test "$(cat "$tmp/victim")" = keep
+  t 1 "snapshot: nor is its target made: ${v##*/}" test -e "$tmp/nothing"
+  t 2 "snapshot: and trip reports it lost: ${v##*/}" wire trip w
+  rm -f "$snapfile" "$snapfile".*
+done
+rm -r "$tmp/plant" "$tmp/victim"
 tripped 2 "config: retargeting the link trips, the same content behind it" 'ln -sf "$tmp/else" .coddy.yml'
 t 1 "config: and the link is gone" test -L .coddy.yml
 t 0 "config: a plain file with its content back" same .coddy.yml
