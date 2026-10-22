@@ -341,14 +341,15 @@ abspath() {
 # it cannot follow leave a word unresolved. Another check of a command's
 # text matches its own commands in run: a git push or jj git push prints,
 # after a colon, what it would do (push): :to <branch>, HEAD and @ read as
-# the branch checked out where it runs (branchin); :all for every branch;
-# :force; :delete; :? <word> for a target its text cannot fix.
+# the branch checked out where it runs (branchin); :glob <pattern> for a
+# refspec pattern; :all for every branch; :force; :delete; :? <word> for a
+# target its text cannot fix.
 adds() {
   local p d
   d=$(cd "$2" 2>/dev/null && pwd -P) || d=$2
   while IFS= read -r p; do
     case "$p" in
-      ":here "*) p=$(abspath "${p#:here }" "$d") || { echo ":? HEAD"; continue; }; p=$(branchin "$p"); [ -z "$p" ] || echo ":to $p" ;;
+      ":here "*) p=$(abspath "${p#:here }" "$d") && p=$(branchin "$p") || { echo ":? HEAD"; continue; }; [ -z "$p" ] || echo ":to $p" ;;
       \?*|:*) echo "$p" ;;
       *) abspath "$p" "$d" || echo "?$p" ;;
     esac
@@ -403,7 +404,8 @@ adds() {
           continue
         }
         # The first word is the repository, --repo or not; each after it a
-        # refspec, [+]<src>[:<dst>], whose dst is src when it has none.
+        # refspec, [+]<src>[:<dst>], whose dst is src when it has none; a
+        # quoted * makes it a pattern git matches against whole ref names.
         if (++n == 1) continue
         if (bad[j]) { say(":?", x); continue }
         s = x; if (s ~ /^\+/) { print ":force"; s = substr(s, 2) }
@@ -411,6 +413,7 @@ adds() {
         c = index(s, ":"); if (c == 1) dl = 1
         d = c ? substr(s, c + 1) : s; if (d == "") d = substr(s, 1, c - 1)
         if (d == "HEAD" || d == "@") { if (g == "") say(":?", x); else say(":here", g) }
+        else if (index(d, "*")) say(":glob", d)
         else { sub(/^(refs\/)?heads\//, "", d); if (d !~ /^refs\//) say(":to", d) }
       }
       if (dl) print ":delete"
@@ -421,7 +424,8 @@ adds() {
     function run(   j, x, t, g, n, m, v, vb, dd, a) {
       for (j = 1; j <= k; j++) if (seg[j] !~ /^([A-Za-z_][A-Za-z0-9_]*=|-)/ && seg[j] !~ /^(env|command|builtin|exec|nohup|time|!|[{]|[}]|then|else|elif|do|if|while|until)$/) break
       if (j > k || bad[j]) return
-      t = seg[j]; sub(/.*\//, "", t)
+      # GIT and JJ run git and jj on a case-insensitive file system.
+      t = seg[j]; sub(/.*\//, "", t); if (tolower(t) ~ /^(git|jj)$/) t = tolower(t)
       if (t == "popd") { cw = ""; return }
       if (t == "cd" || t == "pushd") {
         for (j++; j <= k && seg[j] ~ /^-./; j++) ;
@@ -556,21 +560,34 @@ gitwts() {
 # its first line, read no further than a NUL or 1024 characters, so a huge
 # or sparse file stalls no hook.
 gid() { local l=""; [ -f "$1/.git" ] && { read -r -d '' -n 1024 l < "$1/.git"; } 2>/dev/null; l=${l%%$'\n'*}; case "$l" in "gitdir: "*/?*) gi=${l##*/} ;; *) return 1 ;; esac; }
-# The branch checked out in directory $1, physical: HEAD of the nearest .git
-# up from it, a directory or a gitdir: file, each read as gid reads one,
-# never by git, which would run what a command planted there; nothing when
-# HEAD is detached or cannot be read.
+# The branch checked out in directory $1, physical, found as git finds it but
+# never by git, which would run what a command planted there: the nearest
+# .git up from it that is a gitdir: file (git dies on a bad one), or else a
+# repository (objects, refs and a HEAD git takes; git walks past any other),
+# each file read no further than a NUL or 1024 characters, a gitdir: line
+# and HEAD trimmed as git trims them. Nothing when no repository holds $1 or
+# HEAD is detached; status 1 when $1 is no directory, so a cd into it fails
+# and leaves the shell where it was, or HEAD names no branch git could have
+# (a reftable repository's stub included).
 branchin() {
-  local g=$1 x l=""
-  while [ -n "$g" ] && [ ! -e "$g/.git" ] && [ ! -L "$g/.git" ]; do g=${g%/*}; done
-  x="$g/.git"
-  if [ ! -d "$x" ]; then
-    [ -f "$x" ] && { read -r -d '' -n 1024 l < "$x"; } 2>/dev/null; l=${l%%$'\n'*}
-    case "$l" in "gitdir: "?*) x=${l#gitdir: }; case "$x" in /*) ;; *) x="$g/$x" ;; esac ;; *) return 0 ;; esac
-    l=""
-  fi
-  [ -f "$x/HEAD" ] && { read -r -d '' -n 1024 l < "$x/HEAD"; } 2>/dev/null; l=${l%%$'\n'*}
-  case "$l" in "ref: refs/heads/"?*) echo "${l#ref: refs/heads/}" ;; esac
+  local g=$1 x l
+  [ -d "$1" ] || return 1
+  while :; do
+    while [ -n "$g" ] && [ ! -e "$g/.git" ] && [ ! -L "$g/.git" ]; do g=${g%/*}; done
+    x="$g/.git" l=""
+    if [ -f "$x" ]; then
+      { IFS= read -r -d '' -n 1024 l < "$x"; } 2>/dev/null; l=${l%"${l##*[!$'\n\r']}"}
+      case "$l" in "gitdir: "?*) x=${l#gitdir: }; case "$x" in /*) ;; *) x="$g/$x" ;; esac ;; *) return 0 ;; esac
+    fi
+    l=""; [ -f "$x/HEAD" ] && { IFS= read -r -d '' -n 1024 l < "$x/HEAD"; } 2>/dev/null
+    [ -f "$g/.git" ] && break
+    [ -d "$x/objects" ] && [ -d "$x/refs" ] && [[ $l =~ ^(ref:[[:space:]]*refs/|[0-9a-f]{40}) ]] && break
+    [ -n "$g" ] || return 0
+    g=${g%/*}
+  done
+  [[ $l =~ ^[0-9a-f]{40} ]] && return 0
+  [[ $l =~ ^ref:[[:space:]]*refs/heads/([^[:space:]]+)[[:space:]]*$ ]] && [[ /${BASH_REMATCH[1]} != */.* ]] || return 1
+  echo "${BASH_REMATCH[1]}"
 }
 # Outside worktree line $1, with its fd 3 records $2 and $3 ($3 may be
 # empty); on fd 4 too, as "moved <line>" when snap recorded $2 ($seen,
@@ -720,6 +737,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
         \?*) unk="$unk ${p#\?}" ;;
         ":? "*) pu="$pu ${p#:? }" ;;
         ":to "*) [ "${p#:to }" != "$b" ] || die "that command would push to $b, the default branch. $pr" ;;
+        ":glob "*) p=${p#:glob }; x=${p%%\**} p=${p#*\*}; case "refs/heads/$b" in "$x"*"$p") die "that command would push to $b, the default branch. $pr" ;; esac ;;
         :all) die "that command would push every branch, $b, the default branch, included. $pr" ;;
         :force) die "that command would force-push, which rewrites the remote's history, so coddy leaves it to a person." ;;
         :delete) die "that command would delete a remote branch, which coddy leaves to a person." ;;

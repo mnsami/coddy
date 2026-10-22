@@ -512,6 +512,19 @@ t 0 "push: a bare push outside any repository passes, saying nothing" silent 'gi
 for c in 'git push origin "$b"' 'cd "$d" && git push' 'git push origin HEAD:`b`' 'jj git push' 'jj git push -r @' 'jj git push -b "glob:ma*"' 'jj git push -b substring:ma'; do
   t 0 "push: unresolved, passes with a message: $c" noted 'could not tell which branch' "$c"
 done
+for c in "git push origin 'refs/heads/*'" "git push origin 'refs/*:refs/*'" "git push origin '*:*'" 'GIT push origin main' 'JJ git push -b main'; do t 2 "push: refused, the default branch: $c" shell "$c"; done
+t 0 "push: a pattern that cannot reach the default branch passes, saying nothing" silent "git push origin 'refs/heads/feat/*'"
+t 0 "push: after a cd into no directory, which leaves the shell where it was, passes with a message" noted 'could not tell which branch' "cd '$w43/nope'; git push"
+# HEAD is read as git reads it, from the repository git finds: a .git that is
+# neither a gitdir: file nor a repository is walked past.
+hd="$tmp/heads"; mkdir -p "$hd/.git/objects" "$hd/.git/refs" "$hd/empty/.git" "$hd/fifo" "$hd/file"
+mkfifo "$hd/fifo/.git"; printf 'gitdir: %s\r\n' "$hd/.git" > "$hd/file/.git"
+for h in 'ref:refs/heads/main\n' 'ref: \t refs/heads/main \t\r\n'; do
+  printf "$h" > "$hd/.git/HEAD"
+  for d in "" /empty /fifo /file; do t 2 "push: refused, HEAD $h read from ${d:-its checkout}" shell 'git push' "$hd$d"; done
+done
+printf 'ref: refs/heads/.invalid\n' > "$hd/.git/HEAD"
+t 0 "push: a reftable repository's HEAD stub passes with a message" noted 'could not tell which branch' "cd '$hd' && git push"
 t 0 "without jq: a push passes" nojq 'git push origin main'
 t 0 "without jq: and says so" says 'jq is missing' nojq 'git push origin main'
 # After the command: a worktree outside coddy's, made by any spelling, trips;
