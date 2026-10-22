@@ -35,6 +35,8 @@ tripped() { wire snap w; (cd "$repo" && eval "$3") >/dev/null 2>&1; t "$1" "$2" 
 payload() { jq -cn --arg c "$1" --arg d "${2-$repo}" '{tool_use_id: "sh", cwd: $d, tool_input: {command: $c}}'; }
 shell() { payload "$@" | run snap; }
 noted() { out=$(shell "$2") && printf %s "$out" | jq -e --arg s "$1" '.hookSpecificOutput | .hookEventName == "PreToolUse" and (.additionalContext | contains($s))'; }
+# cmdline: trip's last message holds a removal command to paste
+cmdline() { grep -qE "git worktree remove '|jj workspace forget -- '" "$tmp/trip.err"; }
 
 # The stub gh, for the PR check's run block alone. GH_LINKED: the "<number>
 # <state> <assignees>" lines "api graphql" reports, or fail. GH_ISSUE: the
@@ -480,7 +482,8 @@ tripped 0 "tripwire: a git worktree in .claude/worktrees/ is quiet" 'git worktre
 wire snap w; (cd "$repo" && git worktree add -q --detach "$wo") >/dev/null 2>&1
 wire trip w 2>"$tmp/trip.err"; got=$?
 t 0 "tripwire: a git worktree outside trips" test "$got" = 2
-t 0 "tripwire: and names it with how to remove it" grep -qF "'$wo' (remove it: git worktree remove '$wo')" "$tmp/trip.err"
+t 0 "tripwire: and names it, made, with the tool that removes it" grep -qF "git worktree at '$wo', made (check what it holds before removing it with git worktree remove)" "$tmp/trip.err"
+t 1 "tripwire: and gives no command line" cmdline
 tripped 0 "tripwire: a worktree outside from before the command is quiet" 'true'
 # A copy of its admin dir makes git list it twice: still not the command's.
 wire snap w; cp -R "$(git -C "$wo" rev-parse --absolute-git-dir)" .git/worktrees/aacopy
@@ -496,14 +499,14 @@ git worktree remove --force "$wo"; git worktree remove --force "$tmp/dodge"; git
 sp="$wo/z (remove it: rm -rf $tmp/none); $wo/w"
 wire snap w; git worktree add -q --detach "$sp" >/dev/null 2>&1
 wire trip w 2>"$tmp/trip.err"
-t 0 "tripwire: a path holding a remedy of its own is one quoted entry" grep -qF ": '$sp' (remove it: git worktree remove '$sp'). Issue work" "$tmp/trip.err"
+t 0 "tripwire: a path holding a remedy of its own is one quoted entry" grep -qF ": git worktree at '$sp', made (check what it holds before removing it with git worktree remove). Issue work" "$tmp/trip.err"
 git worktree remove --force "$sp"
 sq="$wo/it's"
 wire snap w; git worktree add -q --detach "$sq" >/dev/null 2>&1
 wire trip w 2>"$tmp/trip.err"; got=$?
 t 0 "tripwire: a git worktree whose path holds a quote trips" test "$got" = 2
-t 0 "tripwire: and is reported quoted" grep -qF "git worktree at '$wo/it'\\''s' (coddy gives no command" "$tmp/trip.err"
-t 1 "tripwire: and names no command for it" grep -q 'remove it' "$tmp/trip.err"
+t 0 "tripwire: and is reported quoted" grep -qF "git worktree at '$wo/it'\\''s', made" "$tmp/trip.err"
+t 1 "tripwire: and gives no command line" cmdline
 git worktree remove --force "$sq"; rm -rf "$wo"
 # A worktree made in .worktrees/<id>/ and moved out, or reached there through
 # a link, is no longer coddy's: it trips, and only once.
@@ -511,46 +514,6 @@ tripped 2 "tripwire: a git worktree made in .worktrees/<id>/ and moved out trips
 tripped 0 "tripwire: and is quiet on the next command" 'true'
 tripped 2 "tripwire: one moved out with a link put back trips" 'git worktree add -q --detach .worktrees/86 && mv .worktrees/86 "$tmp/mv86" && ln -s "$tmp/mv86" .worktrees/86'
 rm -rf "$tmp/mv87" "$tmp/mv86" .worktrees/86; git worktree prune; git branch -q -D evil
-# A remedy acts only on the worktree the command made. rem runs the git one
-# the message names, if any.
-rem() { (cd "$repo" && eval "$(sed -n "s/.*(remove it: \(git worktree remove '[^']*'\)).*/\1/p" "$tmp/trip.err")") >/dev/null 2>&1; }
-# Content moved into a new worktree and ignored passes git worktree remove's
-# check and would go with it: no command, and it survives.
-mkdir "$tmp/keep"; echo s > "$tmp/keep/.env"; cp .git/info/exclude "$tmp/exclude"
-wire snap w; (git worktree add -q --detach "$wo" && mv "$tmp/keep" "$wo/keep" && echo keep >> .git/info/exclude) >/dev/null 2>&1
-wire trip w 2>"$tmp/trip.err"; got=$?; rem
-t 0 "tripwire: a new git worktree holding an ignored moved-in directory trips" test "$got" = 2
-t 1 "tripwire: and names no command for it" grep -q 'remove it' "$tmp/trip.err"
-t 0 "tripwire: and the moved-in directory survives" test -f "$wo/keep/.env"
-cp "$tmp/exclude" .git/info/exclude; git worktree remove --force "$wo"; rm -rf "$wo"
-# So does a file moved over a tracked one and hidden by a flag, one in a .GIT
-# directory on a case-folding config, or one in a submodule directory never
-# set up. hidden <what> <path left> <command run once the worktree is made>.
-hidden() {
-  mkdir "$tmp/keep"; echo s > "$tmp/keep/f"
-  wire snap w; (git worktree add -q --detach "$wo" && eval "$3") >/dev/null 2>&1
-  wire trip w 2>"$tmp/trip.err"; got=$?; rem
-  t 0 "tripwire: a new git worktree holding $1 trips" test "$got" = 2
-  t 1 "tripwire: and names no command for it" grep -q 'remove it' "$tmp/trip.err"
-  t 0 "tripwire: and what was moved in survives" test -f "$wo/$2"
-  git worktree remove --force "$wo" >/dev/null 2>&1; rm -rf "$wo" "$tmp/keep"
-}
-for f in assume-unchanged skip-worktree; do
-  hidden "a moved-in file over a tracked one marked --$f" README.md "mv \"\$tmp/keep/f\" \"\$wo/README.md\" && git -C \"\$wo\" update-index --$f README.md"
-done
-ic=$(git config core.ignorecase); git config core.ignorecase true
-hidden "a moved-in .GIT directory under a tracked one" d/.GIT/f 'mkdir "$wo/d" && : > "$wo/d/t" && git -C "$wo" add d/t && git -C "$wo" commit -qm d && mv "$tmp/keep" "$wo/d/.GIT"'
-git config core.ignorecase "${ic:-false}"
-hidden "a moved-in directory at a submodule never set up" m/f 'git -C "$wo" update-index --add --cacheinfo "160000,$(git rev-parse HEAD),m" && git -C "$wo" commit -qm m && mv "$tmp/keep" "$wo/m"'
-# git worktree remove matches its argument ignoring case on a case-folding
-# config: a new worktree whose path another listed one matches that way, here
-# one whose directory has gone, gets no command.
-git worktree add -q --detach "$wo/Case" && mv "$wo/Case" "$tmp/case"; git config core.ignorecase true
-wire snap w; git -c core.ignorecase=false worktree add -q --detach "$wo/case" >/dev/null 2>&1
-wire trip w 2>"$tmp/trip.err"; got=$?
-t 0 "tripwire: a new git worktree whose path matches another's but for case trips" test "$got" = 2
-t 1 "tripwire: and names no command for it on a case-folding config" grep -q 'remove it' "$tmp/trip.err"
-git config core.ignorecase "${ic:-false}"; git -c core.ignorecase=false worktree remove --force "$wo/case"; rm -rf "$wo" "$tmp/case"; git worktree prune
 # trip runs git outside the sandbox: a git dir or common dir the command
 # plants for a new worktree, or for a submodule of the main checkout, runs
 # none of its programs.
@@ -567,47 +530,24 @@ rm -f "$tmp/fsm"; wire snap w; (git update-index --add --cacheinfo "160000,$(git
 wire trip w 2>/dev/null; wire snap w; wire trip w 2>/dev/null
 t 1 "tripwire: a planted submodule of the main checkout runs none of its programs" test -e "$tmp/fsm"
 git rm -q --cached sub; rm -rf sub
-# A worktree at or under the git common dir would take what is there with it.
-wire snap w; git worktree add -q --detach .git/refs/tags >/dev/null 2>&1
-wire trip w 2>"$tmp/trip.err"; got=$?; rem
-t 0 "tripwire: a git worktree in the git common dir trips" test "$got" = 2
-t 1 "tripwire: and names no command for it" grep -q 'remove it' "$tmp/trip.err"
-t 0 "tripwire: and that directory survives" test -d .git/refs/tags
-git worktree remove --force .git/refs/tags; mkdir -p .git/refs/tags
-# A worktree at .worktrees itself, .worktrees/<id>/ moved aside and back into
-# it and excluded, so its removal would pass: no command, and <id> survives.
-git worktree add -q --detach .worktrees/84; echo wip > .worktrees/84/wip.txt; cp .git/info/exclude "$tmp/exclude"
-wire snap w; (mv .worktrees "$tmp/wa" && git worktree add -q --detach .worktrees && mv "$tmp/wa/84" .worktrees/84 && echo 84 >> .git/info/exclude) >/dev/null 2>&1
-wire trip w 2>"$tmp/trip.err"; got=$?; rem
-t 0 "tripwire: a git worktree at .worktrees itself trips" test "$got" = 2
-t 1 "tripwire: and names no command for it" grep -q 'remove it' "$tmp/trip.err"
-t 0 "tripwire: and .worktrees/<id>/ in it survives" test -f .worktrees/84/wip.txt
-mv .worktrees/84 "$tmp/wa/84"; git worktree remove --force .worktrees; mv "$tmp/wa" .worktrees; cp "$tmp/exclude" .git/info/exclude
-# A worktree git moved out of .worktrees/<id>/ was not made: no command.
+git worktree add -q --detach .worktrees/84
+# A worktree git moved out of .worktrees/<id>/ was not made.
 wire snap w; git worktree move .worktrees/84 "$wo" >/dev/null 2>&1
 wire trip w 2>"$tmp/trip.err"; got=$?
 t 0 "tripwire: a git worktree moved out of .worktrees/<id>/ by git trips" test "$got" = 2
-t 0 "tripwire: and is reported moved, not made" grep -qF "git worktree at '$wo' (moved, renamed or re-created, not made" "$tmp/trip.err"
-t 1 "tripwire: with no command to remove it" grep -q 'remove it' "$tmp/trip.err"
+t 0 "tripwire: and is reported moved, not made" grep -qF "git worktree at '$wo', moved, renamed or re-created (check what it holds before removing it with git worktree remove)" "$tmp/trip.err"
+t 1 "tripwire: with no command line" cmdline
 git worktree move "$wo" .worktrees/84
 # One moved by hand, its directory gone when snap runs, and repaired by the
-# command, as git suggests: moved, no command.
+# command, as git suggests: moved.
 mv .worktrees/84 "$wo"
 wire snap w; git worktree repair "$wo" >/dev/null 2>&1
 wire trip w 2>"$tmp/trip.err"; got=$?
 t 0 "tripwire: a git worktree moved by hand and repaired trips" test "$got" = 2
-t 0 "tripwire: and is reported moved, not made" grep -qF "git worktree at '$wo' (moved, renamed or re-created, not made" "$tmp/trip.err"
-t 1 "tripwire: with no command to remove it" grep -q 'remove it' "$tmp/trip.err"
+t 0 "tripwire: and is reported moved, not made" grep -qF "git worktree at '$wo', moved, renamed or re-created (check what it holds before removing it with git worktree remove)" "$tmp/trip.err"
+t 1 "tripwire: with no command line" cmdline
 git worktree move "$wo" .worktrees/84
-# A worktree outside swapped for a link to .worktrees/<id>/, whose .git now
-# names the new one's admin dir: no command, and <id> survives.
-cp .worktrees/84/.git "$tmp/gitfile"
-wire snap w; (git worktree add -q --detach "$wo" && a=$(cat "$wo/.git") && rm -rf "$wo" && ln -s "$repo/.worktrees/84" "$wo" && echo "$a" > .worktrees/84/.git) >/dev/null 2>&1
-wire trip w 2>"$tmp/trip.err"; got=$?; rem
-t 0 "tripwire: a worktree outside swapped for a link to .worktrees/<id>/ trips" test "$got" = 2
-t 1 "tripwire: and names no command for it" grep -q 'remove it' "$tmp/trip.err"
-t 0 "tripwire: and .worktrees/<id>/ behind the link survives" test -f .worktrees/84/wip.txt
-cp "$tmp/gitfile" .worktrees/84/.git; rm "$wo"; git worktree prune; git worktree remove --force .worktrees/84
+git worktree remove --force .worktrees/84
 # A backslash prints as \134, so it never reads as the \ooo of a control byte.
 bs="$wo/b\\001" cc="$wo/b"$'\001'
 wire snap w; (git worktree add -q --detach "$bs" && git worktree add -q --detach "$cc") >/dev/null 2>&1
@@ -615,13 +555,12 @@ wire trip w 2>"$tmp/trip.err"
 t 0 "tripwire: a backslash in a path prints as \\134" grep -qF "'$wo/b\\134001'" "$tmp/trip.err"
 t 0 "tripwire: and a control byte as \\ooo, a line of its own" grep -qF "'$wo/b\\001'" "$tmp/trip.err"
 git worktree remove --force "$bs"; git worktree remove --force "$cc"; rm -rf "$wo"
-# A path that is the root, a newline and more is no root: it trips, and with
-# no command to remove it.
+# A path that is the root, a newline and more is no root: it trips.
 R=$(pwd -P); nl="$R"$'\n'x
 wire snap w; git worktree add -q --detach "$nl" >/dev/null 2>&1
 wire trip w 2>"$tmp/trip.err"; got=$?
 t 0 "tripwire: a git worktree at the root, a newline and more trips" test "$got" = 2
-t 1 "tripwire: and names no command for it" grep -q 'remove it' "$tmp/trip.err"
+t 1 "tripwire: and gives no command line" cmdline
 git worktree remove --force "$nl"
 # A git before 2.36 has no worktree list -z: a stub git refuses it and lists
 # without it as such a git did, every path raw. The worktrees are read all
@@ -639,8 +578,8 @@ chmod +x "$tmp/oldgit/git"; old() { PATH="$tmp/oldgit:$PATH" wire "$@"; }
 old snap w; git worktree add -q --detach "$wo" >/dev/null 2>&1
 old trip w 2>"$tmp/trip.err"; got=$?
 t 0 "git before 2.36: a git worktree outside trips" test "$got" = 2
-t 0 "git before 2.36: and names it" grep -qF "git worktree at '$wo' (coddy gives no command" "$tmp/trip.err"
-t 1 "git before 2.36: with no command, since a raw path can forge entries" grep -q 'git worktree remove' "$tmp/trip.err"
+t 0 "git before 2.36: and names it, made" grep -qF "git worktree at '$wo', made (check what it holds before removing it with git worktree remove)" "$tmp/trip.err"
+t 1 "git before 2.36: with no command line" cmdline
 git worktree remove --force "$wo"
 old snap w; git worktree add -q --detach .worktrees/88 >/dev/null 2>&1
 t 0 "git before 2.36: a git worktree in .worktrees/<id>/ is quiet" old trip w
@@ -648,11 +587,10 @@ git worktree remove --force .worktrees/88
 old snap w; git worktree add -q --detach "$nl" >/dev/null 2>&1
 old trip w 2>"$tmp/trip.err"; got=$?
 t 0 "git before 2.36: a worktree at the root, a newline and more trips" test "$got" = 2
-t 1 "git before 2.36: and names no command for it" grep -q 'remove it' "$tmp/trip.err"
+t 1 "git before 2.36: and gives no command line" cmdline
 git worktree remove --force "$nl"
 if [ -d .jj ]; then
-  # A user's ui.color = "always" colours no path, and a name jj shows quoted
-  # is named as forget takes it, so the command in the message removes it.
+  # A user's ui.color = "always" colours no path or name.
   printf '[ui]\ncolor = "always"\n' > "$tmp/jj.toml"; export JJ_CONFIG="$tmp/jj.toml"
   tripped 0 "tripwire: a jj workspace in .worktrees/<id>/ is quiet" 'jj workspace add --name 89 .worktrees/89'
   tripped 2 "tripwire: a jj workspace moved out of .worktrees/<id>/ and linked back trips" 'jj workspace add --name 85 .worktrees/85 && mv .worktrees/85 "$tmp/mv85" && ln -s "$tmp/mv85" .worktrees/85'
@@ -660,38 +598,36 @@ if [ -d .jj ]; then
   wire snap w; (cd "$repo" && jj workspace add --name 'o t' "$wo") >/dev/null 2>&1
   wire trip w 2>"$tmp/trip.err"; got=$?
   t 0 "tripwire: a jj workspace outside trips" test "$got" = 2
-  t 0 "tripwire: and names it with how to remove it" grep -qF "'$wo' (remove it: jj workspace forget -- 'o t', then check that directory and delete it by hand)" "$tmp/trip.err"
-  t 1 "tripwire: and deletes no directory itself" grep -q 'rm ' "$tmp/trip.err"
-  (cd "$repo" && eval "$(sed -n 's/.*(remove it: \(jj workspace forget .*\), then check.*/\1/p' "$tmp/trip.err")") >/dev/null 2>&1
-  t 1 "tripwire: and that command removes it" grep -qx 'o t' <(jj workspace list --ignore-working-copy --color=never -T 'stringify(name) ++ "\n"')
-  # A jj workspace outside, renamed, was not made: no command.
+  t 0 "tripwire: and names it, made, with the tool that removes it" grep -qF "jj workspace 'o t' at '$wo', made (check what it holds before removing it with jj workspace forget)" "$tmp/trip.err"
+  t 1 "tripwire: and gives no command line" cmdline
+  jj workspace forget 'o t' >/dev/null 2>&1
+  # A jj workspace outside, renamed, was not made.
   wp=${wo%/*}/o2; jj workspace add --name o2 "$wp" >/dev/null 2>&1
   wire snap w; (cd "$wp" && jj workspace rename o3) >/dev/null 2>&1
   wire trip w 2>"$tmp/trip.err"; got=$?
   t 0 "tripwire: a jj workspace outside, renamed, trips" test "$got" = 2
-  t 0 "tripwire: and is reported renamed, not made" grep -qF "jj workspace 'o3' at '$wp' (moved, renamed or re-created, not made" "$tmp/trip.err"
-  t 1 "tripwire: with no command for it" grep -q 'forget' "$tmp/trip.err"
+  t 0 "tripwire: and is reported renamed, not made" grep -qF "jj workspace 'o3' at '$wp', moved, renamed or re-created (check what it holds before removing it with jj workspace forget)" "$tmp/trip.err"
+  t 1 "tripwire: with no command line" cmdline
   # One whose directory is gone when snap runs, which jj before 0.46 lists
-  # with no path, put back by the command: no command.
+  # with no path, put back by the command: not made.
   mv "$wp" "$tmp/o3"
   wire snap w; mv "$tmp/o3" "$wp"
   wire trip w 2>"$tmp/trip.err"
-  t 1 "tripwire: a jj workspace put back where it was gets no command" grep -q 'forget' "$tmp/trip.err"
+  t 1 "tripwire: a jj workspace put back where it was is not reported made" grep -qF "'$wp', made" "$tmp/trip.err"
   jj workspace forget o3 >/dev/null 2>&1; rm -rf "$wp"
   # A name or path holding a newline, a tab, a DEL or a C1 character is
-  # reported escaped, with no command: one built to read as other entries
-  # would aim it elsewhere.
+  # reported escaped, so it reads as no other entry.
   odd=$'77\n/some/dir\tdefault\x7f\xc2\x85'
   wire snap w; (cd .worktrees/89 && jj workspace rename "$odd") >/dev/null 2>&1
   wire trip w 2>"$tmp/trip.err"; got=$?
   t 0 "tripwire: a jj workspace renamed to hold a newline and a tab trips" test "$got" = 2
-  t 0 "tripwire: and is reported escaped" grep -qF '"77\134n/some/dir\134tdefault\177\302\205"' "$tmp/trip.err"
-  t 1 "tripwire: and names no command for it" grep -qE 'remove it|forget|rm ' "$tmp/trip.err"
+  t 0 "tripwire: and is reported escaped and renamed" grep -qE "jj workspace '77\\\\134n/some/dir\\\\134tdefault\\\\177\\\\302\\\\205' at '[^']*', moved, renamed or re-created" "$tmp/trip.err"
+  t 1 "tripwire: and gives no command line" cmdline
   nl="$R"$'\n'"$R/.worktrees/zz"; mkdir -p "${nl%/*}"
   wire snap w; jj workspace add --name zz "$nl" >/dev/null 2>&1
   wire trip w 2>"$tmp/trip.err"; got=$?
   t 0 "tripwire: a jj workspace at the root, a newline and a coddy path trips" test "$got" = 2
-  t 1 "tripwire: and names no command for it" grep -q 'remove it' "$tmp/trip.err"
+  t 1 "tripwire: and gives no command line" cmdline
   jj workspace forget "$odd" zz >/dev/null 2>&1; rm -rf "$wo" .worktrees/89 "$R"$'\n'; unset JJ_CONFIG
 fi
 # A project under a directory whose name holds a quote: coddy's own start
