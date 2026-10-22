@@ -413,9 +413,11 @@ adds() {
     }
     # What the git push, git send-pack (sp) or jj git push whose subcommand
     # is word j, run in directory g ("" when unknown), would push, each by its
-    # own options: git long ones by any prefix, as git takes them. Nothing
-    # for a dry run or -h, which push nothing.
-    function push(j, t, g, sp, dd,   x, c, m, v, vb, n, s, tg, any, dr, r, rb, R, N) {
+    # own options: git long ones by any prefix, as git takes them, each
+    # undone by a later --no- form (--no-force-with-lease every lease, and
+    # --no-mirror a git push -f too). Nothing for a dry run or -h, which
+    # push nothing.
+    function push(j, t, g, sp, dd,   x, c, m, v, vb, n, s, tg, any, dr, r, rb, R, N, u, hp, fo, le, de, pr, mi, ao, si) {
       pb = ""; al = dl = 0
       for (j++; j <= k; j++) {
         x = seg[j]
@@ -444,21 +446,24 @@ adds() {
           continue
         }
         if (!dd && x ~ /^--./) {
-          c = substr(x, 3); sub(/=.*/, "", c)
-          if (c ~ /^help(-all)?$/ || c ~ /^dr/ && index("dry-run", c) == 1) dr = 1
-          else if (index("force-with-lease", c) == 1) put(":force")
-          else if (!sp && (index("delete", c) == 1 || index("prune", c) == 1)) dl = 1
-          else if (index("mirror", c) == 1) dl = al = 1
-          else if (index("all", c) == 1 || !sp && index("branches", c) == 1) al = 1
-          else if (sp && c ~ /^std/ && index("stdin", c) == 1) say(":?", x)
-          else if (!sp && index("tags", c) == 1) tg = 1
-          else if (x !~ /=/ && (index(sp ? "remote" : "repo", c) == 1 || index("push-option", c) == 1 || index("receive-pack", c) == 1 || index("exec", c) == 1 || !sp && index("recurse-submodules", c) == 1)) j++
+          c = substr(x, 3); sub(/=.*/, "", c); u = c ~ /^no-./; if (u) c = substr(c, 4)
+          if (!u && c ~ /^help(-all)?$/) hp = 1
+          else if (c ~ /^dr/ && index("dry-run", c) == 1) dr = !u
+          else if (c == "force") fo = !u
+          else if (index("force-with-lease", c) == 1) le = !u
+          else if (!sp && index("delete", c) == 1) de = !u
+          else if (!sp && index("prune", c) == 1) pr = !u
+          else if (index("mirror", c) == 1) { mi = !u; if (u && !sp) fo = 0 }
+          else if (index("all", c) == 1 || !sp && index("branches", c) == 1) ao = !u
+          else if (sp && c ~ /^std/ && index("stdin", c) == 1) si = u ? "" : x
+          else if (!sp && index("tags", c) == 1) tg = !u
+          else if (!u && x !~ /=/ && (index(sp ? "remote" : "repo", c) == 1 || index("push-option", c) == 1 || index("receive-pack", c) == 1 || index("exec", c) == 1 || !sp && index("recurse-submodules", c) == 1)) j++
           continue
         }
         if (!dd && x ~ /^-./) {
           for (m = 2; m <= length(x); m++) {
             c = substr(x, m, 1)
-            if (c == "f") put(":force"); else if (c == "n" || c == "h") dr = 1; else if (c == "d" && !sp) dl = 1; else if (c == "o" && !sp) { if (m == length(x)) j++; break }
+            if (c == "f") fo = 1; else if (c == "n") dr = 1; else if (c == "h") hp = 1; else if (c == "d" && !sp) de = 1; else if (c == "o" && !sp) { if (m == length(x)) j++; break }
           }
           continue
         }
@@ -472,17 +477,20 @@ adds() {
       # some; else the command -c config refspecs, or matching (send-pack,
       # push.default=matching), or the branch checked out. Under xargs, its
       # input may add some.
+      al = al || ao || mi; dl = dl || de || pr || mi
       if (t == "git" && n < 2 && !al && !tg && !dl && !xa) {
         if (rb) say(":?", r)
         else if (!sp && (s = conf(n ? r : "")) != "") { N = split(substr(s, 2), R, "\035"); for (m = 1; m <= N; m++) ref(R[m], 0, g) }
         else if (sp || pm) al = 1
         else head(g, "HEAD")
       }
+      if (fo || le) put(":force")
       if (dl) put(":delete")
       if (al) put(":all")
+      if (si != "") say(":?", si)
       if (t == "jj" && !any) say(":?", "jj git push")
       if (xa) say(":?", "xargs")
-      if (!dr) printf "%s", pb
+      if (!dr && !hp) printf "%s", pb
     }
     # The command word of the segment, past VAR=value prefixes, reserved
     # words and wrappers with their options, each that takes a value with it,
@@ -536,7 +544,7 @@ adds() {
       x = seg[j]; p = match(x, /.*\//) ? RLENGTH : 0; t = substr(x, p + 1)
       if (tolower(t) ~ /^(git|jj|git-push|git-send-pack)$/) t = tolower(t)
       if (bad[j] && (bp[j] > p || t !~ /^(git|jj|git-push|git-send-pack)$/)) return
-      if (t ~ /^git-/) { push(j, "git", g, t == "git-send-pack", 0); return }
+      if (t == "git-push" || t == "git-send-pack") { push(j, "git", g, t == "git-send-pack", 0); return }
       if (t == "popd") { cw = ""; return }
       if (t == "cd" || t == "pushd") {
         for (j++; j <= k && seg[j] ~ /^-./; j++) ;

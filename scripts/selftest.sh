@@ -537,6 +537,11 @@ for c in 'git push --help' 'git push -h' 'git --help push' 'git push --dry-run o
   t 0 "push: pushes nothing to the default branch, saying nothing: $c" silent "$c"
 done
 t 2 "push: refused, the default branch after a tag: git push origin tag v1 main" shell 'git push origin tag v1 main'
+# A later --no- form undoes an option, as git reads them in order.
+for c in 'git push --dry-run --no-dry-run origin feat:main' 'git push -n --no-dr origin main' 'git push --tags --no-tags origin' \
+  'git send-pack --dry-run --no-dry-run ../origin.git feat:main'; do t 2 "push: refused, a dry run or --tags undone: $c" shell "$c"; done
+for c in 'git push --force-with-lease --no-force origin feat/43-thing' 'git push -f --no-force-with-lease origin feat/43-thing'; do t 2 "push: refused, a force the other --no- form leaves: $c" shell "$c" "$w43"; done
+t 0 "push: a lease --no-force-with-lease cancels passes, saying nothing" silent 'git push --force-with-lease --no-force-with-lease origin feat/43-thing' "$w43"
 # A $( or backtick substitution is one word its text cannot fix, its own
 # commands read too, and the words after it stay in the command.
 t 2 "push: refused, the default branch after a substitution" shell 'git push "$(git remote)" main' "$w43"
@@ -552,6 +557,8 @@ for c in 'git --shallow-file x push origin main' 'timeout 120 git push origin ma
   $'dash <<-EOF\n\tgit push origin main\n\tEOF' $'ksh -e <<EOF\ngit push origin main\nEOF'; do
   t 2 "push: refused, the default branch: $c" shell "$c"
 done
+for c in 'git-lfs fetch --all' 'git-filter-repo --force --path src'; do t 0 "push: another dashed git tool passes, saying nothing: $c" silent "$c" "$w43"; done
+for c in 'git-crypt unlock' 'git-cliff -o CHANGELOG.md && git push origin feat'; do t 0 "push: another dashed git tool passes, saying nothing: $c" silent "$c"; done
 t 2 "push: refused, a force push behind timeout's options" shell 'timeout -s KILL 5m git push -f origin feat'
 t 2 "push: refused, env -C into the main checkout" shell "env -C '$repo' git push" "$w43"
 t 2 "push: refused, a heredoc fed to a shell after a cd" shell "$(printf "cd '%s' && bash <<EOF\ngit push\nEOF" "$repo")" "$w43"
