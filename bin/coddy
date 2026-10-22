@@ -337,8 +337,8 @@ abspath() {
 # the env, command, builtin, exec, nohup and time wrappers skipped; a literal
 # cd or pushd followed (a subshell's dropped at its parenthesis; a popd
 # leaves the directory unknown), and git -C; each git or jj option that
-# takes a value skipped with it. $var, `cmd`, a glob, a brace, ~ and a cd
-# it cannot follow leave a word unresolved. Another check of a command's
+# takes a value skipped with it. $var, `cmd`, a glob, a brace, ~, a line
+# break and a cd it cannot follow leave a word unresolved. Another check of a command's
 # text matches its own commands in run: a git push or jj git push prints,
 # after a colon, what it would do (push): :to <branch>, HEAD and @ read as
 # the branch checked out where it runs (branchin); :glob <pattern> for a
@@ -448,7 +448,8 @@ adds() {
         if (++n == 1) a = x
         if (x == "push" && (t == "git" ? n == 1 : n == 2 && a == "git")) { push(j, t, g, dd); return }
         if (n == 1 && x != (t == "git" ? "worktree" : "workspace") && (t == "git" || x != "git") || n == 2 && (a == "git" || x != "add")) return
-        if (n == 3) { v = bad[j] ? "" : path(g, x); print (v == "" ? "?" x : v); return }
+        # A path that spans lines is unresolved, so no line of it reads as a tag.
+        if (n == 3) { v = bad[j] ? "" : path(g, x); if (v ~ /\n/) v = ""; gsub(/\n/, " ", x); print (v == "" ? "?" x : v); return }
       }
     }
     { s = s (NR > 1 ? "\n" : "") $0 }
@@ -565,7 +566,8 @@ gid() { local l=""; [ -f "$1/.git" ] && { read -r -d '' -n 1024 l < "$1/.git"; }
 # .git up from it that is a gitdir: file (git dies on a bad one), or else a
 # repository (objects, refs and a HEAD git takes; git walks past any other),
 # each file read no further than a NUL or 1024 characters, a gitdir: line
-# and HEAD trimmed as git trims them. Nothing when no repository holds $1 or
+# and HEAD trimmed as git trims them, a HEAD that is a link read as the ref
+# it names. Nothing when no repository holds $1 or
 # HEAD is detached; status 1 when $1 is no directory, so a cd into it fails
 # and leaves the shell where it was, or HEAD names no branch git could have
 # (a reftable repository's stub included).
@@ -579,7 +581,7 @@ branchin() {
       { IFS= read -r -d '' -n 1024 l < "$x"; } 2>/dev/null; l=${l%"${l##*[!$'\n\r']}"}
       case "$l" in "gitdir: "?*) x=${l#gitdir: }; case "$x" in /*) ;; *) x="$g/$x" ;; esac ;; *) return 0 ;; esac
     fi
-    l=""; [ -f "$x/HEAD" ] && { IFS= read -r -d '' -n 1024 l < "$x/HEAD"; } 2>/dev/null
+    l=""; if [ -L "$x/HEAD" ]; then l="ref: $(readlink "$x/HEAD")"; elif [ -f "$x/HEAD" ]; then { IFS= read -r -d '' -n 1024 l < "$x/HEAD"; } 2>/dev/null; fi
     [ -f "$g/.git" ] && break
     [ -d "$x/objects" ] && [ -d "$x/refs" ] && [[ $l =~ ^(ref:[[:space:]]*refs/|[0-9a-f]{40}) ]] && break
     [ -n "$g" ] || return 0

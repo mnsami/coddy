@@ -470,6 +470,7 @@ t 0 "coddy's own start passes" shell "bash '$here/scripts/issue.sh' create 77 fe
 for c in 'p=../x; git worktree add "$p"' 'git worktree add `echo ../x`' 'git worktree add ../x*' 'cd "$d" && jj workspace add x'; do
   t 0 "unresolved, passes with a message: $c" noted 'could not tell where' "$c"
 done
+t 0 "a path that spans lines passes with a message, no line of it read as a push's" noted 'could not tell where' $'git worktree add ".worktrees/77/a\n:to /../../../x"'
 # A command that ends in a two-character redirection is read and let through
 # at once. prompt <command...>: it ends within five seconds; one that does
 # not is killed, with every process it started.
@@ -525,6 +526,8 @@ for h in 'ref:refs/heads/main\n' 'ref: \t refs/heads/main \t\r\n'; do
 done
 printf 'ref: refs/heads/.invalid\n' > "$hd/.git/HEAD"
 t 0 "push: a reftable repository's HEAD stub passes with a message" noted 'could not tell which branch' "cd '$hd' && git push"
+rm "$hd/.git/HEAD"; ln -s refs/heads/main "$hd/.git/HEAD"
+t 2 "push: refused, a HEAD that is a link to refs/heads/main" shell 'git push' "$hd/empty"
 t 0 "without jq: a push passes" nojq 'git push origin main'
 t 0 "without jq: and says so" says 'jq is missing' nojq 'git push origin main'
 # After the command: a worktree outside coddy's, made by any spelling, trips;
