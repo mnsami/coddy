@@ -119,6 +119,7 @@ for p in brew apt-get dnf winget; do t 0 "onboard names a jq install command for
 t 0 "guard allows everything before onboarding" guard "$repo/README.md"
 t 0 "sweep is a quiet no-op before onboarding" run sweep
 t 0 "snap lets a git worktree add outside through before onboarding" shell 'git worktree add ../x'
+t 0 "snap lets a push to the default branch through before onboarding" shell 'git push --force origin main'
 
 leg() {
   tool=$1 n=$2
@@ -358,6 +359,9 @@ tripped 2 "warn: the tripwire still trips" 'echo x > stray.txt'; rm -f stray.txt
 tripped 2 "warn: the config lock still holds" 'rm .claude/coddy.yml'
 t 0 "warn: the config came back as it was" grep -qx 'guard: warn' .claude/coddy.yml
 t 0 "warn: a git worktree add outside .worktrees/ is let through with the message" noted '/coddy:start <issue>' 'git worktree add ../x'
+t 0 "warn: a push to the default branch is let through with the message" noted 'the default branch' 'git push origin main'
+t 0 "warn: a force push is let through with the message" noted 'force-push' 'git push -f origin feat'
+t 0 "warn: a branch delete is let through with the message" noted 'delete a remote branch' 'git push origin :feat'
 for v in block wran; do
   printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
   t 2 "guard: $v blocks the main checkout" guard "$repo/README.md"
@@ -474,6 +478,42 @@ for c in 'echo x >>' 'cat <<' 'ls 2>&' 'ls &>'; do t 0 "a command ending in its 
 nojq() { payload "$1" | PATH="$tmp/nojq" run snap; }
 t 0 "without jq: a git worktree add passes" nojq 'git worktree add ../x'
 t 0 "without jq: and says so" says 'jq is missing' nojq 'git worktree add ../x'
+# A push to the default branch, a force push or a remote branch's delete is
+# refused before it runs, read from the command's text as the worktree add
+# is; the main checkout is on main, .worktrees/43 on feat/43-thing.
+silent() { out=$(shell "$@") && [ -z "$out" ]; } # snap lets it through, saying nothing
+w43="$repo/.worktrees/43"
+for c in 'git push origin main' 'git push upstream main' 'git push origin +main' 'git push origin HEAD:main' 'git push origin feat:refs/heads/main' 'git push origin feat:heads/main' \
+  'git push' 'git push origin' 'git push origin HEAD' 'git push origin @' 'git push --all origin' 'git push --mirror origin' 'git push --branches origin' \
+  'git push origin :' 'git push --repo=origin upstream' 'git -C .worktrees/43 push origin main' 'A=1 env git push origin main' 'echo a && git push -q --verbose origin main'; do
+  t 2 "push: refused, the default branch: $c" shell "$c"
+done
+for c in "cd '$repo' && git push origin main" "cd '$repo' && git push" "git -C '$repo' push origin HEAD"; do t 2 "push: refused from elsewhere: $c" shell "$c" "$tmp"; done
+t 0 "push: that refusal names /coddy:ship" says '/coddy:ship' shell 'git push origin main'
+for c in 'git push -f origin feat/43-thing' 'git push -uf origin feat/43-thing' 'git push --force origin feat/43-thing' 'git push --force-with-lease origin feat/43-thing' \
+  'git push --force-with-lease=feat/43-thing:abc origin feat/43-thing' 'git push origin +feat/43-thing' 'git push origin --force' 'git push --force-w origin x'; do
+  t 2 "push: refused on the issue's own branch, a force push: $c" shell "$c" "$w43"
+done
+t 0 "push: that refusal says it rewrites the remote's history" says 'force-push' shell 'git push -f origin feat/43-thing' "$w43"
+for c in 'git push -d origin feat' 'git push origin --delete feat' 'git push --de origin feat' 'git push origin :feat' 'git push --prune origin'; do t 2 "push: refused, a branch delete: $c" shell "$c" "$w43"; done
+t 0 "push: that refusal says it deletes a remote branch" says 'delete a remote branch' shell 'git push origin :feat' "$w43"
+for c in 'jj git push -b main' 'jj git push --bookmark=main' 'jj git push -b exact:main' 'jj git push --named main=@' 'jj git push --named=main=@' \
+  'jj git push -b=main' 'jj git push -bmain' 'jj git push --all' 'jj git push --tracked' 'jj git push --deleted' 'jj --no-pager git push --remote origin -b feat/x -b main'; do
+  t 2 "push: refused, jj: $c" shell "$c"
+done
+for c in 'git push -u origin feat' 'git push origin main:feat' 'git push origin --tags' 'git push -o ci.skip origin feat' 'git push origin -o main feat' \
+  'git push origin refs/tags/main' 'echo "git push --force origin main"' \
+  "bash '$here/scripts/issue.sh' push 77" 'jj git push -c @' 'jj git push -b feat/x' 'jj git push --remote main -b feat/x' 'git pushx origin main'; do
+  t 0 "push: passes, saying nothing: $c" silent "$c"
+done
+t 0 "push: in a heredoc body passes, saying nothing" silent $'cat <<EOF >/dev/null\ngit push --force origin main\nEOF'
+for c in 'git push' 'git push origin HEAD' 'git push --repo=origin feat' 'git push --repo origin feat'; do t 0 "push: passes on the issue's branch, saying nothing: $c" silent "$c" "$w43"; done
+t 0 "push: a bare push outside any repository passes, saying nothing" silent 'git push' "$tmp"
+for c in 'git push origin "$b"' 'cd "$d" && git push' 'git push origin HEAD:`b`' 'jj git push' 'jj git push -r @' 'jj git push -b "glob:ma*"' 'jj git push -b substring:ma'; do
+  t 0 "push: unresolved, passes with a message: $c" noted 'could not tell which branch' "$c"
+done
+t 0 "without jq: a push passes" nojq 'git push origin main'
+t 0 "without jq: and says so" says 'jq is missing' nojq 'git push origin main'
 # After the command: a worktree outside coddy's, made by any spelling, trips;
 # one inside, or one that was there before, does not.
 wo=$(cd "$tmp" && pwd -P)/out
