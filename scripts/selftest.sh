@@ -482,6 +482,11 @@ wire trip w 2>"$tmp/trip.err"; got=$?
 t 0 "tripwire: a git worktree outside trips" test "$got" = 2
 t 0 "tripwire: and names it with how to remove it" grep -qF "'$wo' (remove it: git worktree remove '$wo')" "$tmp/trip.err"
 tripped 0 "tripwire: a worktree outside from before the command is quiet" 'true'
+# A copy of its admin dir makes git list it twice: still not the command's.
+wire snap w; cp -R "$(git -C "$wo" rev-parse --absolute-git-dir)" .git/worktrees/aacopy
+t 0 "tripwire: a copied admin dir makes git list a worktree twice" test "$(git worktree list --porcelain | grep -cxF "worktree $wo")" = 2
+t 0 "tripwire: and that worktree, from before the command, is quiet" wire trip w
+rm -rf .git/worktrees/aacopy
 t 0 "dodged: a git worktree add from a variable passes snap" noted 'could not tell where' 'p=../dodge; git worktree add -q --detach "$p"'
 (cd "$repo" && p=../dodge; git worktree add -q --detach "$p") >/dev/null 2>&1
 t 2 "dodged: and trips once it has run" wire trip sh
@@ -492,7 +497,14 @@ sp="$wo/z (remove it: rm -rf $tmp/none); $wo/w"
 wire snap w; git worktree add -q --detach "$sp" >/dev/null 2>&1
 wire trip w 2>"$tmp/trip.err"
 t 0 "tripwire: a path holding a remedy of its own is one quoted entry" grep -qF ": '$sp' (remove it: git worktree remove '$sp'). Issue work" "$tmp/trip.err"
-git worktree remove --force "$sp"; rm -rf "$wo"
+git worktree remove --force "$sp"
+sq="$wo/it's"
+wire snap w; git worktree add -q --detach "$sq" >/dev/null 2>&1
+wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: a git worktree whose path holds a quote trips" test "$got" = 2
+t 0 "tripwire: and is reported quoted" grep -qF "git worktree at '$wo/it'\\''s' (coddy gives no command" "$tmp/trip.err"
+t 1 "tripwire: and names no command for it" grep -q 'remove it' "$tmp/trip.err"
+git worktree remove --force "$sq"; rm -rf "$wo"
 # A worktree made in .worktrees/<id>/ and moved out, or reached there through
 # a link, is no longer coddy's: it trips, and only once.
 tripped 2 "tripwire: a git worktree made in .worktrees/<id>/ and moved out trips" 'git worktree add -q -b evil .worktrees/87 && mv .worktrees/87 "$tmp/mv87"'
@@ -523,8 +535,12 @@ chmod +x "$tmp/oldgit/git"; old() { PATH="$tmp/oldgit:$PATH" wire "$@"; }
 old snap w; git worktree add -q --detach "$wo" >/dev/null 2>&1
 old trip w 2>"$tmp/trip.err"; got=$?
 t 0 "git before 2.36: a git worktree outside trips" test "$got" = 2
-t 0 "git before 2.36: and names it with how to remove it" grep -qF "'$wo' (remove it: git worktree remove '$wo')" "$tmp/trip.err"
+t 0 "git before 2.36: and names it" grep -qF "git worktree at '$wo' (coddy gives no command" "$tmp/trip.err"
+t 1 "git before 2.36: with no command, since a raw path can forge entries" grep -q 'git worktree remove' "$tmp/trip.err"
 git worktree remove --force "$wo"
+old snap w; git worktree add -q --detach .worktrees/88 >/dev/null 2>&1
+t 0 "git before 2.36: a git worktree in .worktrees/<id>/ is quiet" old trip w
+git worktree remove --force .worktrees/88
 old snap w; git worktree add -q --detach "$nl" >/dev/null 2>&1
 old trip w 2>"$tmp/trip.err"; got=$?
 t 0 "git before 2.36: a worktree at the root, a newline and more trips" test "$got" = 2

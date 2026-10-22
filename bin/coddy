@@ -400,8 +400,8 @@ coddywt() {
 }
 # A real directory sits at path $1, physically: not gone, moved or a link.
 real() { [ -d "$1" ] && [ "$(cd "$1" 2>/dev/null && pwd -P)" = "$1" ]; }
-# $1 holds no control character (C0, DEL, C1), backslash or double quote.
-clean() { local LC_ALL=C; case "$1" in *[[:cntrl:]\\\"]*|*$'\xc2'[$'\x80'-$'\x9f']*) return 1 ;; esac; }
+# $1 holds no control character (C0, DEL, C1), backslash or quote.
+clean() { local LC_ALL=C; case "$1" in *[[:cntrl:]\\\"\']*|*$'\xc2'[$'\x80'-$'\x9f']*) return 1 ;; esac; }
 # $1 as one inert word, whatever the shell: in single quotes, a quote as '\'',
 # and each byte of a control character (C0, DEL, C1) as \ooo, so it shows and
 # keeps to one line; only a word given no command holds one.
@@ -436,17 +436,19 @@ json() {
 # git worktree list --porcelain -z, or, from a git before 2.36, without -z:
 # each path as one field, and one not followed by its HEAD or bare line
 # taken with the lines up to it, so it holds a line break and reads as odd.
+# Those fields start "raw ": a raw path can forge whole entries, so none
+# gets a command.
 gitwts() {
   git worktree list --porcelain -z 2>/dev/null && return
   local l p=""
   while IFS= read -r l; do
     case "$l" in
-      "HEAD "*|bare) [ -z "$p" ] || printf '%s\0' "$p"; p="" ;;
+      "HEAD "*|bare) [ -z "$p" ] || printf 'raw %s\0' "$p"; p="" ;;
       "worktree "*) p=${p:+$p$'\n'}$l ;;
       *) [ -z "$p" ] || p+=$'\n'$l ;;
     esac
   done < <(git worktree list --porcelain 2>/dev/null)
-  [ -z "$p" ] || printf '%s\n\0' "$p"
+  [ -z "$p" ] || printf 'raw %s\n\0' "$p"
 }
 
 # The main checkout's fingerprint: one line per dirty path with its content
@@ -462,8 +464,9 @@ gitwts() {
 # directory has gone, so such a workspace is left out. Each is read whole
 # (NUL-separated from git, JSON-escaped from jj; line by line from a git
 # before 2.36, gitwts), every path and name is printed quoted (q), and one
-# whose path or name holds a control character, a quote or a backslash, or
-# whose path is not absolute, is listed with no command: built to read as
+# read line by line, or whose path or name holds a control character, a
+# quote or a backslash, or whose path is not absolute, is listed with no
+# command: built to read as
 # other entries, it would aim that command elsewhere. The root is matched as
 # it is spelled (as jj escapes it, J), and only what follows it is held to
 # that test before an entry is skipped as the root or coddy's own. No line
@@ -482,11 +485,12 @@ snap() {
   fi
   odd="coddy gives no command for it: check it by hand"
   while IFS= read -r -d '' p; do
+    raw=""; case "$p" in "raw worktree "*) p=${p#raw } raw=1 ;; esac
     case "$p" in "worktree "*) p=${p#worktree } ;; *) continue ;; esac
     r=${p#"$R"}
     if [ "$r" != "$p" ] && clean "$r" && { [ -z "$r" ] || coddywt "$p"; }; then
       [ -z "$r" ] || real "$p" || echo "git worktree at $(q "$p") ($odd)"
-    elif clean "$p" && [ "${p#/}" != "$p" ]; then echo "$(q "$p") (remove it: git worktree remove $(q "$p"))"
+    elif [ -z "$raw" ] && clean "$p" && [ "${p#/}" != "$p" ]; then echo "$(q "$p") (remove it: git worktree remove $(q "$p"))"
     else echo "git worktree at $(q "$p") ($odd)"
     fi
   done < <(gitwts)
@@ -544,7 +548,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     rm -f "$file".*
     [ -f "$conf" ] || { echo NOT_ONBOARDED > "$file"; exit 0; }
     b=$(cfg default_branch); b="${b:-main}"
-    snap | LC_ALL=C sort > "$file"
+    snap | LC_ALL=C sort -u > "$file"
     for c in .coddy.yml "$legacy"; do
       p="$root/$c" s="$file.${c//\//_}"
       kind "$p" > "$s.kind"; [ ! -f "$p" ] || cp "$p" "$s"; [ ! -L "$p" ] || readlink "$p" > "$s.link"
@@ -623,7 +627,9 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   confpath
   # Only lines that are new count, so undoing a change never trips the wire.
   # A worktree's line ends in a parenthesis, a dirty path's in its hash.
-  new=$(snap | LC_ALL=C sort | LC_ALL=C comm -13 "$file" -)
+  # Every line is unique by design, so a repeat is no new line: git lists a
+  # worktree twice once a command copies its admin dir.
+  new=$(snap | LC_ALL=C sort -u | LC_ALL=C comm -13 "$file" -)
   added=$(printf '%s\n' "$new" | grep -v ')$' | sed 's/ [^ ]*$//' | tr '\n' ' ' | sed 's/ $//')
   wts=$(printf '%s\n' "$new" | awk '/\)$/{printf "%s%s", s, $0; s="; "}')
   rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*
