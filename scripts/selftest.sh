@@ -523,6 +523,50 @@ t 0 "tripwire: a new git worktree holding an ignored moved-in directory trips" t
 t 1 "tripwire: and names no command for it" grep -q 'remove it' "$tmp/trip.err"
 t 0 "tripwire: and the moved-in directory survives" test -f "$wo/keep/.env"
 cp "$tmp/exclude" .git/info/exclude; git worktree remove --force "$wo"; rm -rf "$wo"
+# So does a file moved over a tracked one and hidden by a flag, one in a .GIT
+# directory on a case-folding config, or one in a submodule directory never
+# set up. hidden <what> <path left> <command run once the worktree is made>.
+hidden() {
+  mkdir "$tmp/keep"; echo s > "$tmp/keep/f"
+  wire snap w; (git worktree add -q --detach "$wo" && eval "$3") >/dev/null 2>&1
+  wire trip w 2>"$tmp/trip.err"; got=$?; rem
+  t 0 "tripwire: a new git worktree holding $1 trips" test "$got" = 2
+  t 1 "tripwire: and names no command for it" grep -q 'remove it' "$tmp/trip.err"
+  t 0 "tripwire: and what was moved in survives" test -f "$wo/$2"
+  git worktree remove --force "$wo" >/dev/null 2>&1; rm -rf "$wo" "$tmp/keep"
+}
+for f in assume-unchanged skip-worktree; do
+  hidden "a moved-in file over a tracked one marked --$f" README.md "mv \"\$tmp/keep/f\" \"\$wo/README.md\" && git -C \"\$wo\" update-index --$f README.md"
+done
+ic=$(git config core.ignorecase); git config core.ignorecase true
+hidden "a moved-in .GIT directory under a tracked one" d/.GIT/f 'mkdir "$wo/d" && : > "$wo/d/t" && git -C "$wo" add d/t && git -C "$wo" commit -qm d && mv "$tmp/keep" "$wo/d/.GIT"'
+git config core.ignorecase "${ic:-false}"
+hidden "a moved-in directory at a submodule never set up" m/f 'git -C "$wo" update-index --add --cacheinfo "160000,$(git rev-parse HEAD),m" && git -C "$wo" commit -qm m && mv "$tmp/keep" "$wo/m"'
+# git worktree remove matches its argument ignoring case on a case-folding
+# config: a new worktree whose path another listed one matches that way, here
+# one whose directory has gone, gets no command.
+git worktree add -q --detach "$wo/Case" && mv "$wo/Case" "$tmp/case"; git config core.ignorecase true
+wire snap w; git -c core.ignorecase=false worktree add -q --detach "$wo/case" >/dev/null 2>&1
+wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: a new git worktree whose path matches another's but for case trips" test "$got" = 2
+t 1 "tripwire: and names no command for it on a case-folding config" grep -q 'remove it' "$tmp/trip.err"
+git config core.ignorecase "${ic:-false}"; git -c core.ignorecase=false worktree remove --force "$wo/case"; rm -rf "$wo" "$tmp/case"; git worktree prune
+# trip runs git outside the sandbox: a git dir or common dir the command
+# plants for a new worktree, or for a submodule of the main checkout, runs
+# none of its programs.
+printf '#!/bin/sh\necho x >> "%s/fsm"\nexit 1\n' "$tmp" > "$tmp/fsm.sh"; chmod +x "$tmp/fsm.sh"
+git init -q "$tmp/evil"; git -C "$tmp/evil" config core.fsmonitor "$tmp/fsm.sh"
+for c in 'echo "gitdir: $tmp/evil/.git" > "$wo/.git"' 'echo "$tmp/evil/.git" > "$(git -C "$wo" rev-parse --git-dir)/commondir"'; do
+  rm -f "$tmp/fsm"; wire snap w; (git worktree add -q --detach "$wo" && eval "$c") >/dev/null 2>&1
+  wire trip w 2>/dev/null; got=$?
+  t 0 "tripwire: a new git worktree with a planted git dir trips: $c" test "$got" = 2
+  t 1 "tripwire: and runs none of its programs" test -e "$tmp/fsm"
+  rm -rf "$wo"; git worktree prune
+done
+rm -f "$tmp/fsm"; wire snap w; (git update-index --add --cacheinfo "160000,$(git rev-parse HEAD),sub" && mkdir sub && echo "gitdir: $tmp/evil/.git" > sub/.git) >/dev/null 2>&1
+wire trip w 2>/dev/null; wire snap w; wire trip w 2>/dev/null
+t 1 "tripwire: a planted submodule of the main checkout runs none of its programs" test -e "$tmp/fsm"
+git rm -q --cached sub; rm -rf sub
 # A worktree at or under the git common dir would take what is there with it.
 wire snap w; git worktree add -q --detach .git/refs/tags >/dev/null 2>&1
 wire trip w 2>"$tmp/trip.err"; got=$?; rem

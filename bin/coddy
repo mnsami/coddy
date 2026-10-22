@@ -453,8 +453,9 @@ gitwts() {
   [ -z "$p" ] || printf 'raw %s\n\0' "$p"
 }
 odd="coddy gives no command for it: check it by hand"
-# gi: the git admin id worktree $1's .git names, when it is a plain file.
-gid() { local l=""; [ -f "$1/.git" ] && { read -r l < "$1/.git"; } 2>/dev/null; case "$l" in "gitdir: "*/?*) gi=${l##*/} ;; *) return 1 ;; esac; }
+# gi and gd: the git admin id and dir worktree $1's .git names, when it is a
+# plain file.
+gid() { local l=""; [ -f "$1/.git" ] && { read -r l < "$1/.git"; } 2>/dev/null; case "$l" in "gitdir: "*/?*) gi=${l##*/} gd=${l#gitdir: } ;; *) return 1 ;; esac; }
 # trip prints the remedy for new worktree $1 (jj: workspace $2) only when it
 # is the one the command made, whole. 2: its path, git admin id or jj name
 # was listed before the command ($file.wt), so it moved, was renamed or was
@@ -463,9 +464,16 @@ gid() { local l=""; [ -f "$1/.git" ] && { read -r l < "$1/.git"; } 2>/dev/null; 
 # the root's parent (each, and every directory above the root, by -ef:
 # another case is the same directory), or holds another listed worktree
 # ($now) or a nested .git or .jj, which its removal would take with it. A git
-# one's .git must name its admin id, or git would remove it unchecked, and it
-# may hold no untracked file, ignored ones included: git would remove those
-# with it.
+# one: no other listed path may match its path but for case when the main
+# repo's core.ignorecase is set, since git worktree remove would match that
+# one too; its .git must name its admin dir in $C (-ef), or git would remove
+# it unchecked; and every path in it but that .git must be a file git
+# tracks unflagged (ls-files -v's H), or git would remove it with the
+# worktree whatever it holds: an untracked or ignored file, one hidden by
+# assume-unchanged or skip-worktree, one in a .GIT or in a submodule
+# directory never set up. The command wrote that .git and the admin dir's
+# commondir, so git runs there with no fsmonitor and no pager, the
+# programs a config could name for ls-files.
 made() {
   local p=$1 j=$2 x l
   [ -f "$file.wt" ] || return 1
@@ -478,7 +486,16 @@ made() {
   for x in "$@" /; do [ ! "$p" -ef "$x" ] || return 1; done
   while IFS= read -r l; do case "$l" in "path ${p%/}"/?*) return 1 ;; esac; done < "$now"
   [ -z "$(find "$p" -mindepth 2 \( -name .git -o -name .jj \) -print -quit 2>/dev/null)" ] || return 1
-  [ -n "$j" ] || { x=$(git -C "$p" ls-files -o --directory 2>/dev/null) && [ -z "$x" ]; }
+  [ -z "$j" ] || return 0
+  [ "$(git -C "$R" config --bool core.ignorecase 2>/dev/null)" != true ] ||
+    LC_ALL=C awk -v p="$p" 'index($0, "path ") == 1 && (o = substr($0, 6)) != p && tolower(o) == tolower(p) { exit 1 }' "$now" || return 1
+  case "$gd" in /*) ;; *) gd="$p/$gd" ;; esac
+  [ "$gd" -ef "$C/worktrees/$gi" ] || return 1
+  # Every path on disk, one per line, a line break in a name read as \1,
+  # which no ls-files line holds; ls-files quotes control characters.
+  x=$(set -o pipefail; export LC_ALL=C; cd "$p" && find . -path ./.git -prune -o ! -type d -print0 | tr '\n\0' '\1\n' | sed 's|^\./||' | sort) &&
+    l=$(git --no-pager -c core.fsmonitor=false -c core.quotePath=false -C "$p" ls-files -v 2>/dev/null) || return 1
+  [ -z "$(LC_ALL=C comm -23 <(printf '%s\n' "$x") <(LC_ALL=C sed -n 's/^H //p' <<<"$l" | LC_ALL=C sort))" ]
 }
 
 # The main checkout's fingerprint: one line per dirty path with its content
@@ -504,6 +521,9 @@ made() {
 # deletes a directory: jj prints a link's target, which an rm would empty.
 # Every dirty file is hashed by one git hash-object; a path holding a newline
 # is misread by --stdin-paths, as it already is by the line-based fingerprint.
+# A submodule shows when its commit changes, never for its work tree: git
+# would read that in a git status of its own, run under the submodule's
+# config, which a command can plant (its fsmonitor, filters and hooks).
 # On fd 3, for trip's made: every worktree's path, every git admin id (read
 # from each worktree's .git and from the common dir, so one whose directory
 # is gone is there too) and every jj workspace's name (one jj lists with no
@@ -530,20 +550,22 @@ snap() {
     fi
   done < <(gitwts)
   [ -z "$C" ] || for d in "$C"/worktrees/*/; do [ ! -d "$d" ] || { d=${d%/}; echo "git ${d##*/}" >&3; }; done
-  # No colour, whatever ui.color says, and the name as forget takes it, not
-  # jj's quoted display form; -- for a name that starts with a dash. The root
+  # No colour or pager, whatever the config says, and the name as forget
+  # takes it, not jj's quoted display form; -- for a name that starts with a
+  # dash. One listing: each name, then its root when jj gives one. The root
   # is matched in its escaped form, J.
-  [ ! -d .jj ] || { J=$(json "$R"); while IFS=$'\t' read -r p w; do
+  [ ! -d .jj ] || { J=$(json "$R"); while IFS=$'\t' read -r w p; do
+    [[ $w != \"*\" ]] || echo "jj ${w:1:${#w}-2}" >&3
+    [ -n "$p" ] || continue
     [[ $p == \"*\" && $w == \"*\" ]] || { echo "jj workspace $(q "$w") at $(q "$p") ($odd)"; continue; }
     pi=${p:1:${#p}-2} wi=${w:1:${#w}-2}; r=${pi#"$J"}
-    printf 'path %s\njj %s\n' "$pi" "$wi" >&3
+    echo "path $pi" >&3
     if [ "$r" != "$pi" ] && clean "$r$wi" && { [ -z "$r" ] || coddywt "$R$r"; }; then
       [ -z "$r" ] || real "$R$r" || echo "jj workspace $(q "$w") at $(q "$p") ($odd)"
     elif clean "$pi$wi" && [ "${pi#/}" != "$pi" ]; then echo "$(q "$pi") (remove it: jj workspace forget -- $(q "$wi"), then check that directory and delete it by hand)"
     else echo "jj workspace $(q "$w") at $(q "$p") ($odd)"
     fi
-  done < <(jj workspace list --ignore-working-copy --color=never -T 'if(root, stringify(root).escape_json() ++ "\t" ++ stringify(name).escape_json() ++ "\n")' 2>/dev/null)
-  while IFS= read -r w; do [[ $w != \"*\" ]] || echo "jj ${w:1:${#w}-2}" >&3; done < <(jj workspace list --ignore-working-copy --color=never -T 'stringify(name).escape_json() ++ "\n"' 2>/dev/null); }
+  done < <(jj --no-pager workspace list --ignore-working-copy --color=never -T 'stringify(name).escape_json() ++ if(root, "\t" ++ stringify(root).escape_json()) ++ "\n"' 2>/dev/null); }
   files=() n=0
   while IFS= read -r -d '' e; do
     # A staged rename or copy carries its source in the next field: a rename's
@@ -557,7 +579,7 @@ snap() {
       [ -z "${CODDY_AGENT_DIR-}" ] || case "$p" in "$CODDY_AGENT_DIR"/*) continue ;; esac
       if [ -f "$p" ]; then files[n]="$p"; n=$((n+1)); else printf '%s gone\n' "$p"; fi
     done
-  done < <(git status --porcelain -uall -z 2>/dev/null)
+  done < <(git status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null)
   [ "$n" -gt 0 ] || return 0
   printf '%s\n' "${files[@]}" | git hash-object --stdin-paths 2>/dev/null |
     { i=0; while IFS= read -r hash; do printf '%s %s\n' "${files[i]}" "$hash"; i=$((i+1)); done; }
@@ -572,7 +594,8 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   in=$(cat)
   id=$(sed -n 's/.*"tool_use_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
   R=$(cd "$root" 2>/dev/null && pwd -P)
-  C=$(cd "$root" 2>/dev/null && c=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$c" && pwd -P)
+  # The git common dir, physical, read past each side's onboarding gate.
+  common() { C=$(cd "$root" 2>/dev/null && c=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$c" && pwd -P); }
   case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
   file="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
   # Both config paths are kept, present or not: a .coddy.yml the command
@@ -586,6 +609,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # no config is, and the hooks stay inert.
     rm -f "$file".*
     [ -f "$conf" ] || { echo NOT_ONBOARDED > "$file"; exit 0; }
+    common
     b=$(cfg default_branch); b="${b:-main}"
     snap 3>"$file.wt" | LC_ALL=C sort -u > "$file"
     for c in .coddy.yml "$legacy"; do
@@ -622,6 +646,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   lost="that command left no snapshot of the main checkout at $file, so what it changed cannot be checked: a command may not touch the snapshot. Undo what it did."
   [ -f "$file" ] || die "$lost"
   grep -qx NOT_ONBOARDED "$file" && { rm -f "$file" "$file".*; exit 0; }
+  common
   pre=""
   for c in .coddy.yml "$legacy"; do
     s="$file.${c//\//_}"; k=""; [ ! -f "$s.kind" ] || k=$(cat "$s.kind")
