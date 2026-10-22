@@ -168,9 +168,10 @@ backslash is reported with no command at all, and so is one moved out of
 `.worktrees/<issue>/` (by `mv` or `git worktree move`) or reached there
 through a link: the command that moves or deletes a worktree there trips
 once. The command to remove one comes only with a worktree the command made:
-one it moved or renamed is reported as such, and one that is a link, is or
-holds `.worktrees/`, `.claude/`, `.claude/worktrees/` or the project, or
-holds another worktree or repository, gets no command.
+one it moved, renamed or re-created is reported as such, and one that is a
+link, is in `.git`, is or holds `.worktrees/`, `.claude/`,
+`.claude/worktrees/` or the project, holds another worktree or repository,
+or, for git, holds any untracked or ignored file, gets no command.
 
 Before a command runs, the hook reads its text for a `git worktree add` or
 `jj workspace add` that would put a worktree anywhere else, and refuses it,

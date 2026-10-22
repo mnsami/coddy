@@ -514,6 +514,22 @@ rm -rf "$tmp/mv87" "$tmp/mv86" .worktrees/86; git worktree prune; git branch -q 
 # A remedy acts only on the worktree the command made. rem runs the git one
 # the message names, if any.
 rem() { (cd "$repo" && eval "$(sed -n "s/.*(remove it: \(git worktree remove '[^']*'\)).*/\1/p" "$tmp/trip.err")") >/dev/null 2>&1; }
+# Content moved into a new worktree and ignored passes git worktree remove's
+# check and would go with it: no command, and it survives.
+mkdir "$tmp/keep"; echo s > "$tmp/keep/.env"; cp .git/info/exclude "$tmp/exclude"
+wire snap w; (git worktree add -q --detach "$wo" && mv "$tmp/keep" "$wo/keep" && echo keep >> .git/info/exclude) >/dev/null 2>&1
+wire trip w 2>"$tmp/trip.err"; got=$?; rem
+t 0 "tripwire: a new git worktree holding an ignored moved-in directory trips" test "$got" = 2
+t 1 "tripwire: and names no command for it" grep -q 'remove it' "$tmp/trip.err"
+t 0 "tripwire: and the moved-in directory survives" test -f "$wo/keep/.env"
+cp "$tmp/exclude" .git/info/exclude; git worktree remove --force "$wo"; rm -rf "$wo"
+# A worktree at or under the git common dir would take what is there with it.
+wire snap w; git worktree add -q --detach .git/refs/tags >/dev/null 2>&1
+wire trip w 2>"$tmp/trip.err"; got=$?; rem
+t 0 "tripwire: a git worktree in the git common dir trips" test "$got" = 2
+t 1 "tripwire: and names no command for it" grep -q 'remove it' "$tmp/trip.err"
+t 0 "tripwire: and that directory survives" test -d .git/refs/tags
+git worktree remove --force .git/refs/tags; mkdir -p .git/refs/tags
 # A worktree at .worktrees itself, .worktrees/<id>/ moved aside and back into
 # it and excluded, so its removal would pass: no command, and <id> survives.
 git worktree add -q --detach .worktrees/84; echo wip > .worktrees/84/wip.txt; cp .git/info/exclude "$tmp/exclude"
@@ -527,7 +543,16 @@ mv .worktrees/84 "$tmp/wa/84"; git worktree remove --force .worktrees; mv "$tmp/
 wire snap w; git worktree move .worktrees/84 "$wo" >/dev/null 2>&1
 wire trip w 2>"$tmp/trip.err"; got=$?
 t 0 "tripwire: a git worktree moved out of .worktrees/<id>/ by git trips" test "$got" = 2
-t 0 "tripwire: and is reported moved, not made" grep -qF "git worktree at '$wo' (moved or renamed, not made" "$tmp/trip.err"
+t 0 "tripwire: and is reported moved, not made" grep -qF "git worktree at '$wo' (moved, renamed or re-created, not made" "$tmp/trip.err"
+t 1 "tripwire: with no command to remove it" grep -q 'remove it' "$tmp/trip.err"
+git worktree move "$wo" .worktrees/84
+# One moved by hand, its directory gone when snap runs, and repaired by the
+# command, as git suggests: moved, no command.
+mv .worktrees/84 "$wo"
+wire snap w; git worktree repair "$wo" >/dev/null 2>&1
+wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: a git worktree moved by hand and repaired trips" test "$got" = 2
+t 0 "tripwire: and is reported moved, not made" grep -qF "git worktree at '$wo' (moved, renamed or re-created, not made" "$tmp/trip.err"
 t 1 "tripwire: with no command to remove it" grep -q 'remove it' "$tmp/trip.err"
 git worktree move "$wo" .worktrees/84
 # A worktree outside swapped for a link to .worktrees/<id>/, whose .git now
@@ -600,8 +625,14 @@ if [ -d .jj ]; then
   wire snap w; (cd "$wp" && jj workspace rename o3) >/dev/null 2>&1
   wire trip w 2>"$tmp/trip.err"; got=$?
   t 0 "tripwire: a jj workspace outside, renamed, trips" test "$got" = 2
-  t 0 "tripwire: and is reported renamed, not made" grep -qF "jj workspace 'o3' at '$wp' (moved or renamed, not made" "$tmp/trip.err"
+  t 0 "tripwire: and is reported renamed, not made" grep -qF "jj workspace 'o3' at '$wp' (moved, renamed or re-created, not made" "$tmp/trip.err"
   t 1 "tripwire: with no command for it" grep -q 'forget' "$tmp/trip.err"
+  # One whose directory is gone when snap runs, which jj before 0.46 lists
+  # with no path, put back by the command: no command.
+  mv "$wp" "$tmp/o3"
+  wire snap w; mv "$tmp/o3" "$wp"
+  wire trip w 2>"$tmp/trip.err"
+  t 1 "tripwire: a jj workspace put back where it was gets no command" grep -q 'forget' "$tmp/trip.err"
   jj workspace forget o3 >/dev/null 2>&1; rm -rf "$wp"
   # A name or path holding a newline, a tab, a DEL or a C1 character is
   # reported escaped, with no command: one built to read as other entries
