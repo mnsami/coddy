@@ -162,11 +162,15 @@ workspace outside `.worktrees/<issue>/` and `.claude/worktrees/`, and reports
 a new one, however the command made it, with how to remove it: `git worktree
 remove`, or `jj workspace forget`, which leaves the directory for you to check
 and delete. Every path and name in that report is in single quotes, with
-control characters escaped, so none can pass for a second entry. One whose
-name or path holds a control character, a quote or a backslash is reported
-with no command at all, and so is one moved out of `.worktrees/<issue>/` or
-reached there through a link: the command that moves or deletes a worktree
-there trips once.
+backslashes and control characters escaped, so none can pass for a second
+entry. One whose name or path holds a control character, a quote or a
+backslash is reported with no command at all, and so is one moved out of
+`.worktrees/<issue>/` (by `mv` or `git worktree move`) or reached there
+through a link: the command that moves or deletes a worktree there trips
+once. The command to remove one comes only with a worktree the command made:
+one it moved or renamed is reported as such, and one that is a link, is or
+holds `.worktrees/`, `.claude/`, `.claude/worktrees/` or the project, or
+holds another worktree or repository, gets no command.
 
 Before a command runs, the hook reads its text for a `git worktree add` or
 `jj workspace add` that would put a worktree anywhere else, and refuses it,

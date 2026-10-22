@@ -403,14 +403,16 @@ real() { [ -d "$1" ] && [ "$(cd "$1" 2>/dev/null && pwd -P)" = "$1" ]; }
 # $1 holds no control character (C0, DEL, C1), backslash or quote.
 clean() { local LC_ALL=C; case "$1" in *[[:cntrl:]\\\"\']*|*$'\xc2'[$'\x80'-$'\x9f']*) return 1 ;; esac; }
 # $1 as one inert word, whatever the shell: in single quotes, a quote as '\'',
-# and each byte of a control character (C0, DEL, C1) as \ooo, so it shows and
-# keeps to one line; only a word given no command holds one.
+# a backslash as \134 and each byte of a control character (C0, DEL, C1) as
+# \ooo, so it shows, keeps to one line and reads one way; only a word given no
+# command holds one.
 q() {
   local LC_ALL=C s=$1 o="'" c x
   while [ -n "$s" ]; do
     c=${s:0:1} s=${s:1}
     case "$c${s:0:1}" in
       \'*) o+="'\\''"; continue ;;
+      \\*) o+='\134'; continue ;;
       $'\xc2'[$'\x80'-$'\x9f']) c+=${s:0:1} s=${s:1} ;;
       [[:cntrl:]]*) ;;
       *) o+=$c; continue ;;
@@ -450,6 +452,30 @@ gitwts() {
   done < <(git worktree list --porcelain 2>/dev/null)
   [ -z "$p" ] || printf 'raw %s\n\0' "$p"
 }
+odd="coddy gives no command for it: check it by hand"
+# gi: the git admin id worktree $1's .git names, when it is a plain file.
+gid() { local l=""; [ -f "$1/.git" ] && { read -r l < "$1/.git"; } 2>/dev/null; case "$l" in "gitdir: "*/?*) gi=${l##*/} ;; *) return 1 ;; esac; }
+# trip prints the remedy for new worktree $1 (jj: workspace $2) only when it
+# is the one the command made, whole. 2: its path, git admin id or jj name
+# was listed before the command ($file.wt), so it moved or was renamed.
+# 1: it is no real directory, or is or holds .worktrees, the agent dir, its
+# worktrees, the root or the root's parent (each, and every directory above
+# the root, by -ef: another case is the same directory), or holds another
+# listed worktree ($now) or a nested .git or .jj, which its removal would
+# take with it. A git one's .git must name its admin id, or git would remove
+# it unchecked.
+made() {
+  local p=$1 x l
+  [ -f "$file.wt" ] || return 1
+  if [ -z "$2" ]; then gid "$p" || return 1; x="git $gi"; else x="jj $2"; fi
+  while IFS= read -r l; do [ "$l" != "$x" ] && [ "$l" != "path $p" ] || return 2; done < "$file.wt"
+  real "$p" || return 1
+  set -- "$R/.worktrees" ${CODDY_AGENT_DIR:+"$R/$CODDY_AGENT_DIR" "$R/$CODDY_AGENT_DIR/worktrees"}
+  x=$R; while [ -n "$x" ]; do set -- "$@" "$x"; x=${x%/*}; done
+  for x in "$@" /; do [ ! "$p" -ef "$x" ] || return 1; done
+  while IFS= read -r l; do case "$l" in "path ${p%/}"/?*) return 1 ;; esac; done < "$now"
+  [ -z "$(find "$p" -mindepth 2 \( -name .git -o -name .jj \) -print -quit 2>/dev/null)" ]
+}
 
 # The main checkout's fingerprint: one line per dirty path with its content
 # hash, one for the default branch $b when it holds commits its remote branch
@@ -466,13 +492,16 @@ gitwts() {
 # before 2.36, gitwts), every path and name is printed quoted (q), and one
 # read line by line, or whose path or name holds a control character, a
 # quote or a backslash, or whose path is not absolute, is listed with no
-# command: built to read as
-# other entries, it would aim that command elsewhere. The root is matched as
+# command: built to read as other entries, it would aim that command
+# elsewhere; trip keeps the command of the rest only for a worktree the
+# command made (made). The root is matched as
 # it is spelled (as jj escapes it, J), and only what follows it is held to
 # that test before an entry is skipped as the root or coddy's own. No line
 # deletes a directory: jj prints a link's target, which an rm would empty.
 # Every dirty file is hashed by one git hash-object; a path holding a newline
 # is misread by --stdin-paths, as it already is by the line-based fingerprint.
+# On fd 3, for trip's made: every worktree's path and, read from its .git, git
+# admin id, and every jj workspace's name, coddy's and the root's included.
 snap() {
   cd "$root" 2>/dev/null || return 0
   git merge-base --is-ancestor "refs/heads/$b" "refs/remotes/origin/$b" 2>/dev/null ||
@@ -483,10 +512,10 @@ snap() {
   elif ! git merge-base --is-ancestor HEAD "refs/remotes/origin/$b" 2>/dev/null; then
     echo "detached HEAD $h"
   fi
-  odd="coddy gives no command for it: check it by hand"
   while IFS= read -r -d '' p; do
     raw=""; case "$p" in "raw worktree "*) p=${p#raw } raw=1 ;; esac
     case "$p" in "worktree "*) p=${p#worktree } ;; *) continue ;; esac
+    echo "path $p" >&3; ! gid "$p" || echo "git $gi" >&3
     r=${p#"$R"}
     if [ "$r" != "$p" ] && clean "$r" && { [ -z "$r" ] || coddywt "$p"; }; then
       [ -z "$r" ] || real "$p" || echo "git worktree at $(q "$p") ($odd)"
@@ -500,6 +529,7 @@ snap() {
   [ ! -d .jj ] || { J=$(json "$R"); while IFS=$'\t' read -r p w; do
     [[ $p == \"*\" && $w == \"*\" ]] || { echo "jj workspace $(q "$w") at $(q "$p") ($odd)"; continue; }
     pi=${p:1:${#p}-2} wi=${w:1:${#w}-2}; r=${pi#"$J"}
+    printf 'path %s\njj %s\n' "$pi" "$wi" >&3
     if [ "$r" != "$pi" ] && clean "$r$wi" && { [ -z "$r" ] || coddywt "$R$r"; }; then
       [ -z "$r" ] || real "$R$r" || echo "jj workspace $(q "$w") at $(q "$p") ($odd)"
     elif clean "$pi$wi" && [ "${pi#/}" != "$pi" ]; then echo "$(q "$pi") (remove it: jj workspace forget -- $(q "$wi"), then check that directory and delete it by hand)"
@@ -548,7 +578,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     rm -f "$file".*
     [ -f "$conf" ] || { echo NOT_ONBOARDED > "$file"; exit 0; }
     b=$(cfg default_branch); b="${b:-main}"
-    snap | LC_ALL=C sort -u > "$file"
+    snap 3>"$file.wt" | LC_ALL=C sort -u > "$file"
     for c in .coddy.yml "$legacy"; do
       p="$root/$c" s="$file.${c//\//_}"
       kind "$p" > "$s.kind"; [ ! -f "$p" ] || cp "$p" "$s"; [ ! -L "$p" ] || readlink "$p" > "$s.link"
@@ -628,13 +658,29 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # Only lines that are new count, so undoing a change never trips the wire.
   # A worktree's line ends in a parenthesis, a dirty path's in its hash.
   # Every line is unique by design, so a repeat is no new line: git lists a
-  # worktree twice once a command copies its admin dir.
-  new=$(snap | LC_ALL=C sort -u | LC_ALL=C comm -13 "$file" -)
+  # worktree twice once a command copies its admin dir. A new line with a
+  # remedy keeps it only for a worktree the command made (made); its path
+  # and name hold no quote, so each is the text between a pair of them.
+  now=$(mktemp 2>/dev/null) || now=/dev/null
+  new=$(snap 3>"$now" | LC_ALL=C sort -u | LC_ALL=C comm -13 "$file" -)
   added=$(printf '%s\n' "$new" | grep -v ')$' | sed 's/ [^ ]*$//' | tr '\n' ' ' | sed 's/ $//')
-  wts=$(printf '%s\n' "$new" | awk '/\)$/{printf "%s%s", s, $0; s="; "}')
-  rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*
+  wts=""
+  while IFS= read -r l; do
+    case "$l" in *\)) ;; *) continue ;; esac
+    case "$l" in "'"*"' (remove it: "*)
+      p=${l#\'} p=${p%%\'*} w=""; k="git worktree"
+      case "$l" in *"forget -- '"*) w=${l#*forget -- \'} w=${w%%\'*} k="jj workspace '$w'" ;; esac
+      made "$p" "$w"
+      case $? in
+        1) l="$k at '$p' ($odd)" ;;
+        2) l="$k at '$p' (moved or renamed, not made: coddy gives no command for it; put it back by hand)" ;;
+      esac ;;
+    esac
+    wts="${wts:+$wts; }$l"
+  done <<<"$new"
+  rm -f "$file"; [ "$now" = /dev/null ] || rm -f "$now"; [ -n "$keep" ] || rm -f "$file".*
   [ -n "$added" ] && msg="${msg}that command changed the main checkout: $added. Issue work belongs in .worktrees/<issue>/. Undo it. "
-  [ -n "$wts" ] && msg="${msg}that command made a worktree outside .worktrees/<issue>/, or gave one a name or path coddy will not put in a command: $wts. Issue work belongs in .worktrees/<issue>/: run /coddy:start <issue>, which makes it."
+  [ -n "$wts" ] && msg="${msg}that command made, moved or renamed a worktree outside .worktrees/<issue>/, or gave one a name or path coddy will not put in a command: $wts. Issue work belongs in .worktrees/<issue>/: run /coddy:start <issue>, which makes it."
   [ -z "$msg" ] && exit 0
   die "$msg"
 fi
