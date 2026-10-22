@@ -116,6 +116,7 @@ for v in 'exclude answers' 'exclude config' 'forget answers'; do t 0 "onboard pr
 for p in brew apt-get dnf winget; do t 0 "onboard names a jq install command for $p" grep -qE "$p"' install (-y )?(jq|jqlang\.jq)( |$|`)' "$here/skills/onboard/SKILL.md"; done
 t 0 "guard allows everything before onboarding" guard "$repo/README.md"
 t 0 "sweep is a quiet no-op before onboarding" run sweep
+t 0 "snap lets a git worktree add outside through before onboarding" shell 'git worktree add ../x'
 
 leg() {
   tool=$1 n=$2
@@ -449,6 +450,15 @@ t 0 "git -C: into .claude/worktrees/ passes" shell 'git -C .claude worktree add 
 t 2 "jj -R, --name and -r: refused outside" shell 'jj -R . workspace add --name x -r @ ../x'
 t 0 "jj --name and -r: inside passes" shell 'jj workspace add --name x -r@- .worktrees/77'
 t 0 "a cd in a subshell ends at its parenthesis" shell '(cd /tmp && true); git worktree add .worktrees/77'
+t 2 "git --attr-source: its value is not the subcommand" shell 'git --attr-source HEAD worktree add ../x'
+t 2 "a git worktree add in a quoted \$( is refused" shell 'echo "a $(git worktree add ../x) b"'
+# A commit message from a heredoc in a quoted $( is text, odd quotes and all.
+t 0 "a heredoc in a quoted \$( is not read as commands" shell "git commit -m \"\$(cat <<'EOF'
+an odd \"quote
+git worktree add ../x
+EOF
+)\""
+t 0 "after a popd the directory is unknown: passes with a message" noted 'could not tell where' 'pushd /tmp && popd && git worktree add .worktrees/77'
 t 0 "coddy's own start passes" shell "bash '$here/scripts/issue.sh' create 77 feat/77-worktree"
 # A path the text cannot fix, or no jq, passes and says so.
 for c in 'p=../x; git worktree add "$p"' 'git worktree add `echo ../x`' 'git worktree add ../x*' 'cd "$d" && jj workspace add x'; do

@@ -302,13 +302,14 @@ abspath() {
 # worktree add or jj workspace add: one absolute path per line (abspath), or
 # ?<word> for one its text cannot fix. Read as the shell reads it, in awk for
 # speed: segments split on ; & | ( ) and line breaks; quotes, backslashes,
-# comments, redirections and heredoc bodies taken apart; VAR=value prefixes,
-# reserved words and the env, command, builtin, exec, nohup and time wrappers
-# skipped; a literal cd or pushd followed (a subshell's dropped at its
-# parenthesis), and git -C; each git or jj option that takes a value skipped
-# with it. $var, `cmd`, a glob, a brace, ~ and a cd it cannot follow leave a
-# word unresolved. Another check of a command's text matches its own
-# commands in run.
+# comments, redirections and heredoc bodies taken apart, a $( inside double
+# quotes read as the command it runs; VAR=value prefixes, reserved words and
+# the env, command, builtin, exec, nohup and time wrappers skipped; a literal
+# cd or pushd followed (a subshell's dropped at its parenthesis; a popd
+# leaves the directory unknown), and git -C; each git or jj option that
+# takes a value skipped with it. $var, `cmd`, a glob, a brace, ~ and a cd
+# it cannot follow leave a word unresolved. Another check of a command's
+# text matches its own commands in run.
 adds() {
   local p d
   d=$(cd "$2" 2>/dev/null && pwd -P) || d=$2
@@ -320,6 +321,7 @@ adds() {
       for (j = 1; j <= k; j++) if (seg[j] !~ /^([A-Za-z_][A-Za-z0-9_]*=|-)/ && seg[j] !~ /^(env|command|builtin|exec|nohup|time|!|[{]|[}]|then|else|elif|do|if|while|until)$/) break
       if (j > k || bad[j]) return
       t = seg[j]; sub(/.*\//, "", t)
+      if (t == "popd") { cw = ""; return }
       if (t == "cd" || t == "pushd") {
         for (j++; j <= k && seg[j] ~ /^-./; j++) ;
         cw = j > k ? ENVIRON["HOME"] : bad[j] || seg[j] == "-" ? "" : path(cw, seg[j]); return
@@ -329,7 +331,7 @@ adds() {
       for (j++; j <= k; j++) {
         x = seg[j]
         if (!dd && x == "--") { dd = 1; continue }
-        if (!dd && x ~ /^--/) { if (x ~ /^--(git-dir|work-tree|namespace|config-env|super-prefix|reason|repository|at-operation|at-op|color|config|config-file|config-toml|name|revision|message|sparse-patterns)$/) j++; continue }
+        if (!dd && x ~ /^--/) { if (x ~ /^--(git-dir|work-tree|namespace|config-env|super-prefix|attr-source|reason|repository|at-operation|at-op|color|config|config-file|config-toml|name|revision|message|sparse-patterns)$/) j++; continue }
         if (!dd && x ~ /^-./) {
           for (m = 2; m <= length(x); m++) if (index("CcbBRrm", v = substr(x, m, 1))) {
             if (m < length(x)) { v = substr(x, m + 1); vb = bad[j] } else { j++; v = seg[j]; vb = bad[j] }
@@ -352,6 +354,7 @@ adds() {
           if (q == "\047") { if (c == "\047") q = ""; else w = w c }
           else if (c == "\"") q = ""
           else if (c == "\\") { d = ch[i + 1]; if (d == "$" || d == "`" || d == "\"" || d == "\\") { w = w d; i++ } else if (d == "\n") i++; else w = w c }
+          else if (c == "$" && ch[i + 1] == "(") { w = w c; b = 1; q = ""; nq = 1 }
           else { if (c == "$" || c == "`") b = 1; w = w c }
           continue
         }
@@ -374,8 +377,8 @@ adds() {
         }
         if (e == 2) {
           if (k) run(); k = 0; want = ""
-          if (c == "(") stk[++sd] = cw
-          else if (c == ")" && sd) cw = stk[sd--]
+          if (c == "(") { stk[++sd] = cw; rq[sd] = nq; nq = 0 }
+          else if (c == ")" && sd) { cw = stk[sd]; if (rq[sd--]) { q = "\""; o = 1; b = 1 } }
           else if (c == "\n" && hd != "") {
             while (i < n) {
               l = ""; while (i < n && ch[i + 1] != "\n") l = l ch[++i]
