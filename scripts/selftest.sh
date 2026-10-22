@@ -530,6 +530,59 @@ rm "$hd/.git/HEAD"; ln -s refs/heads/main "$hd/.git/HEAD"
 t 2 "push: refused, a HEAD that is a link to refs/heads/main" shell 'git push' "$hd/empty"
 t 0 "without jq: a push passes" nojq 'git push origin main'
 t 0 "without jq: and says so" says 'jq is missing' nojq 'git push origin main'
+# A push that pushes nothing (help, a dry run) passes, force and all; tag
+# names a tag.
+for c in 'git push --help' 'git push -h' 'git --help push' 'git push --dry-run origin main' 'git push -n --force origin main' 'git push --dr -f --all' \
+  'jj git push --dry-run -b main' 'git push origin tag main'; do
+  t 0 "push: pushes nothing to the default branch, saying nothing: $c" silent "$c"
+done
+t 2 "push: refused, the default branch after a tag: git push origin tag v1 main" shell 'git push origin tag v1 main'
+# A $( or backtick substitution is one word its text cannot fix, its own
+# commands read too, and the words after it stay in the command.
+t 2 "push: refused, the default branch after a substitution" shell 'git push "$(git remote)" main' "$w43"
+t 0 "push: a branch after a substitution passes, saying nothing" silent 'git push "$(git remote)" feat'
+for c in 'git -C "$(git rev-parse --show-toplevel)" push --force origin feat' 'x=`git push --force origin feat`'; do t 2 "push: refused, a force push: $c" shell "$c"; done
+t 2 "push: refused, in a backtick" shell 'echo `git push origin main`'
+for c in 'git push $ARGS' 'echo main | xargs git push origin'; do t 0 "push: unresolved, passes with a message: $c" noted 'could not tell which branch' "$c"; done
+# Wrappers, git options that take a value, a dashed builtin by path, a
+# heredoc fed to a shell: the push in each is read.
+for c in 'git --shallow-file x push origin main' 'timeout 120 git push origin main' 'nice git push origin main' 'nice -n 5 git push origin main' \
+  'xargs git push origin main' 'env -u X git push origin main' '/usr/libexec/git-core/git-push origin main' '"$(git --exec-path)"/git-push origin main' \
+  $'bash <<EOF\ngit push origin main\nEOF' $'sh <<\'EOF\'\ngit push origin main\nEOF' $'zsh -s <<EOF\ngit push origin main\nEOF' \
+  $'dash <<-EOF\n\tgit push origin main\n\tEOF' $'ksh -e <<EOF\ngit push origin main\nEOF'; do
+  t 2 "push: refused, the default branch: $c" shell "$c"
+done
+t 2 "push: refused, a force push behind timeout's options" shell 'timeout -s KILL 5m git push -f origin feat'
+t 2 "push: refused, env -C into the main checkout" shell "env -C '$repo' git push" "$w43"
+t 2 "push: refused, a heredoc fed to a shell after a cd" shell "$(printf "cd '%s' && bash <<EOF\ngit push\nEOF" "$repo")" "$w43"
+t 0 "push: a cd in a heredoc fed to a shell stays there" silent "$(printf "bash <<EOF\ncd '%s'\nEOF\ngit push" "$repo")" "$w43"
+t 0 "push: a heredoc fed to bash -c is text" silent $'bash -c true <<EOF\ngit push origin main\nEOF'
+# The command's own -c config: help.autocorrect runs a typo, a bare push
+# follows remote.<name>.push and push.default=matching.
+t 2 "push: refused, a typo of push under help.autocorrect" shell 'git -c help.autocorrect=immediate psuh origin main'
+t 0 "push: a typo without it passes, saying nothing" silent 'git psuh origin main'
+for c in 'git -c remote.origin.push=HEAD:main push' 'git -c remote.origin.push=HEAD:main push origin' 'git -c push.default=matching push'; do t 2 "push: refused on the issue's branch, by its -c: $c" shell "$c" "$w43"; done
+t 0 "push: another remote's push refspec does not count" silent 'git -c remote.up.push=HEAD:main push origin' "$w43"
+# A git dir named by --git-dir or GIT_DIR is read for HEAD, not the
+# command's directory; one that is no repository passes with a message.
+for c in "git --git-dir='$repo/.git' push" "git --git-dir '$repo/.git' push" "GIT_DIR='$repo/.git' git push" "env GIT_DIR='$repo/.git' git push"; do t 2 "push: refused, HEAD read from the git dir named: $c" shell "$c" "$w43"; done
+t 0 "push: a git dir that is no repository passes with a message" noted 'could not tell which branch' "git --git-dir='$tmp/nope' push"
+# git's discovery: a bare repository with no .git above it, and a .git
+# whose objects and refs come through its commondir.
+bare="$tmp/bare"; mkdir -p "$bare/objects" "$bare/refs"; printf 'ref: refs/heads/main\n' > "$bare/HEAD"
+t 2 "push: refused, HEAD read from a bare repository" shell "git -C '$bare' push origin HEAD" "$tmp"
+cm="$tmp/cm"; mkdir -p "$cm/.git/objects" "$cm/.git/refs" "$cm/sub/.git"; printf 'ref: refs/heads/feat\n' > "$cm/.git/HEAD"
+printf 'ref: refs/heads/main\n' > "$cm/sub/.git/HEAD"; printf '../../.git\r\n' > "$cm/sub/.git/commondir"
+t 0 "push: the enclosing repository's branch passes, saying nothing" silent 'git push origin HEAD' "$cm"
+t 2 "push: refused, HEAD read from a .git whose commondir names the repository" shell 'cd sub && git push origin HEAD' "$cm"
+mkfifo "$cm/sub/.git/fifo"; rm "$cm/sub/.git/commondir"; ln -s fifo "$cm/sub/.git/commondir"
+t 0 "push: a commondir that is a FIFO is never read" prompt shell 'cd sub && git push origin HEAD' "$cm"
+# git send-pack pushes, past the pre-push hook: matching with no refspec.
+for c in 'git send-pack ../origin.git feat:main' 'git send-pack ../origin.git' 'git send-pack --all ../origin.git' 'git-send-pack ../origin.git feat:main'; do t 2 "push: refused, send-pack to the default branch: $c" shell "$c"; done
+t 2 "push: refused, send-pack --force" shell 'git send-pack --force ../origin.git feat'
+t 2 "push: refused, send-pack --mirror" shell 'git send-pack --mirror ../origin.git'
+t 0 "push: send-pack of a branch passes, saying nothing" silent 'git send-pack ../origin.git feat'
+t 0 "push: send-pack --stdin passes with a message" noted 'could not tell which branch' 'git send-pack --stdin ../origin.git feat'
 # After the command: a worktree outside coddy's, made by any spelling, trips;
 # one inside, or one that was there before, does not.
 wo=$(cd "$tmp" && pwd -P)/out

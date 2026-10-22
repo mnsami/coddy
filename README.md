@@ -153,7 +153,7 @@ taken over on its own.
 `guard: warn` turns the rejection into a notice. The edit goes through, and
 Claude is told it landed outside a claimed worktree, or in one another
 session claimed, and which command to run. Of the other layers, only the
-tripwire's worktree check before a command reads the key.
+tripwire's worktree and push checks before a command read the key.
 
 **Shell tripwire.** Shell commands cannot be checked in advance. So a second
 hook compares the main checkout before and after each one, and tells Claude
@@ -181,6 +181,13 @@ path it cannot work out (`"$p"`, a backtick, a glob) or a missing `jq` lets
 the command through with a notice, and the check afterwards still catches
 the worktree, except from a command run in the background.
 
+The same reading refuses a `git push`, `git send-pack` or `jj git push` to
+the default branch, naming `/coddy:ship`, and leaves every force push and
+remote branch delete to you. It reads `HEAD` from the repository git would
+find, without running git, and the command's own `-c` settings; a dry run
+or `--help` goes through. A target it cannot work out passes with a notice;
+after that only the git hooks and branch protection stand in the way.
+
 **Config lock.** `.coddy.yml` is the off switch for all of this. A shell
 command from Claude that removes or rewrites it is undone, and so is one
 that creates it next to a config still at `.claude/coddy.yml`, which it
@@ -205,7 +212,8 @@ command that puts the old `core.hooksPath` back. Their ceilings:
 
 - `git commit --no-verify` and `git push --no-verify` skip them, and
   `git -c core.hooksPath=` runs without them.
-- jj runs no git hooks.
+- jj runs no git hooks. The tripwire's push check reads a `jj git push`
+  before it runs.
 - A tool that sets `core.hooksPath` itself, such as a hook manager's
   install, turns them off until the next `/coddy:start`.
 - A tool that installs into git's hooks directory (lefthook,
