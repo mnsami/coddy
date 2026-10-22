@@ -39,7 +39,9 @@
 # create records the issue's branch in .git/coddy/<issue>.branch, and push
 # pushes that branch and no other, for the lock's owner and no other session.
 # snap and trip fingerprint the main checkout around each shell command and
-# reject the command's result when it left new changes there.
+# reject the command's result when it left new changes there, or a new
+# worktree outside .worktrees/<issue>/; snap refuses a git worktree add or jj
+# workspace add that would make one before it runs.
 set -u
 
 # The install this runs from, needing no project: its real directory, through
@@ -66,10 +68,24 @@ fi
 # linked worktree's common dir by its real path, so the caller's own spelling
 # of it is put back: hook payloads use that one. Outside git, an issue
 # worktree is still stripped back to the root.
-dir="${CODDY_ROOT:-$PWD}"
+# A main checkout's git dir is its own: a commondir in it, which git never
+# writes there, points every git call in the checkout at another
+# repository's config, whose programs (core.fsmonitor) git runs, and moves
+# the root there. So the nearest .git up from $dir, when a directory, and
+# the root's .git, which must be one, are read for it without git, and odd
+# names what is wrong: the root stays the checkout's, and the hooks, which
+# run git outside any sandbox, refuse (oddly). A linked worktree's own git
+# dir holds a commondir by design.
+dir="${CODDY_ROOT:-$PWD}" odd=""
 if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "$dir" && cd "$common/.." && pwd); then
-  rel=$(cd "$dir" && pwd -P); rel="${rel#"$root"/}"
+  rel=$(cd "$dir" && pwd -P); g=$rel
+  while [ -n "$g" ] && [ ! -e "$g/.git" ] && [ ! -L "$g/.git" ]; do g=${g%/*}; done
+  if [ -d "$g/.git" ] && { [ -e "$g/.git/commondir" ] || [ -L "$g/.git/commondir" ]; }; then
+    odd="$g/.git/commondir"; if [ "$rel" = "$g" ]; then root=$(cd "$dir" && pwd); else root=$g; fi
+  fi
+  rel="${rel#"$root"/}"
   case "$dir" in */"$rel") root="${dir%/"$rel"}" ;; esac
+  [ -n "$odd" ] || if [ ! -d "$root/.git" ]; then odd="$root/.git"; elif [ -e "$root/.git/commondir" ] || [ -L "$root/.git/commondir" ]; then odd="$root/.git/commondir"; fi
 else
   root="$dir"
   case "$root" in */.worktrees/*) root="${root%%/.worktrees/*}" ;; esac
@@ -164,6 +180,23 @@ mine() { [ "$sid" = "$me" ] || { [ -n "$pid" ] && [ "$pid" = "${CODDY_PID-}" ] &
 owner() { own=$(cat "$root/.git/coddy/$1/owner" 2>/dev/null); read -r sid pid start _ <<<"$own"; }
 # This session's owner line.
 myline() { echo "$me ${CODDY_PID-} $(started "${CODDY_PID-}")"; }
+# Hook context for the agent, as Claude Code reads it: no permissionDecision,
+# so the usual permission flow still applies.
+note() { jq -cn --arg m "$*" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $m}}'; }
+# guard: warn lets the $1 (edit, command) through and hands the agent die's
+# message as context instead.
+warnmode() { [ "$(cfg guard)" = warn ] || return 0; wm=$1; die() { note "coddy warning, the $wm was let through (guard: warn): $*"; exit 0; }; }
+# The hooks run git outside any sandbox: with the main checkout's git dir
+# not its own (odd) they run none and refuse every edit and command, in
+# either guard mode, after trip's report so far, $1.
+oddly() {
+  [ -n "$odd" ] || return 0
+  code=2
+  case "$odd" in
+    */commondir) die "${1-}$odd, which git never writes in a main checkout, points git there at another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you remove that file by hand." ;;
+    *) die "${1-}$odd is not a directory, so git there reads another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you put the main checkout's .git directory back by hand." ;;
+  esac
+}
 
 # Onboarding's one write outside the agent dir, here so the skill's command
 # text holds no path and no wildcard: the agent's coddy/ directory (answers,
@@ -217,18 +250,11 @@ fi
 if [ "${1-}" = guard ]; then
   [ -f "$conf" ] || exit 0
   code=2 # exit 2 is what blocks the tool call
+  oddly
   # Without jq the path cannot be read, so every edit is blocked, in warn
   # mode too: .coddy.yml must never go through unasked.
   command -v jq >/dev/null || die "the edit guard needs jq"
-  # guard: warn lets the edit through and hands the agent the message as
-  # context instead. No permissionDecision, so the usual permission flow
-  # still applies.
-  if [ "$(cfg guard)" = warn ]; then
-    die() {
-      jq -cn --arg m "coddy warning, the edit was let through (guard: warn): $*" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $m}}'
-      exit 0
-    }
-  fi
+  warnmode edit
   # The hook's session_id is the editing session's CODDY_SESSION.
   # jq once per field, not read per line: a path may hold a newline.
   in=$(cat)
@@ -287,14 +313,212 @@ if [ "${1-}" = guard ]; then
   exit 0
 fi
 
+# $1 made absolute against $2, . and .. collapsed by name as cd does, and its
+# longest existing directory spelled physically, as git and jj record it.
+abspath() {
+  local p=$1 o="" c t=""
+  case "$p" in /*) ;; *) p="$2/$p" ;; esac
+  while [ -n "$p" ]; do p=${p#/}; c=${p%%/*}; p=${p#"$c"}; case "$c" in ''|.) ;; ..) o=${o%/*} ;; *) o="$o/$c" ;; esac; done
+  p=${o:-/}
+  while [ ! -d "$p" ]; do t="/${p##*/}$t"; p=${p%/*}; p=${p:-/}; done
+  p=$(cd "$p" 2>/dev/null && pwd -P) || return 1
+  p="${p%/}$t"; echo "${p:-/}"
+}
+# Where shell command $1, run in directory $2, would make a worktree with git
+# worktree add or jj workspace add: one absolute path per line (abspath), or
+# ?<word> for one its text cannot fix. Read as the shell reads it, in awk for
+# speed: segments split on ; & | ( ) and line breaks; quotes, backslashes,
+# comments, redirections and heredoc bodies taken apart, a $( inside double
+# quotes read as the command it runs; VAR=value prefixes, reserved words and
+# the env, command, builtin, exec, nohup and time wrappers skipped; a literal
+# cd or pushd followed (a subshell's dropped at its parenthesis; a popd
+# leaves the directory unknown), and git -C; each git or jj option that
+# takes a value skipped with it. $var, `cmd`, a glob, a brace, ~ and a cd
+# it cannot follow leave a word unresolved. Another check of a command's
+# text matches its own commands in run.
+adds() {
+  local p d
+  d=$(cd "$2" 2>/dev/null && pwd -P) || d=$2
+  while IFS= read -r p; do
+    case "$p" in \?*) echo "$p" ;; *) abspath "$p" "$d" || echo "?$p" ;; esac
+  done < <(printf '%s\n' "$1" | LC_ALL=C awk '
+    function path(b, p) { return p ~ /^\// ? p : b == "" ? "" : b "/" p }
+    function run(   j, x, t, g, n, m, v, vb, dd) {
+      for (j = 1; j <= k; j++) if (seg[j] !~ /^([A-Za-z_][A-Za-z0-9_]*=|-)/ && seg[j] !~ /^(env|command|builtin|exec|nohup|time|!|[{]|[}]|then|else|elif|do|if|while|until)$/) break
+      if (j > k || bad[j]) return
+      t = seg[j]; sub(/.*\//, "", t)
+      if (t == "popd") { cw = ""; return }
+      if (t == "cd" || t == "pushd") {
+        for (j++; j <= k && seg[j] ~ /^-./; j++) ;
+        cw = j > k ? ENVIRON["HOME"] : bad[j] || seg[j] == "-" ? "" : path(cw, seg[j]); return
+      }
+      if (t != "git" && t != "jj") return
+      g = cw; n = 0; dd = 0
+      for (j++; j <= k; j++) {
+        x = seg[j]
+        if (!dd && x == "--") { dd = 1; continue }
+        if (!dd && x ~ /^--/) { if (x ~ /^--(git-dir|work-tree|namespace|config-env|super-prefix|attr-source|reason|repository|at-operation|at-op|color|config|config-file|config-toml|name|revision|message|sparse-patterns)$/) j++; continue }
+        if (!dd && x ~ /^-./) {
+          for (m = 2; m <= length(x); m++) if (index("CcbBRrm", v = substr(x, m, 1))) {
+            if (m < length(x)) { v = substr(x, m + 1); vb = bad[j] } else { j++; v = seg[j]; vb = bad[j] }
+            if (substr(x, m, 1) == "C" && t == "git") g = vb ? "" : path(g, v)
+            break
+          }
+          continue
+        }
+        n++
+        if (n == 1 && x != (t == "git" ? "worktree" : "workspace") || n == 2 && x != "add") return
+        if (n == 3) { v = bad[j] ? "" : path(g, x); print (v == "" ? "?" x : v); return }
+      }
+    }
+    { s = s (NR > 1 ? "\n" : "") $0 }
+    END {
+      n = split(s, ch, ""); cw = "."; k = 0; w = ""; o = 0; b = 0; q = ""; want = ""; hd = ""; sd = 0
+      for (i = 1; i <= n + 1; i++) {
+        c = i <= n ? ch[i] : "\n"
+        if (q != "" && i <= n) {
+          if (q == "\047") { if (c == "\047") q = ""; else w = w c }
+          else if (c == "\"") q = ""
+          else if (c == "\\") { d = ch[i + 1]; if (d == "$" || d == "`" || d == "\"" || d == "\\") { w = w d; i++ } else if (d == "\n") i++; else w = w c }
+          else if (c == "$" && ch[i + 1] == "(") { w = w c; b = 1; q = ""; nq = 1 }
+          else { if (c == "$" || c == "`") b = 1; w = w c }
+          continue
+        }
+        if (q != "") { b = 1; q = "" }
+        e = 0; r = 0
+        if (c == "\047" || c == "\"") { q = c; o = 1 }
+        else if (c == "\\") { if (i < n && (d = ch[++i]) != "\n") { w = w d; o = 1 } }
+        else if (index("$`*?[{", c) || c == "~" && !o) { w = w c; o = 1; b = 1 }
+        else if (c == "#" && !o) { while (i < n && ch[i + 1] != "\n") i++ }
+        else if (c == " " || c == "\t") e = 1
+        else if (c == "<" || c == ">" || c == "&" && ch[i + 1] == ">") { if (o && w ~ /^[0-9]+$/) o = 0; e = 1; r = 1 }
+        else if (index(";&|()\n", c)) e = 2
+        else { w = w c; o = 1 }
+        if (e && o) { if (want == "hd") hd = w; else if (want == "") { seg[++k] = w; bad[k] = b }; want = "" }
+        if (e) { w = ""; o = 0; b = 0 }
+        if (r) {
+          op = c
+          while (i < n && index(" << <<< <<- <& <> >> >& >| &> &>> ", " " op ch[i + 1] " ")) op = op ch[++i]
+          want = op == "<<" || op == "<<-" ? "hd" : "skip"; strip = op == "<<-"
+        }
+        if (e == 2) {
+          if (k) run(); k = 0; want = ""
+          if (c == "(") { stk[++sd] = cw; rq[sd] = nq; nq = 0 }
+          else if (c == ")" && sd) { cw = stk[sd]; if (rq[sd--]) { q = "\""; o = 1; b = 1 } }
+          else if (c == "\n" && hd != "") {
+            while (i < n) {
+              l = ""; while (i < n && ch[i + 1] != "\n") l = l ch[++i]
+              i++; if (strip) sub(/^\t+/, "", l)
+              if (l == hd) break
+            }
+            hd = ""
+          }
+        }
+      }
+    }')
+}
+# Path $1, physical, is where coddy keeps worktrees: under .worktrees/<issue>/
+# or the agent's worktrees/<name>/ at the physical root $R.
+coddywt() {
+  case "$1" in "$R"/.worktrees/?*) return 0 ;; esac
+  [ -n "${CODDY_AGENT_DIR-}" ] && case "$1" in "$R/$CODDY_AGENT_DIR"/worktrees/?*) return 0 ;; esac
+  return 1
+}
+# A real directory sits at path $1, physically: not gone, moved or a link.
+real() { [ -d "$1" ] && [ "$(cd "$1" 2>/dev/null && pwd -P)" = "$1" ]; }
+# $1 holds no control character (C0, DEL, C1), backslash or quote.
+clean() { local LC_ALL=C; case "$1" in *[[:cntrl:]\\\"\']*|*$'\xc2'[$'\x80'-$'\x9f']*) return 1 ;; esac; }
+# $1 as one inert word, whatever the shell: in single quotes, a quote as '\'',
+# a backslash as \134 and each byte of a control character (C0, DEL, C1) as
+# \ooo, so it shows, keeps to one line and reads one way.
+q() {
+  local LC_ALL=C s=$1 o="'" c x
+  while [ -n "$s" ]; do
+    c=${s:0:1} s=${s:1}
+    case "$c${s:0:1}" in
+      \'*) o+="'\\''"; continue ;;
+      \\*) o+='\134'; continue ;;
+      $'\xc2'[$'\x80'-$'\x9f']) c+=${s:0:1} s=${s:1} ;;
+      [[:cntrl:]]*) ;;
+      *) o+=$c; continue ;;
+    esac
+    while [ -n "$c" ]; do printf -v x %d "'${c:0:1}"; printf -v x '\\%03o' $(((x + 256) % 256)); o+=$x c=${c:1}; done
+  done
+  printf '%s\n' "$o'"
+}
+# $1 as jj's escape_json writes it, its quotes aside.
+json() {
+  local LC_ALL=C s=$1 o="" c x
+  while [ -n "$s" ]; do
+    c=${s:0:1} s=${s:1}
+    case "$c" in
+      \"|\\) c="\\$c" ;;
+      $'\b') c='\b' ;; $'\t') c='\t' ;; $'\n') c='\n' ;; $'\f') c='\f' ;; $'\r') c='\r' ;;
+      [[:cntrl:]]) printf -v x %d "'$c"; [ "$x" = 127 ] || printf -v c '\\u%04x' "$x" ;;
+    esac
+    o+=$c
+  done
+  printf '%s\n' "$o"
+}
+# git worktree list --porcelain -z, or, from a git before 2.36, without -z:
+# each path as one field, and one not followed by its HEAD or bare line
+# taken with the lines up to it, so it holds a line break and is never
+# skipped as coddy's (clean).
+gitwts() {
+  git worktree list --porcelain -z 2>/dev/null && return
+  local l p=""
+  while IFS= read -r l; do
+    case "$l" in
+      "HEAD "*|bare) [ -z "$p" ] || printf '%s\0' "$p"; p="" ;;
+      "worktree "*) p=${p:+$p$'\n'}$l ;;
+      *) [ -z "$p" ] || p+=$'\n'$l ;;
+    esac
+  done < <(git worktree list --porcelain 2>/dev/null)
+  [ -z "$p" ] || printf '%s\n\0' "$p"
+}
+# gi: the git admin id worktree $1's .git names, when it is a plain file;
+# its first line, read no further than a NUL or 1024 characters, so a huge
+# or sparse file stalls no hook.
+gid() { local l=""; [ -f "$1/.git" ] && { read -r -d '' -n 1024 l < "$1/.git"; } 2>/dev/null; l=${l%%$'\n'*}; case "$l" in "gitdir: "*/?*) gi=${l##*/} ;; *) return 1 ;; esac; }
+# Outside worktree line $1, with its fd 3 records $2 and $3 ($3 may be
+# empty); on fd 4 too, as "moved <line>" when snap recorded $2 ($seen,
+# trip's alone), "kept <line>" when it recorded $3 alone, else "made
+# <line>": trip tells a worktree line by that record, never by its text.
+out() {
+  echo "$1"
+  if [[ $seen == *$'\n'"$2"$'\n'* ]]; then echo "moved $1"; elif [[ -n $3 && $seen == *$'\n'"$3"$'\n'* ]]; then echo "kept $1"; else echo "made $1"; fi >&4
+}
+
 # The main checkout's fingerprint: one line per dirty path with its content
 # hash, one for the default branch $b when it holds commits its remote branch
 # does not, and one for HEAD when it has left the default branch. A detached
 # HEAD on the default branch's own history counts as on it: that is where jj
 # leaves a synced checkout. Paths, not git status codes: jj colocation flips
-# untracked files to intent-to-add on its own.
+# untracked files to intent-to-add on its own. One line, ending in the tool
+# that removes it in parentheses, per git worktree and jj workspace outside
+# coddy's (coddywt, and real: one moved away or reached through a link is
+# listed), the main checkout aside, so one a command made is reported
+# however it spelled it; jj names a workspace's path from 0.38 on and,
+# before 0.46, not once its directory has gone, so such a workspace is left
+# out. Each is read whole (NUL-separated from git, JSON-escaped from jj; line
+# by line from a git before 2.36, gitwts) and every path and name is printed
+# quoted (q), so none reads as a second entry. The root is matched as it is
+# spelled (as jj escapes it, J), and only what follows it, when it holds no
+# control character, quote or backslash (clean), is held to the test before
+# an entry is skipped as the root or coddy's own. No line is a command.
 # Every dirty file is hashed by one git hash-object; a path holding a newline
-# is misread by --stdin-paths, as it already is by the line-based fingerprint.
+# is misread by --stdin-paths. A dirty path that is not clean is printed
+# quoted (q), so none spans two lines. A submodule shows as one gone line
+# once its commit leaves the one recorded for it, and not again while it
+# stays off it; never for its work tree (--ignore-submodules=dirty): git
+# reads the submodule's config, which a command can plant (its fsmonitor,
+# filters and hooks), but runs nothing in it. No git or jj call here runs
+# in a worktree the command could have made.
+# On fd 3, one line each (git's as %q, jj's as it escapes them): every
+# worktree's path, every git admin id (read from each worktree's .git and
+# from the common dir, so one whose directory is gone is there too) and
+# every jj workspace's name (one jj lists with no path included), coddy's
+# and the root's included. trip passes them back as $seen (out).
 snap() {
   cd "$root" 2>/dev/null || return 0
   git merge-base --is-ancestor "refs/heads/$b" "refs/remotes/origin/$b" 2>/dev/null ||
@@ -305,6 +529,27 @@ snap() {
   elif ! git merge-base --is-ancestor HEAD "refs/remotes/origin/$b" 2>/dev/null; then
     echo "detached HEAD $h"
   fi
+  while IFS= read -r -d '' p; do
+    case "$p" in "worktree "*) p=${p#worktree } ;; *) continue ;; esac
+    printf -v k 'path %q' "$p"; g=""; ! gid "$p" || printf -v g 'git %q' "$gi"
+    printf '%s\n' "$k" ${g:+"$g"} >&3
+    r=${p#"$R"}
+    [ "$r" != "$p" ] && clean "$r" && { [ -z "$r" ] || { coddywt "$p" && real "$p"; }; } ||
+      out "git worktree at $(q "$p") (git worktree remove)" "$k" "$g"
+  done < <(gitwts)
+  [ -z "$C" ] || for d in "$C"/worktrees/*/; do [ ! -d "$d" ] || { d=${d%/}; printf 'git %q\n' "${d##*/}" >&3; }; done
+  # No colour or pager, whatever the config says. One listing: each name,
+  # then its root when jj gives one. The root is matched in its escaped
+  # form, J.
+  [ ! -d .jj ] || { J=$(json "$R"); while IFS=$'\t' read -r w p; do
+    [[ $w != \"*\" ]] || echo "jj ${w:1:${#w}-2}" >&3
+    [ -n "$p" ] || continue
+    [[ $p == \"*\" && $w == \"*\" ]] || { out "jj workspace $(q "$w") at $(q "$p") (jj workspace forget)" "jj $w" "path $p"; continue; }
+    pi=${p:1:${#p}-2} wi=${w:1:${#w}-2}; r=${pi#"$J"}
+    echo "path $pi" >&3
+    [ "$r" != "$pi" ] && clean "$r$wi" && { [ -z "$r" ] || { coddywt "$R$r" && real "$R$r"; }; } ||
+      out "jj workspace $(q "$wi") at $(q "$pi") (jj workspace forget)" "jj $wi" "path $pi"
+  done < <(jj --no-pager workspace list --ignore-working-copy --color=never -T 'stringify(name).escape_json() ++ if(root, "\t" ++ stringify(root).escape_json()) ++ "\n"' 2>/dev/null); }
   files=() n=0
   while IFS= read -r -d '' e; do
     # A staged rename or copy carries its source in the next field: a rename's
@@ -316,12 +561,12 @@ snap() {
       # HEAD, and that is not the command's change to undo.
       case "$p" in .coddy.yml|"$legacy") continue ;; esac
       [ -z "${CODDY_AGENT_DIR-}" ] || case "$p" in "$CODDY_AGENT_DIR"/*) continue ;; esac
-      if [ -f "$p" ]; then files[n]="$p"; n=$((n+1)); else printf '%s gone\n' "$p"; fi
+      if [ -f "$p" ]; then files[n]="$p"; n=$((n+1)); else clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"; fi
     done
-  done < <(git status --porcelain -uall -z 2>/dev/null)
+  done < <(git status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null)
   [ "$n" -gt 0 ] || return 0
   printf '%s\n' "${files[@]}" | git hash-object --stdin-paths 2>/dev/null |
-    { i=0; while IFS= read -r hash; do printf '%s %s\n' "${files[i]}" "$hash"; i=$((i+1)); done; }
+    { i=0; while IFS= read -r hash; do p=${files[i]}; clean "$p" || p=$(q "$p"); printf '%s %s\n' "$p" "$hash"; i=$((i+1)); done; }
 }
 
 if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
@@ -330,7 +575,13 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # onboard installs jq inside one command, so snap runs without it and trip
   # with it, and the name must come out the same on both sides. Inside a JSON
   # string a quote is escaped, so a bare "tool_use_id" is a key, never text.
-  id=$(sed -n 's/.*"tool_use_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null | head -n1)
+  in=$(cat)
+  id=$(sed -n 's/.*"tool_use_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
+  R=$(cd "$root" 2>/dev/null && pwd -P)
+  # The git common dir the root was resolved from, physical, read past each
+  # side's onboarding gate. seen is trip's alone (out).
+  common() { C=$({ [ -n "$common" ] && cd "$dir" && cd "$common" && pwd -P; } 2>/dev/null); }
+  seen=""
   case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
   file="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
   # Both config paths are kept, present or not: a .coddy.yml the command
@@ -341,15 +592,39 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   if [ "$1" = snap ]; then
     # A snapshot before every command, so trip can tell a command that
     # removed it from one run outside the workflow: NOT_ONBOARDED alone where
-    # no config is, and the hooks stay inert.
-    rm -f "$file".*
-    [ -f "$conf" ] || { echo NOT_ONBOARDED > "$file"; exit 0; }
-    b=$(cfg default_branch); b="${b:-main}"
-    snap | LC_ALL=C sort > "$file"
+    # no config is, and the hooks stay inert. TMPDIR is the command's to
+    # write too, so every record is a new file (set -C, O_EXCL), never one
+    # through a link a command planted at its name, written before the
+    # fingerprint's git calls give one time to; a write that fails drops
+    # the snapshot, which trip reports as lost.
+    set -C; rm -f "$file" "$file".*
+    [ -f "$conf" ] || { echo NOT_ONBOARDED > "$file" || rm -f "$file"; exit 0; }
+    oddly
+    common
+    b=$(cfg default_branch); b="${b:-main}" ok=1
     for c in .coddy.yml "$legacy"; do
       p="$root/$c" s="$file.${c//\//_}"
-      kind "$p" > "$s.kind"; [ ! -f "$p" ] || cp "$p" "$s"; [ ! -L "$p" ] || readlink "$p" > "$s.link"
+      kind "$p" > "$s.kind" && { [ ! -f "$p" ] || cat -- "$p" > "$s"; } && { [ ! -L "$p" ] || readlink "$p" > "$s.link"; } || ok=""
     done
+    { snap 4>/dev/null | LC_ALL=C sort -u > "$file"; } 3>"$file.wt" || ok=""
+    [ -n "$ok" ] || rm -f "$file"
+    # A git worktree add or jj workspace add that would make a worktree
+    # outside coddy's (coddywt) is refused before it runs, read from the
+    # command's text (adds): a spelling it cannot read passes, saying so, and
+    # the fingerprint reports the worktree once the command has run. The
+    # snapshot comes first, so trip finds it whatever happens here.
+    case "$in" in *worktree*|*workspace*) ;; *) exit 0 ;; esac
+    command -v jq >/dev/null || { printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"coddy could not read this command for a git worktree add or jj workspace add, since jq is missing, so it was let through: a worktree it makes outside .worktrees/<issue>/ is reported once it has run."}}'; exit 0; }
+    cmd=$(jq -r '.tool_input.command // empty' <<<"$in") cwd=$(jq -r '.cwd // empty' <<<"$in")
+    code=2 unk=""
+    warnmode command
+    while IFS= read -r p; do
+      case "$p" in
+        \?*) unk="$unk ${p#\?}" ;;
+        *) coddywt "$p" || die "that command would make a worktree at $p, outside .worktrees/<issue>/${CODDY_AGENT_DIR:+ and $CODDY_AGENT_DIR/worktrees/<name>/}. Issue work belongs in .worktrees/<issue>/: run /coddy:start <issue>, which makes it." ;;
+      esac
+    done < <(adds "$cmd" "${cwd:-$PWD}")
+    [ -z "$unk" ] || note "coddy could not tell where this command's git worktree add or jj workspace add puts its worktree (${unk# }), so it was let through: one it makes outside .worktrees/<issue>/ is reported once it has run."
     exit 0
   fi
   code=2 msg="" keep=""
@@ -363,6 +638,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   lost="that command left no snapshot of the main checkout at $file, so what it changed cannot be checked: a command may not touch the snapshot. Undo what it did."
   [ -f "$file" ] || die "$lost"
   grep -qx NOT_ONBOARDED "$file" && { rm -f "$file" "$file".*; exit 0; }
+  common
   pre=""
   for c in .coddy.yml "$legacy"; do
     s="$file.${c//\//_}"; k=""; [ ! -f "$s.kind" ] || k=$(cat "$s.kind")
@@ -405,10 +681,37 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   done
   [ -z "$msg" ] || msg="${msg}If that came from git (a pull or checkout), accept it with /coddy:config; other settings change there too, and leaving the workflow is for the user to do by hand. "
   confpath
+  [ -z "$odd" ] || { rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*; oddly "$msg"; }
   # Only lines that are new count, so undoing a change never trips the wire.
-  added=$(snap | LC_ALL=C sort | LC_ALL=C comm -13 "$file" - | sed 's/ [^ ]*$//' | tr '\n' ' ' | sed 's/ $//')
-  rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*
-  [ -n "$added" ] && msg="${msg}that command changed the main checkout: $added. Issue work belongs in .worktrees/<issue>/. Undo it."
+  # Every line is unique by design, so a repeat is no new line: git lists a
+  # worktree twice once a command copies its admin dir. A new line is a
+  # worktree's when the fingerprint wrote it on fd 4 too (out), never by its
+  # text, which a dirty path's could copy: moved, renamed or re-created when
+  # snap recorded its path, git admin id or jj name before the command
+  # ($file.wt, opened only as a plain file), made otherwise. Each names, as
+  # text, the tool that removes it, once what the directory holds is
+  # checked, and the one that puts it back: git worktree move for a git
+  # worktree not made, jj workspace rename for a jj workspace at a path snap
+  # recorded under another name (kept: its name is out's $2, its path $3).
+  # Any other line is the main checkout's, its last word, a hash or gone,
+  # dropped.
+  [ ! -f "$file.wt" ] || seen=$'\n'$(cat "$file.wt")$'\n'
+  lab=$(mktemp 2>/dev/null) || lab=/dev/null
+  new=$(snap 3>/dev/null 4>"$lab" | LC_ALL=C sort -u | LC_ALL=C comm -13 "$file" -)
+  added="" wts=""
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    t="moved, renamed or re-created" a="git worktree move"
+    if grep -qxF -- "made $l" "$lab"; then t=made a=""
+    elif grep -qxF -- "moved $l" "$lab"; then case "$l" in jj*) a="" ;; esac
+    elif grep -qxF -- "kept $l" "$lab"; then case "$l" in jj*) a="jj workspace rename" ;; esac
+    else added="${added:+$added }${l% *}"; continue
+    fi
+    wts="${wts:+$wts; }${l% (*}, $t (${a:+put it back with $a, or }check what it holds before removing it with ${l##* (}"
+  done <<<"$new"
+  rm -f "$file"; [ "$lab" = /dev/null ] || rm -f "$lab"; [ -n "$keep" ] || rm -f "$file".*
+  [ -n "$added" ] && msg="${msg}that command changed the main checkout: $added. Issue work belongs in .worktrees/<issue>/. Undo it. "
+  [ -n "$wts" ] && msg="${msg}that command made, moved or renamed a worktree outside .worktrees/<issue>/: $wts. Issue work belongs in .worktrees/<issue>/: run /coddy:start <issue>, which makes it."
   [ -z "$msg" ] && exit 0
   die "$msg"
 fi
