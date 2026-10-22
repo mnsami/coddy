@@ -159,7 +159,10 @@ tripwire's worktree check before a command reads the key.
 hook compares the main checkout before and after each one, and tells Claude
 to undo any change it left there. It also lists every git worktree and jj
 workspace outside `.worktrees/<issue>/` and `.claude/worktrees/`, and reports
-a new one with the command that removes it, however the command made it.
+a new one, however the command made it, with how to remove it: `git worktree
+remove`, or `jj workspace forget`, which leaves the directory for you to check
+and delete. One whose name or path holds a control character, a quote or a
+backslash is reported with no command at all.
 
 Before a command runs, the hook reads its text for a `git worktree add` or
 `jj workspace add` that would put a worktree anywhere else, and refuses it,
