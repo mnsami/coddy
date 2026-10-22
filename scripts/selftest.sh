@@ -482,12 +482,17 @@ t 0 "dodged: a git worktree add from a variable passes snap" noted 'could not te
 t 2 "dodged: and trips once it has run" wire trip sh
 git worktree remove --force "$wo"; git worktree remove --force "$tmp/dodge"; git worktree remove --force .worktrees/88; git worktree remove --force .claude/worktrees/y
 if [ -d .jj ]; then
+  # A user's ui.color = "always" colours no path, and a name jj shows quoted
+  # is named as forget takes it, so the command in the message removes it.
+  printf '[ui]\ncolor = "always"\n' > "$tmp/jj.toml"; export JJ_CONFIG="$tmp/jj.toml"
   tripped 0 "tripwire: a jj workspace in .worktrees/<id>/ is quiet" 'jj workspace add --name 89 .worktrees/89'
-  wire snap w; (cd "$repo" && jj workspace add --name out "$wo") >/dev/null 2>&1
+  wire snap w; (cd "$repo" && jj workspace add --name 'o t' "$wo") >/dev/null 2>&1
   wire trip w 2>"$tmp/trip.err"; got=$?
   t 0 "tripwire: a jj workspace outside trips" test "$got" = 2
-  t 0 "tripwire: and names it with how to remove it" grep -qF "$wo (remove it: jj workspace forget out && rm -rf $wo)" "$tmp/trip.err"
-  jj workspace forget 89 out >/dev/null 2>&1; rm -rf "$wo" .worktrees/89
+  t 0 "tripwire: and names it with how to remove it" grep -qF "$wo (remove it: jj workspace forget -- o\\ t && rm -rf $wo)" "$tmp/trip.err"
+  (cd "$repo" && eval "$(sed -n 's/.*(remove it: \(jj workspace forget [^)]*\)).*/\1/p' "$tmp/trip.err")") >/dev/null 2>&1
+  t 1 "tripwire: and that command removes it" grep -qx 'o t' <(jj workspace list --ignore-working-copy --color=never -T 'stringify(name) ++ "\n"')
+  jj workspace forget 89 'o t' >/dev/null 2>&1; rm -rf "$wo" .worktrees/89; unset JJ_CONFIG
 fi
 
 # The config switches every hook off when it goes, so a shell command may not touch it.

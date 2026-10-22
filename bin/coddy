@@ -425,8 +425,10 @@ snap() {
   git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | while IFS= read -r p; do
     [ "$p" = "$R" ] || coddywt "$p" || echo "$p (remove it: git worktree remove $(printf %q "$p"))"
   done
-  [ ! -d .jj ] || jj workspace list --ignore-working-copy -T 'if(root, root ++ "\t" ++ name ++ "\n")' 2>/dev/null | while IFS=$'\t' read -r p w; do
-    [ "$p" = "$R" ] || coddywt "$p" || echo "$p (remove it: jj workspace forget $(printf %q "$w") && rm -rf $(printf %q "$p"))"
+  # No colour, whatever ui.color says, and the name as forget takes it, not
+  # jj's quoted display form; -- for a name that starts with a dash.
+  [ ! -d .jj ] || jj workspace list --ignore-working-copy --color=never -T 'if(root, root ++ "\t" ++ stringify(name) ++ "\n")' 2>/dev/null | while IFS=$'\t' read -r p w; do
+    [ "$p" = "$R" ] || coddywt "$p" || echo "$p (remove it: jj workspace forget -- $(printf %q "$w") && rm -rf $(printf %q "$p"))"
   done
   files=() n=0
   while IFS= read -r -d '' e; do
