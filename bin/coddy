@@ -481,12 +481,12 @@ gitwts() {
 # or sparse file stalls no hook.
 gid() { local l=""; [ -f "$1/.git" ] && { read -r -d '' -n 1024 l < "$1/.git"; } 2>/dev/null; l=${l%%$'\n'*}; case "$l" in "gitdir: "*/?*) gi=${l##*/} ;; *) return 1 ;; esac; }
 # Outside worktree line $1, with its fd 3 records $2 and $3 ($3 may be
-# empty); on fd 4 too, as "moved <line>" when snap recorded either ($seen,
-# trip's alone), else "made <line>": trip tells a worktree line by that
-# record, never by its text.
+# empty); on fd 4 too, as "moved <line>" when snap recorded $2 ($seen,
+# trip's alone), "kept <line>" when it recorded $3 alone, else "made
+# <line>": trip tells a worktree line by that record, never by its text.
 out() {
   echo "$1"
-  if [[ -n $seen && ( $seen == *$'\n'"$2"$'\n'* || -n $3 && $seen == *$'\n'"$3"$'\n'* ) ]]; then echo "moved $1"; else echo "made $1"; fi >&4
+  if [[ $seen == *$'\n'"$2"$'\n'* ]]; then echo "moved $1"; elif [[ -n $3 && $seen == *$'\n'"$3"$'\n'* ]]; then echo "kept $1"; else echo "made $1"; fi >&4
 }
 
 # The main checkout's fingerprint: one line per dirty path with its content
@@ -508,12 +508,11 @@ out() {
 # an entry is skipped as the root or coddy's own. No line is a command.
 # Every dirty file is hashed by one git hash-object; a path holding a newline
 # is misread by --stdin-paths. A dirty path that is not clean is printed
-# quoted (q), so none spans two lines. A submodule shows as one gone line
-# once its commit leaves the one recorded for it, and not again while it
-# stays off it; never for its work tree: git
-# would read that in a git status of its own, run under the submodule's
-# config, which a command can plant (its fsmonitor, filters and hooks). No
-# git or jj call here runs in a worktree the command could have made.
+# quoted (q), so none spans two lines. No submodule shows, neither its
+# commit nor its work tree (--ignore-submodules=all): git reads a submodule
+# under its own config, which a command can plant (its fsmonitor, filters
+# and hooks). No git or jj call here runs in a worktree the command could
+# have made.
 # On fd 3, one line each (git's as %q, jj's as it escapes them): every
 # worktree's path, every git admin id (read from each worktree's .git and
 # from the common dir, so one whose directory is gone is there too) and
@@ -563,7 +562,7 @@ snap() {
       [ -z "${CODDY_AGENT_DIR-}" ] || case "$p" in "$CODDY_AGENT_DIR"/*) continue ;; esac
       if [ -f "$p" ]; then files[n]="$p"; n=$((n+1)); else clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"; fi
     done
-  done < <(git status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null)
+  done < <(git status --porcelain -uall -z --ignore-submodules=all 2>/dev/null)
   [ "$n" -gt 0 ] || return 0
   printf '%s\n' "${files[@]}" | git hash-object --stdin-paths 2>/dev/null |
     { i=0; while IFS= read -r hash; do p=${files[i]}; clean "$p" || p=$(q "$p"); printf '%s %s\n' "$p" "$hash"; i=$((i+1)); done; }
@@ -690,20 +689,24 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # snap recorded its path, git admin id or jj name before the command
   # ($file.wt, opened only as a plain file), made otherwise. Each names, as
   # text, the tool that removes it, once what the directory holds is
-  # checked, and, unless made, the one that puts it back. Any other line is
-  # the main checkout's, its last word, a hash or gone, dropped.
+  # checked, and the one that puts it back: git worktree move for a git
+  # worktree not made, jj workspace rename for a jj workspace at a path snap
+  # recorded under another name (kept: its name is out's $2, its path $3).
+  # Any other line is the main checkout's, its last word, a hash or gone,
+  # dropped.
   [ ! -f "$file.wt" ] || seen=$'\n'$(cat "$file.wt")$'\n'
   lab=$(mktemp 2>/dev/null) || lab=/dev/null
   new=$(snap 3>/dev/null 4>"$lab" | LC_ALL=C sort -u | LC_ALL=C comm -13 "$file" -)
   added="" wts=""
   while IFS= read -r l; do
     [ -n "$l" ] || continue
+    t="moved, renamed or re-created" a="git worktree move"
     if grep -qxF -- "made $l" "$lab"; then t=made a=""
-    elif grep -qxF -- "moved $l" "$lab"; then
-      t="moved, renamed or re-created" a="git worktree move"; case "$l" in jj*) a="jj workspace rename" ;; esac; a="put it back with $a, or "
+    elif grep -qxF -- "moved $l" "$lab"; then case "$l" in jj*) a="" ;; esac
+    elif grep -qxF -- "kept $l" "$lab"; then case "$l" in jj*) a="jj workspace rename" ;; esac
     else added="${added:+$added }${l% *}"; continue
     fi
-    wts="${wts:+$wts; }${l% (*}, $t (${a}check what it holds before removing it with ${l##* (}"
+    wts="${wts:+$wts; }${l% (*}, $t (${a:+put it back with $a, or }check what it holds before removing it with ${l##* (}"
   done <<<"$new"
   rm -f "$file"; [ "$lab" = /dev/null ] || rm -f "$lab"; [ -n "$keep" ] || rm -f "$file".*
   [ -n "$added" ] && msg="${msg}that command changed the main checkout: $added. Issue work belongs in .worktrees/<issue>/. Undo it. "

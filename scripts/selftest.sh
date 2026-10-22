@@ -527,9 +527,18 @@ for c in 'echo "gitdir: $tmp/evil/.git" > "$wo/.git"' 'echo "$tmp/evil/.git" > "
   rm -rf "$wo"; git worktree prune
 done
 rm -f "$tmp/fsm"; wire snap w; (git update-index --add --cacheinfo "160000,$(git rev-parse HEAD),sub" && mkdir sub && echo "gitdir: $tmp/evil/.git" > sub/.git) >/dev/null 2>&1
-wire trip w 2>/dev/null; wire snap w; wire trip w 2>/dev/null
+t 0 "tripwire: a submodule of the main checkout is not seen" wire trip w
+wire snap w; wire trip w 2>/dev/null
 t 1 "tripwire: a planted submodule of the main checkout runs none of its programs" test -e "$tmp/fsm"
 git rm -q --cached sub; rm -rf sub
+# Nor does one whose commit leaves the one recorded for it, with a
+# core.fsmonitor planted in its git dir under .git/modules/, which the
+# sandbox does not protect.
+mkdir -p .git/modules && git init -q --separate-git-dir .git/modules/sm sm && git -C sm commit -q --allow-empty -m a && git update-index --add --cacheinfo "160000,$(git -C sm rev-parse HEAD),sm"
+rm -f "$tmp/fsm"; wire snap w; (git -C sm commit -q --allow-empty -m b && git config --file .git/modules/sm/config core.fsmonitor "$tmp/fsm.sh") >/dev/null 2>&1
+wire trip w 2>/dev/null; wire snap w; wire trip w 2>/dev/null
+t 1 "tripwire: a submodule moved off its commit runs its planted fsmonitor neither in snap nor in trip" test -e "$tmp/fsm"
+rm -rf sm .git/modules; git update-index --force-remove sm
 # A commondir in the main checkout's git dir, which git never writes there,
 # points git at another repository's config, whether the root stays (a copy
 # of .git in it) or moves (a repository elsewhere, holding a config of its
@@ -661,6 +670,14 @@ if [ -d .jj ]; then
   wire trip w 2>"$tmp/trip.err"
   t 1 "tripwire: a jj workspace put back where it was is not reported made" grep -qF "'$wp', made" "$tmp/trip.err"
   jj workspace forget o3 >/dev/null 2>&1; rm -rf "$wp"
+  # One forgotten and added again elsewhere under its old name: no rename
+  # puts that back.
+  wp=${wo%/*}/o4; jj workspace add --name 79 .worktrees/79 >/dev/null 2>&1
+  wire snap w; (jj workspace forget 79 && rm -rf .worktrees/79 && jj workspace add --name 79 "$wp") >/dev/null 2>&1
+  wire trip w 2>"$tmp/trip.err"; got=$?
+  t 0 "tripwire: a jj workspace re-created outside under its old name trips" test "$got" = 2
+  t 0 "tripwire: and names no rename to put it back" grep -qF "jj workspace '79' at '$wp', moved, renamed or re-created (check what it holds before removing it with jj workspace forget)" "$tmp/trip.err"
+  jj workspace forget 79 >/dev/null 2>&1; rm -rf "$wp"
   # A name or path holding a newline, a tab, a DEL or a C1 character is
   # reported escaped, so it reads as no other entry.
   odd=$'77\n/some/dir\tdefault\x7f\xc2\x85'
