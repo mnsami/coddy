@@ -341,7 +341,10 @@ abspath() {
 # script from stdin) read as commands, in the directory at that point, a cd
 # in it kept to it; VAR=value prefixes, reserved words and the env, command,
 # builtin, exec, nohup, time, timeout, nice and xargs wrappers skipped, with
-# each option that takes a value and timeout's duration (env -C followed); a
+# each option that takes a value and timeout's duration (env -C followed), and
+# a word of unquoted substitutions alone, which may expand to nothing and bash
+# then drops, so the word after it is read as the command (? or :? for one
+# that cannot be fixed either); a
 # literal cd or pushd followed (a subshell's dropped at its parenthesis; a
 # popd leaves the directory unknown), and git -C; each git or jj option that
 # takes a value skipped with it. $var, a substitution, a glob, a brace, ~, a
@@ -497,11 +500,14 @@ adds() {
     # The command word of the segment, past VAR=value prefixes, reserved
     # words and wrappers with their options, each that takes a value with it,
     # and timeout with its duration: its index, dg the directory it runs in
-    # (env -C), gd the git dir a GIT_DIR prefix names, xa set under xargs.
+    # (env -C), gd the git dir a GIT_DIR prefix names, xa set under xargs. A
+    # word that may expand to nothing (em), which bash drops, is skipped, le
+    # set.
     function lead(   j, x, v, m, c, s, wr, du) {
-      dg = cw; gd = ""; xa = 0
+      dg = cw; gd = ""; xa = 0; le = 0
       for (j = 1; j <= k; j++) {
         x = seg[j]
+        if (em[j]) { le = 1; continue }
         if (x ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { if (x ~ /^GIT_DIR=/) gd = bad[j] ? "?" : substr(x, 9); continue }
         if (x ~ /^(env|command|builtin|exec|nohup|time|timeout|nice|xargs|!|[{]|[}]|then|else|elif|do|if|while|until)$/) { wr = x; du = x == "timeout"; xa = xa || x == "xargs"; continue }
         if (x !~ /^-/) { if (!du) break; du = 0; continue }
@@ -545,7 +551,12 @@ adds() {
       # is plain.
       x = seg[j]; p = match(x, /.*\//) ? RLENGTH : 0; t = substr(x, p + 1)
       if (tolower(t) ~ /^(git|jj|git-push|git-send-pack)$/) t = tolower(t)
-      if (bad[j] && (bp[j] > p || t !~ /^(git|jj|git-push|git-send-pack)$/)) return
+      # One past a word that may expand to nothing is unresolved: as the path
+      # of a worktree add when the segment names one, else as a push target.
+      if (bad[j] && (bp[j] > p || t !~ /^(git|jj|git-push|git-send-pack)$/)) {
+        if (le) { for (v = j + 1; v <= k && seg[v] !~ /^(worktree|workspace)$/; v++) ; gsub(/\n/, " ", x); print (v > k ? ":? " : "?") x }
+        return
+      }
       if (t == "git-push" || t == "git-send-pack") { push(j, "git", g, t == "git-send-pack", 0); return }
       if (t == "popd") { cw = ""; return }
       if (t == "cd" || t == "pushd") {
@@ -586,9 +597,10 @@ adds() {
     # commands are read, and comes back as one word of them, unresolved; a
     # heredoc fed to a shell (shin) is read as commands, the directory put
     # back after it. The patterns of a case (cp, from case ... in or ;; to
-    # their ), cs cases deep) open and close no frame with ( and ).
-    function lex(s,   ch, n, i, c, d, e, r, l, x, y, q, w, o, b, wb, sb, cl, op, want, hd, strip, hk, hs, bd, cs, cp) {
-      n = split(s, ch, ""); k = 0; y = sd; q = ""; w = ""; o = 0; b = 0; wb = 0; want = ""; hd = ""; hk = 0; hs = 0
+    # their ), cs cases deep) open and close no frame with ( and ). A word of
+    # unquoted substitutions alone may expand to nothing (ee, then em).
+    function lex(s,   ch, n, i, c, d, e, r, l, x, y, q, w, o, b, wb, sb, cl, op, want, hd, strip, hk, hs, bd, cs, cp, ee) {
+      n = split(s, ch, ""); k = 0; y = sd; q = ""; w = ""; o = 0; b = 0; wb = 0; want = ""; hd = ""; hk = 0; hs = 0; ee = 1
       for (i = 1; i <= n + 1; i++) {
         c = i <= n ? ch[i] : "\n"; e = 0; r = 0; sb = ""; cl = 0
         if (q != "" && i <= n) {
@@ -603,23 +615,23 @@ adds() {
           if (q != "") { b = 1; wb = length(w); q = "" }
           if (c == "$" && ch[i + 1] == "(") { sb = "$"; i++; o = 1 }
           else if (c == "`") { if (sd > y && ft[sd] == "`") { e = 2; cl = 1 } else { sb = "`"; o = 1 } }
-          else if (c == "\047" || c == "\"") { q = c; o = 1 }
-          else if (c == "\\") { if (i < n && (d = ch[++i]) != "\n") { w = w d; o = 1 } }
-          else if (index("$*?[{", c) || c == "~" && !o) { w = w c; o = 1; b = 1; wb = length(w) }
+          else if (c == "\047" || c == "\"") { q = c; o = 1; ee = 0 }
+          else if (c == "\\") { if (i < n && (d = ch[++i]) != "\n") { w = w d; o = 1; ee = 0 } }
+          else if (index("$*?[{", c) || c == "~" && !o) { w = w c; o = 1; b = 1; wb = length(w); ee = 0 }
           else if (c == "#" && !o) { while (i < n && ch[i + 1] != "\n") i++ }
           else if (c == " " || c == "\t") e = 1
           else if (c == "<" || c == ">" || c == "&" && ch[i + 1] == ">") { if (o && w ~ /^[0-9]+$/) o = 0; e = 1; r = 1 }
           else if (index(";&|()\n", c)) e = 2
-          else { w = w c; o = 1 }
+          else { w = w c; o = 1; ee = 0 }
         }
         if (sb != "") {
-          ft[++sd] = sb; stk[sd] = cw; fq[sd] = q; fw[sd] = w; fwant[sd] = want; fhk[sd] = hk; fk[sd] = k; fcs[sd] = cs; fcp[sd] = cp
-          for (x = 1; x <= k; x++) { fs[sd, x] = seg[x]; fb[sd, x] = bad[x]; fp[sd, x] = bp[x] }
-          k = 0; w = ""; o = 0; b = 0; wb = 0; q = ""; want = ""; hk = 0; cs = cp = 0
+          ft[++sd] = sb; stk[sd] = cw; fq[sd] = q; fw[sd] = w; fwant[sd] = want; fhk[sd] = hk; fk[sd] = k; fcs[sd] = cs; fcp[sd] = cp; fee[sd] = ee
+          for (x = 1; x <= k; x++) { fs[sd, x] = seg[x]; fb[sd, x] = bad[x]; fp[sd, x] = bp[x]; fe[sd, x] = em[x] }
+          k = 0; w = ""; o = 0; b = 0; wb = 0; q = ""; want = ""; hk = 0; cs = cp = 0; ee = 1
           continue
         }
-        if (e && o) { if (want == "hd") { hd = w; hk = 1 } else if (want == "") { seg[++k] = w; bad[k] = b; bp[k] = wb }; want = "" }
-        if (e) { w = ""; o = 0; b = 0; wb = 0 }
+        if (e && o) { if (want == "hd") { hd = w; hk = 1 } else if (want == "") { seg[++k] = w; bad[k] = b; bp[k] = wb; em[k] = ee }; want = "" }
+        if (e) { w = ""; o = 0; b = 0; wb = 0; ee = 1 }
         if (r) {
           op = c
           while (i < n && index(" << <<< <<- <& <> >> >& >| &> &>> ", " " op ch[i + 1] " ")) op = op ch[++i]
@@ -637,8 +649,8 @@ adds() {
           else if (sd > y && (cl || c == ")" && ft[sd] != "`")) {
             cw = stk[sd]; cs = fcs[sd]; cp = fcp[sd]
             if (ft[sd] != "(") {
-              k = fk[sd]; for (x = 1; x <= k; x++) { seg[x] = fs[sd, x]; bad[x] = fb[sd, x]; bp[x] = fp[sd, x] }
-              w = fw[sd] (ft[sd] == "$" ? "$(...)" : "`...`"); o = b = 1; wb = length(w); q = fq[sd]; want = fwant[sd]; hk = fhk[sd]
+              k = fk[sd]; for (x = 1; x <= k; x++) { seg[x] = fs[sd, x]; bad[x] = fb[sd, x]; bp[x] = fp[sd, x]; em[x] = fe[sd, x] }
+              w = fw[sd] (ft[sd] == "$" ? "$(...)" : "`...`"); o = b = 1; wb = length(w); q = fq[sd]; want = fwant[sd]; hk = fhk[sd]; ee = fee[sd]
             }
             sd--
           }

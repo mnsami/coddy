@@ -458,6 +458,12 @@ t 0 "jj --name and -r: inside passes" shell 'jj workspace add --name x -r@- .wor
 t 0 "a cd in a subshell ends at its parenthesis" shell '(cd /tmp && true); git worktree add .worktrees/77'
 t 2 "git --attr-source: its value is not the subcommand" shell 'git --attr-source HEAD worktree add ../x'
 t 2 "a git worktree add in a quoted \$( is refused" shell 'echo "a $(git worktree add ../x) b"'
+# An unquoted $( or backtick command word may expand to nothing, which bash
+# drops: the word after it is read as the command too.
+for c in '$(true) git worktree add ../x' 'env $(true) git worktree add ../x' '$(cd /tmp) git worktree add ../x' '`true` $(true) git worktree add ../x'; do
+  t 2 "refused after a command word that may expand to nothing: $c" shell "$c"
+done
+t 0 "after one, a command word it cannot read passes with a message" noted 'could not tell where' '$(true) $g worktree add ../x'
 # A commit message from a heredoc in a quoted $( is text, odd quotes and all.
 t 0 "a heredoc in a quoted \$( is not read as commands" shell "git commit -m \"\$(cat <<'EOF'
 an odd \"quote
@@ -549,6 +555,8 @@ t 0 "push: a branch after a substitution passes, saying nothing" silent 'git pus
 for c in 'git -C "$(git rev-parse --show-toplevel)" push --force origin feat' 'x=`git push --force origin feat`'; do t 2 "push: refused, a force push: $c" shell "$c"; done
 t 2 "push: refused, in a backtick" shell 'echo `git push origin main`'
 for c in 'git push $ARGS' 'echo main | xargs git push origin'; do t 0 "push: unresolved, passes with a message: $c" noted 'could not tell which branch' "$c"; done
+t 2 "push: refused, a force push after a command word that may expand to nothing" shell '$(true) git push --force origin main'
+t 0 "push: after one, a command word it cannot read passes with a message" noted 'could not tell which branch' '$(true) $g push --force origin main'
 # A case pattern's ) in a substitution ends the pattern, not the substitution.
 for c in 'x=$(case $y in a) git push origin main;; esac)' 'echo "$(case $y in (a) true;; b|c) git push origin main;; esac)"'; do t 2 "push: refused, in a case in a substitution: $c" shell "$c"; done
 for c in '$(case $y in a) echo;; esac) && git push origin feat' "\$(case \$y in a) true;; *) cd '$repo';; esac) && git push origin HEAD"; do
