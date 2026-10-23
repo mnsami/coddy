@@ -532,8 +532,8 @@ t 0 "without jq: a push passes" nojq 'git push origin main'
 t 0 "without jq: and says so" says 'jq is missing' nojq 'git push origin main'
 # A push that pushes nothing (help, a dry run) passes, force and all; tag
 # names a tag.
-for c in 'git push --help' 'git push -h' 'git --help push' 'git push --dry-run origin main' 'git push -n --force origin main' 'git push --dr -f --all' \
-  'jj git push --dry-run -b main' 'git push origin tag main'; do
+for c in 'git push --help' 'git push -h' 'git --help push' 'git --version push origin main' 'git -v push origin main' 'git -C . --version push' \
+  'git push --dry-run origin main' 'git push -n --force origin main' 'git push --dr -f --all' 'jj git push --dry-run -b main' 'git push origin tag main'; do
   t 0 "push: pushes nothing to the default branch, saying nothing: $c" silent "$c"
 done
 t 2 "push: refused, the default branch after a tag: git push origin tag v1 main" shell 'git push origin tag v1 main'
@@ -549,10 +549,16 @@ t 0 "push: a branch after a substitution passes, saying nothing" silent 'git pus
 for c in 'git -C "$(git rev-parse --show-toplevel)" push --force origin feat' 'x=`git push --force origin feat`'; do t 2 "push: refused, a force push: $c" shell "$c"; done
 t 2 "push: refused, in a backtick" shell 'echo `git push origin main`'
 for c in 'git push $ARGS' 'echo main | xargs git push origin'; do t 0 "push: unresolved, passes with a message: $c" noted 'could not tell which branch' "$c"; done
+# A case pattern's ) in a substitution ends the pattern, not the substitution.
+for c in 'x=$(case $y in a) git push origin main;; esac)' 'echo "$(case $y in (a) true;; b|c) git push origin main;; esac)"'; do t 2 "push: refused, in a case in a substitution: $c" shell "$c"; done
+for c in '$(case $y in a) echo;; esac) && git push origin feat' "\$(case \$y in a) true;; *) cd '$repo';; esac) && git push origin HEAD"; do
+  t 0 "push: after a case in a substitution, passes on the issue's branch, saying nothing: $c" silent "$c" "$w43"
+done
 # Wrappers, git options that take a value, a dashed builtin by path, a
 # heredoc fed to a shell: the push in each is read.
 for c in 'git --shallow-file x push origin main' 'timeout 120 git push origin main' 'nice git push origin main' 'nice -n 5 git push origin main' \
-  'xargs git push origin main' 'env -u X git push origin main' '/usr/libexec/git-core/git-push origin main' '"$(git --exec-path)"/git-push origin main' \
+  'xargs git push origin main' 'env -u X git push origin main' 'exec -a NAME git push origin main' 'exec -cla NAME git push origin main' \
+  '/usr/libexec/git-core/git-push origin main' '"$(git --exec-path)"/git-push origin main' \
   $'bash <<EOF\ngit push origin main\nEOF' $'sh <<\'EOF\'\ngit push origin main\nEOF' $'zsh -s <<EOF\ngit push origin main\nEOF' \
   $'dash <<-EOF\n\tgit push origin main\n\tEOF' $'ksh -e <<EOF\ngit push origin main\nEOF'; do
   t 2 "push: refused, the default branch: $c" shell "$c"
