@@ -470,15 +470,17 @@ for c in '$(true)git worktree add ../x' '$(true)$(true)git worktree add ../x' '`
   t 2 "refused, a command name after substitutions it starts with: $c" shell "$c"
 done
 t 0 "after them, a name it cannot read passes with a message" noted 'could not tell where' '$(true)${g}git worktree add ../x'
-# case and esac are reserved words only unquoted where a command starts:
-# quoted, or after an assignment, a redirection, a wrapper or a word that
-# may expand to nothing, case is a command, and ( and ) open and close.
-for c in '"case" a in; (cd .worktrees/77); git worktree add ../x' "ca''se a in; (cd .worktrees/77); git worktree add ../x" 'ca\se a in; (cd .worktrees/77); git worktree add ../x' \
-  'x=1 case a in; (cd .worktrees/77); git worktree add ../x' '>/dev/null case a in; (cd .worktrees/77); git worktree add ../x' 'env case a in; (cd .worktrees/77); git worktree add ../x' \
-  '$(true) case a in; (cd .worktrees/77); git worktree add ../x' "git worktree add ../x \$(ca''se a in)"; do
-  t 2 "refused, after a case that is no reserved word: $c" shell "$c"
+# A cd past one, or past the substitutions a name starts with, may be an
+# argument of the command they print: the directory is unknown after it.
+for c in '`echo true` cd .worktrees/43; git worktree add ../x' '`echo :`cd .worktrees/43; git worktree add ../x'; do
+  t 0 "after a cd past a substitution, passes with a message: $c" noted 'could not tell where' "$c"
 done
-t 2 "a case after if is reserved: its pattern's ) closes no substitution" shell 'x=$(if case $y in a) true;; esac; then cd .worktrees/77/a; fi); git worktree add ../x'
+# case is read as any other word, its ( and ) as anywhere else, so the
+# worktree add in or after each is read.
+for c in 'echo "$(( 1 && case + in ))"; git worktree add ../x; echo ""' '[[ x && case == in ]]; (cd .worktrees/43); git worktree add ../x' \
+  'echo "$(case esac in (esac) git worktree add ../x;; esac)"'; do
+  t 2 "refused, around a case: $c" shell "$c"
+done
 # A backtick substitution ends at the first backtick no backslash escapes,
 # whatever quotes it crosses; one in single quotes is text.
 for c in 'git worktree add ../x `true "`' "git worktree add ../x \`true '\`"; do t 2 "refused, before a backtick holding an odd quote: $c" shell "$c"; done
@@ -589,16 +591,12 @@ for c in 'git push $ARGS' 'echo main | xargs git push origin'; do t 0 "push: unr
 t 2 "push: refused, a force push after a command word that may expand to nothing" shell '$(true) git push --force origin main'
 t 0 "push: after one, a command word it cannot read passes with a message" noted 'could not tell which branch' '$(true) $g push --force origin main'
 t 2 "push: refused, a force push by a name after a substitution it starts with" shell '$(true)git push --force origin main'
-t 2 "push: refused, after a case that is no reserved word" shell '"case" a in; (cd .worktrees/43); git push'
+t 2 "push: refused, after a case in a [[ in a substitution" shell 'echo "$([[ (case == in) ]])"; git push origin main; echo ""'
+t 0 "push: after a cd past a substitution, passes with a message" noted 'could not tell which branch' '`echo true` cd .worktrees/43 && git push'
 t 2 "push: refused, before a backtick holding an odd quote" shell 'git push origin main `true "`'
 t 2 "push: refused, before a substitution left open" shell 'git push origin main $(true'
 big=$(awk 'BEGIN { for (i = 0; i < 1600; i++) print "bash <<E" i; print "git push origin main"; for (i = 1599; i >= 0; i--) print "E" i }')
 t 2 "push: refused in time, in the innermost of 1600 heredocs fed to shells" timed shell "$big"
-# A case pattern's ) in a substitution ends the pattern, not the substitution.
-for c in 'x=$(case $y in a) git push origin main;; esac)' 'echo "$(case $y in (a) true;; b|c) git push origin main;; esac)"'; do t 2 "push: refused, in a case in a substitution: $c" shell "$c"; done
-for c in '$(case $y in a) echo;; esac) && git push origin feat' "\$(case \$y in a) true;; *) cd '$repo';; esac) && git push origin HEAD"; do
-  t 0 "push: after a case in a substitution, passes on the issue's branch, saying nothing: $c" silent "$c" "$w43"
-done
 # Wrappers, git options that take a value, a dashed builtin by path, a
 # heredoc fed to a shell: the push in each is read.
 for c in 'git --shallow-file x push origin main' 'timeout 120 git push origin main' 'nice git push origin main' 'nice -n 5 git push origin main' \
