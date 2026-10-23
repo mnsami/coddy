@@ -464,6 +464,28 @@ for c in '$(true) git worktree add ../x' 'env $(true) git worktree add ../x' '$(
   t 2 "refused after a command word that may expand to nothing: $c" shell "$c"
 done
 t 0 "after one, a command word it cannot read passes with a message" noted 'could not tell where' '$(true) $g worktree add ../x'
+# So may the unquoted substitutions a command name starts with: the name is
+# read past them, and one it cannot read after them passes with a message.
+for c in '$(true)git worktree add ../x' '$(true)$(true)git worktree add ../x' '`true`git worktree add ../x' '$(true)env git worktree add ../x'; do
+  t 2 "refused, a command name after substitutions it starts with: $c" shell "$c"
+done
+t 0 "after them, a name it cannot read passes with a message" noted 'could not tell where' '$(true)${g}git worktree add ../x'
+# case and esac are reserved words only unquoted where a command starts:
+# quoted, or after an assignment, a redirection, a wrapper or a word that
+# may expand to nothing, case is a command, and ( and ) open and close.
+for c in '"case" a in; (cd .worktrees/77); git worktree add ../x' "ca''se a in; (cd .worktrees/77); git worktree add ../x" 'ca\se a in; (cd .worktrees/77); git worktree add ../x' \
+  'x=1 case a in; (cd .worktrees/77); git worktree add ../x' '>/dev/null case a in; (cd .worktrees/77); git worktree add ../x' 'env case a in; (cd .worktrees/77); git worktree add ../x' \
+  '$(true) case a in; (cd .worktrees/77); git worktree add ../x' "git worktree add ../x \$(ca''se a in)"; do
+  t 2 "refused, after a case that is no reserved word: $c" shell "$c"
+done
+t 2 "a case after if is reserved: its pattern's ) closes no substitution" shell 'x=$(if case $y in a) true;; esac; then cd .worktrees/77/a; fi); git worktree add ../x'
+# A backtick substitution ends at the first backtick no backslash escapes,
+# whatever quotes it crosses; one in single quotes is text.
+for c in 'git worktree add ../x `true "`' "git worktree add ../x \`true '\`"; do t 2 "refused, before a backtick holding an odd quote: $c" shell "$c"; done
+t 0 "a backtick in single quotes is text" shell "echo '\`git worktree add ../x\`'"
+# A substitution still open at the end of the text is read with the words
+# around it.
+for c in 'git worktree add ../x $(true' 'git worktree add ../x "$(true' 'git worktree add ../x $(echo $(true'; do t 2 "refused, before a substitution left open: $c" shell "$c"; done
 # A commit message from a heredoc in a quoted $( is text, odd quotes and all.
 t 0 "a heredoc in a quoted \$( is not read as commands" shell "git commit -m \"\$(cat <<'EOF'
 an odd \"quote
@@ -482,6 +504,15 @@ t 0 "a path that spans lines passes with a message, no line of it read as a push
 # not is killed, with every process it started.
 prompt() { ( set -m; "$@" >/dev/null 2>&1 & p=$!; for _ in $(seq 50); do kill -0 "$p" 2>/dev/null || exit 0; sleep 0.1; done; kill -9 -- -"$p"; exit 1 ); }
 for c in 'echo x >>' 'cat <<' 'ls 2>&' 'ls &>'; do t 0 "a command ending in its redirection is read promptly: $c" prompt shell "$c" "$repo/.worktrees/43"; done
+# Reading time is linear in the text. timed <command...>: its own exit,
+# when it ends within five seconds; 124 when it is killed.
+timed() { ( set -m; "$@" >/dev/null 2>&1 & p=$!; for _ in $(seq 50); do kill -0 "$p" 2>/dev/null || { wait "$p"; exit; }; sleep 0.1; done; kill -9 -- -"$p"; exit 124 ); }
+big=$(awk 'BEGIN { for (i = 0; i < 8000; i++) printf "$(a) "; printf "; git worktree add ../x" }')
+t 2 "a 40 KB command of substitutions is read in time, the worktree add after it refused" timed shell "$big"
+big=$(awk 'BEGIN { for (i = 0; i < 1600; i++) print "bash <<E" i; for (i = 1599; i >= 0; i--) print "E" i; printf "git worktree add ../x" }')
+t 2 "1600 heredocs fed to shells one inside another are read in time, the worktree add after them refused" timed shell "$big"
+big=$(awk 'BEGIN { for (i = 0; i < 6000; i++) print "bash <<E"; printf "git worktree add ../x" }')
+t 2 "6000 of them, one word for all, are read in time, the worktree add in the innermost refused" timed shell "$big"
 nojq() { payload "$1" | PATH="$tmp/nojq" run snap; }
 t 0 "without jq: a git worktree add passes" nojq 'git worktree add ../x'
 t 0 "without jq: and says so" says 'jq is missing' nojq 'git worktree add ../x'
@@ -557,6 +588,12 @@ t 2 "push: refused, in a backtick" shell 'echo `git push origin main`'
 for c in 'git push $ARGS' 'echo main | xargs git push origin'; do t 0 "push: unresolved, passes with a message: $c" noted 'could not tell which branch' "$c"; done
 t 2 "push: refused, a force push after a command word that may expand to nothing" shell '$(true) git push --force origin main'
 t 0 "push: after one, a command word it cannot read passes with a message" noted 'could not tell which branch' '$(true) $g push --force origin main'
+t 2 "push: refused, a force push by a name after a substitution it starts with" shell '$(true)git push --force origin main'
+t 2 "push: refused, after a case that is no reserved word" shell '"case" a in; (cd .worktrees/43); git push'
+t 2 "push: refused, before a backtick holding an odd quote" shell 'git push origin main `true "`'
+t 2 "push: refused, before a substitution left open" shell 'git push origin main $(true'
+big=$(awk 'BEGIN { for (i = 0; i < 1600; i++) print "bash <<E" i; print "git push origin main"; for (i = 1599; i >= 0; i--) print "E" i }')
+t 2 "push: refused in time, in the innermost of 1600 heredocs fed to shells" timed shell "$big"
 # A case pattern's ) in a substitution ends the pattern, not the substitution.
 for c in 'x=$(case $y in a) git push origin main;; esac)' 'echo "$(case $y in (a) true;; b|c) git push origin main;; esac)"'; do t 2 "push: refused, in a case in a substitution: $c" shell "$c"; done
 for c in '$(case $y in a) echo;; esac) && git push origin feat' "\$(case \$y in a) true;; *) cd '$repo';; esac) && git push origin HEAD"; do

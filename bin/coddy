@@ -332,19 +332,24 @@ abspath() {
 # Where shell command $1, run in directory $2, would make a worktree with git
 # worktree add or jj workspace add: one absolute path per line (abspath), or
 # ?<word> for one its text cannot fix. Read as the shell reads it, in awk for
-# speed: segments split on ; & | ( ) and line breaks, a case pattern's ( and
-# ) opening and closing nothing; quotes, backslashes, comments, redirections
-# and heredoc bodies taken apart; a $( or backtick
+# speed and in time linear in the text: segments split on ; & | ( ) and line
+# breaks, a case pattern's ( and ) opening and closing nothing, case and esac
+# counted only unquoted after reserved words alone; quotes, backslashes,
+# comments, redirections and heredoc bodies taken apart; a $( or backtick
 # substitution, quoted or not, read as commands of its own and as one word
 # its text cannot fix in the command around it, whose words after it stay
-# in it; a heredoc fed to a shell (sh, bash, dash, ksh or zsh reading its
-# script from stdin) read as commands, in the directory at that point, a cd
-# in it kept to it; VAR=value prefixes, reserved words and the env, command,
-# builtin, exec, nohup, time, timeout, nice and xargs wrappers skipped, with
-# each option that takes a value and timeout's duration (env -C followed), and
-# a word of unquoted substitutions alone, which may expand to nothing and bash
-# then drops, so the word after it is read as the command (? or :? for one
-# that cannot be fixed either); a
+# in it, a backtick one ending at the first backtick no backslash escapes,
+# whatever quotes it crosses, and one still open at the end of the text
+# closed there; a heredoc fed to a shell (sh, bash, dash, ksh or zsh reading
+# its script from stdin) read in place as commands, however deep, in the
+# directory at that point, a cd in it kept to it; VAR=value prefixes,
+# reserved words and the env, command, builtin, exec, nohup, time, timeout,
+# nice and xargs wrappers skipped, with each option that takes a value and
+# timeout's duration (env -C followed), and a word of unquoted substitutions
+# alone, which may expand to nothing and bash then drops, so the word after
+# it is read as the command, as is a command name past the unquoted
+# substitutions it starts with (? or :? for one that cannot be fixed
+# either); a
 # literal cd or pushd followed (a subshell's dropped at its parenthesis; a
 # popd leaves the directory unknown), and git -C; each git or jj option that
 # takes a value skipped with it. $var, a substitution, a glob, a brace, ~, a
@@ -502,13 +507,14 @@ adds() {
     # and timeout with its duration: its index, dg the directory it runs in
     # (env -C), gd the git dir a GIT_DIR prefix names, xa set under xargs. A
     # word that may expand to nothing (em), which bash drops, is skipped, le
-    # set.
+    # set; so are the unquoted substitutions a word starts with (lit).
     function lead(   j, x, v, m, c, s, wr, du) {
       dg = cw; gd = ""; xa = 0; le = 0
-      for (j = 1; j <= k; j++) {
+      for (j = base + 1; j <= k; j++) {
         x = seg[j]
         if (em[j]) { le = 1; continue }
         if (x ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { if (x ~ /^GIT_DIR=/) gd = bad[j] ? "?" : substr(x, 9); continue }
+        x = lit(j)
         if (x ~ /^(env|command|builtin|exec|nohup|time|timeout|nice|xargs|!|[{]|[}]|then|else|elif|do|if|while|until)$/) { wr = x; du = x == "timeout"; xa = xa || x == "xargs"; continue }
         if (x !~ /^-/) { if (!du) break; du = 0; continue }
         if (x ~ /^--./) {
@@ -528,12 +534,21 @@ adds() {
       }
       return j
     }
+    # Word j as a command name: past the unquoted substitutions it starts
+    # with (pf long), which may expand to nothing, when the rest is plain;
+    # lb when it is not, and le when it holds a substitution, which may.
+    function lit(j) {
+      lb = bad[j]; if (pf[j] || lb && (index(seg[j], "$(...)") || index(seg[j], "`...`"))) le = 1
+      if (!pf[j] || bp[j] > pf[j]) return seg[j]
+      lb = 0; return substr(seg[j], pf[j] + 1)
+    }
     # The segment feeds its heredoc to a shell that reads its script from
     # stdin: sh, bash, dash, ksh or zsh with options alone, -s with its
     # arguments, and no -c.
     function shin(   j, x, s) {
-      j = lead(); x = seg[j]; sub(/.*\//, "", x)
-      if (j > k || bad[j] || x !~ /^(ba|da|k|z)?sh$/) return 0
+      j = lead(); if (j > k) return 0
+      x = lit(j); sub(/.*\//, "", x)
+      if (lb || x !~ /^(ba|da|k|z)?sh$/) return 0
       for (j++; j <= k && seg[j] ~ /^-./ && seg[j] != "--"; j++) {
         if (seg[j] ~ /^-[^-]*c/) return 0
         if (seg[j] ~ /^-[^-]*s/) s = 1
@@ -542,18 +557,18 @@ adds() {
       if (seg[j] == "--") j++
       return j > k || s
     }
-    function run(   j, x, t, g, n, m, v, vb, dd, a, p, ac) {
+    function run(   j, x, t, g, n, m, v, vb, dd, a, p, ac, xb) {
       j = lead(); g = dg; cf = ""
       if (j > k) return
       # GIT and JJ run git and jj on a case-insensitive file system; git-push
       # and git-send-pack, by any path, git push and git send-pack. A name
       # read through a word its text cannot fix counts when its last part
       # is plain.
-      x = seg[j]; p = match(x, /.*\//) ? RLENGTH : 0; t = substr(x, p + 1)
+      x = lit(j); xb = lb; p = match(x, /.*\//) ? RLENGTH : 0; t = substr(x, p + 1)
       if (tolower(t) ~ /^(git|jj|git-push|git-send-pack)$/) t = tolower(t)
       # One past a word that may expand to nothing is unresolved: as the path
       # of a worktree add when the segment names one, else as a push target.
-      if (bad[j] && (bp[j] > p || t !~ /^(git|jj|git-push|git-send-pack)$/)) {
+      if (xb && (bp[j] > p || t !~ /^(git|jj|git-push|git-send-pack)$/)) {
         if (le) { for (v = j + 1; v <= k && seg[v] !~ /^(worktree|workspace)$/; v++) ; gsub(/\n/, " ", x); print (v > k ? ":? " : "?") x }
         return
       }
@@ -591,88 +606,123 @@ adds() {
         if (n == 3) { v = bad[j] ? "" : path(g, x); if (v ~ /\n/) v = ""; gsub(/\n/, " ", x); print (v == "" ? "?" x : v); return }
       }
     }
-    # Command text s, read as the shell reads it, each segment handed to run;
-    # a frame opened here is closed here. A substitution, $( or a backtick,
-    # keeps the segment and word around it on the stack while its own
-    # commands are read, and comes back as one word of them, unresolved; a
-    # heredoc fed to a shell (shin) is read as commands, the directory put
-    # back after it. The patterns of a case (cp, from case ... in or ;; to
-    # their ), cs cases deep) open and close no frame with ( and ). A word of
-    # unquoted substitutions alone may expand to nothing (ee, then em).
-    function lex(s,   ch, n, i, c, d, e, r, l, x, y, q, w, o, b, wb, sb, cl, op, want, hd, strip, hk, hs, bd, cs, cp, ee) {
-      n = split(s, ch, ""); k = 0; y = sd; q = ""; w = ""; o = 0; b = 0; wb = 0; want = ""; hd = ""; hk = 0; hs = 0; ee = 1
-      for (i = 1; i <= n + 1; i++) {
-        c = i <= n ? ch[i] : "\n"; e = 0; r = 0; sb = ""; cl = 0
+    # Region text s laid into CH after a gap, its lines indexed by their
+    # first char: LN their length, OC (counted in ON) where each text
+    # stands, as written and with its leading tabs stripped. Its first char.
+    function reg(s,   A, m, i, p, l, t) {
+      p = NC + 2; m = split(s, A, ""); for (i = 1; i <= m; i++) CH[p + i - 1] = A[i]
+      NC = p + m - 1; m = split(s, A, "\n"); l = p
+      for (i = 1; i <= m; i++) {
+        t = A[i]; sub(/^\t+/, "", t); LN[l] = length(A[i])
+        OC[p, 0, A[i], ++ON[p, 0, A[i]]] = l; OC[p, 1, t, ++ON[p, 1, t]] = l
+        l += LN[l] + 1
+      }
+      return p
+    }
+    # Where the heredoc on word w that starts at p in region r ends, no
+    # later than e: the first char of the first line there that reads w,
+    # its leading tabs stripped when st, or 0. A region is read in order,
+    # so the place of each word in its list (OP) only moves on.
+    function term(r, p, e, w, st,   y, x) {
+      y = r SUBSEP st SUBSEP w
+      while (OP[y] < ON[y] && OC[y, OP[y] + 1] < p) OP[y]++
+      x = OP[y] < ON[y] ? OC[y, OP[y] + 1] : 0
+      return x <= e ? x : 0
+    }
+    # Text CH[i .. n] of region r, read as the shell reads it in time linear
+    # in its length, each segment handed to run, its words from base on; st
+    # when a <<- body has its lines tab-stripped. A frame opened here is
+    # closed here, at the end of the text if not before, as its ) would: a
+    # $( keeps the segment and word around it while its own commands are
+    # read, and comes back as one word of them, unresolved; a ( keeps the
+    # directory; a heredoc fed to a shell (shin, h) is read in place as a
+    # script of its own up to the line that ends it (term), the directory
+    # put back after it. A backtick ends at the first backtick no backslash
+    # escapes, whatever quotes it crosses: its text, unescaped as bash does,
+    # is read as a region of its own. The patterns of a case (cp, from case
+    # ... in or ;; to their ), cs cases deep) open and close no frame with (
+    # and ); case and esac count only unquoted where a command starts (rz,
+    # while rv): after reserved words alone. A word of unquoted
+    # substitutions alone may expand to nothing (ee, then em), as may those
+    # a word starts with (ep long, then pf), a run of them kept as one.
+    function lex(r, i, n, st,   c, d, e, x, y, z, q, w, o, b, wb, wq, rd, sb, sv, op, want, hd, strip, hk, hs, cs, cp, ee, ep, rv) {
+      y = sd; q = w = want = hd = ""; o = b = wb = wq = hk = hs = cs = cp = ep = 0; ee = rv = 1
+      for (; i <= n + 1; i++) {
+        c = i <= n ? CH[i] : "\n"; e = rd = sb = 0
         if (q != "" && i <= n) {
           if (q == "\047") { if (c == "\047") q = ""; else w = w c }
           else if (c == "\"") q = ""
-          else if (c == "\\") { d = ch[i + 1]; if (d == "$" || d == "`" || d == "\"" || d == "\\") { w = w d; i++ } else if (d == "\n") i++; else w = w c }
-          else if (c == "$" && ch[i + 1] == "(") { sb = "$"; i++ }
-          else if (c == "`") sb = "`"
+          else if (c == "\\") { d = i < n ? CH[i + 1] : ""; if (d == "$" || d == "`" || d == "\"" || d == "\\") { w = w d; i++ } else if (d == "\n") i++; else w = w c }
+          else if (c == "$" && i < n && CH[i + 1] == "(") { sb = 1; i++ }
+          else if (c == "`") sb = 2
           else { if (c == "$") { b = 1; wb = length(w) + 1 } w = w c }
-          if (sb == "") continue
+          if (!sb) continue
         } else {
           if (q != "") { b = 1; wb = length(w); q = "" }
-          if (c == "$" && ch[i + 1] == "(") { sb = "$"; i++; o = 1 }
-          else if (c == "`") { if (sd > y && ft[sd] == "`") { e = 2; cl = 1 } else { sb = "`"; o = 1 } }
-          else if (c == "\047" || c == "\"") { q = c; o = 1; ee = 0 }
-          else if (c == "\\") { if (i < n && (d = ch[++i]) != "\n") { w = w d; o = 1; ee = 0 } }
+          if (c == "$" && i < n && CH[i + 1] == "(") { sb = 1; i++; o = 1 }
+          else if (c == "`") { sb = 2; o = 1 }
+          else if (c == "\047" || c == "\"") { q = c; o = 1; ee = 0; wq = 1 }
+          else if (c == "\\") { if (i < n && (d = CH[++i]) != "\n") { w = w d; o = 1; ee = 0; wq = 1 } }
           else if (index("$*?[{", c) || c == "~" && !o) { w = w c; o = 1; b = 1; wb = length(w); ee = 0 }
-          else if (c == "#" && !o) { while (i < n && ch[i + 1] != "\n") i++ }
+          else if (c == "#" && !o) { while (i < n && CH[i + 1] != "\n") i++ }
           else if (c == " " || c == "\t") e = 1
-          else if (c == "<" || c == ">" || c == "&" && ch[i + 1] == ">") { if (o && w ~ /^[0-9]+$/) o = 0; e = 1; r = 1 }
+          else if (c == "<" || c == ">" || c == "&" && i < n && CH[i + 1] == ">") { if (o && w ~ /^[0-9]+$/) o = 0; e = 1; rd = 1 }
           else if (index(";&|()\n", c)) e = 2
           else { w = w c; o = 1; ee = 0 }
         }
-        if (sb != "") {
-          ft[++sd] = sb; stk[sd] = cw; fq[sd] = q; fw[sd] = w; fwant[sd] = want; fhk[sd] = hk; fk[sd] = k; fcs[sd] = cs; fcp[sd] = cp; fee[sd] = ee
-          for (x = 1; x <= k; x++) { fs[sd, x] = seg[x]; fb[sd, x] = bad[x]; fp[sd, x] = bp[x]; fe[sd, x] = em[x] }
-          k = 0; w = ""; o = 0; b = 0; wb = 0; q = ""; want = ""; hk = 0; cs = cp = 0; ee = 1
+        if (sb == 2) {
+          z = ""
+          for (x = i + 1; x <= n && CH[x] != "`"; x++)
+            if (CH[x] == "\\" && x < n) { x++; z = z (index(q == "" ? "$`\\" : "$`\\\"", CH[x]) ? "" : "\\") CH[x] }
+            else z = z CH[x]
+          i = x > n ? n : x; x = reg(z); z = cw; sv = base; base = k
+          lex(x, x, NC, st)
+          k = base; base = sv; cw = z
+          w = (ee ? "" : w) "`...`"; b = 1; wb = length(w); if (ee) ep = wb
           continue
         }
-        if (e && o) { if (want == "hd") { hd = w; hk = 1 } else if (want == "") { seg[++k] = w; bad[k] = b; bp[k] = wb; em[k] = ee }; want = "" }
-        if (e) { w = ""; o = 0; b = 0; wb = 0; ee = 1 }
-        if (r) {
-          op = c
-          while (i < n && index(" << <<< <<- <& <> >> >& >| &> &>> ", " " op ch[i + 1] " ")) op = op ch[++i]
+        if (sb) {
+          ft[++sd] = "$"; stk[sd] = cw; fq[sd] = q; fw[sd] = w; fwant[sd] = want; fhk[sd] = hk; fk[sd] = k; fbase[sd] = base; fcs[sd] = cs; fcp[sd] = cp; fee[sd] = ee; fep[sd] = ep; frv[sd] = rv
+          base = k; q = w = want = ""; o = b = wb = wq = hk = cs = cp = ep = 0; ee = rv = 1
+          continue
+        }
+        if (e && o) { if (want == "hd") { hd = w; hk = 1 } else if (want == "") { seg[++k] = w; bad[k] = b; bp[k] = wb; em[k] = ee; pf[k] = ep; rz[k] = rv && !wq; rv = rz[k] && w ~ /^(!|[{]|then|do|else|elif|if|while|until|time)$/ }; want = "" }
+        if (e) { w = ""; o = b = wb = wq = ep = 0; ee = 1 }
+        if (rd) {
+          op = c; rv = 0
+          while (i < n && index(" << <<< <<- <& <> >> >& >| &> &>> ", " " op CH[i + 1] " ")) op = op CH[++i]
           want = op == "<<" || op == "<<-" ? "hd" : "skip"; strip = op == "<<-"
         }
         if (e == 2) {
           if (hk) { hs = shin(); hk = 0 }
-          if (k) {
-            x = lead(); if (x + 2 <= k && seg[x] == "case" && seg[x + 2] == "in") { cs++; cp = 1 } else if (x <= k && seg[x] == "esac" && cs) { cs--; cp = 0 }
+          if (k > base) {
+            for (x = base + 1; x < k && rz[x + 1]; x++) ;
+            if (rz[x] && seg[x] == "case" && x + 2 <= k && seg[x + 2] == "in") { cs++; cp = 1 } else if (rz[x] && seg[x] == "esac" && cs) { cs--; cp = 0 }
             run()
           }
-          k = 0; want = ""
+          k = base; want = ""; rv = 1
           if (cp && (c == "(" || c == ")")) cp = c == "("
           else if (c == "(") { ft[++sd] = "("; stk[sd] = cw; fcs[sd] = cs; fcp[sd] = cp; cs = cp = 0 }
-          else if (sd > y && (cl || c == ")" && ft[sd] != "`")) {
+          else if (sd > y && ft[sd] != "h" && (c == ")" || i > n)) {
             cw = stk[sd]; cs = fcs[sd]; cp = fcp[sd]
-            if (ft[sd] != "(") {
-              k = fk[sd]; for (x = 1; x <= k; x++) { seg[x] = fs[sd, x]; bad[x] = fb[sd, x]; bp[x] = fp[sd, x]; em[x] = fe[sd, x] }
-              w = fw[sd] (ft[sd] == "$" ? "$(...)" : "`...`"); o = b = 1; wb = length(w); q = fq[sd]; want = fwant[sd]; hk = fhk[sd]; ee = fee[sd]
+            if (ft[sd] == "$") {
+              k = fk[sd]; base = fbase[sd]; w = (fee[sd] ? "" : fw[sd]) "$(...)"; o = b = 1; wb = length(w); q = fq[sd]; want = fwant[sd]; hk = fhk[sd]; ee = fee[sd]; ep = ee ? wb : fep[sd]; rv = frv[sd]; wq = 0
             }
-            sd--
+            sd--; if (i > n) i--
           }
-          else if (c == ";" && cs && (ch[i + 1] == ";" || ch[i + 1] == "&")) cp = 1
-          else if (c == "\n" && hd != "") {
-            bd = ""
-            while (i < n) {
-              l = ""; while (i < n && ch[i + 1] != "\n") l = l ch[++i]
-              i++; if (strip) sub(/^\t+/, "", l)
-              if (l == hd) break
-              bd = bd l "\n"
-            }
-            hd = ""
-            if (hs) { x = cw; lex(bd); cw = x }
-            hs = 0
+          else if (sd > y && i > n) { cw = stk[sd]; n = fn[sd]; i = fi[sd]; cs = fcs[sd]; cp = fcp[sd]; st = fst[sd]; sd--; hd = ""; hk = hs = 0 }
+          else if (c == ";" && cs && i < n && (CH[i + 1] == ";" || CH[i + 1] == "&")) cp = 1
+          else if (c == "\n" && hd != "" && i <= n) {
+            x = term(r, i + 1, n, hd, st || strip); z = x ? x + LN[x] : n; if (z > n) z = n
+            if (hs) { ft[++sd] = "h"; stk[sd] = cw; fn[sd] = n; fi[sd] = z; fcs[sd] = cs; fcp[sd] = cp; fst[sd] = st; cs = cp = 0; st = st || strip; if (x) n = x - 1 }
+            else i = z
+            hd = ""; hs = 0
           }
         }
       }
-      sd = y
     }
     { s = s (NR > 1 ? "\n" : "") $0 }
-    END { cw = "."; lex(s) }')
+    END { cw = "."; x = reg(s); lex(x, x, NC, 0) }')
 }
 # Path $1, physical, is where coddy keeps worktrees: under .worktrees/<issue>/
 # or the agent's worktrees/<name>/ at the physical root $R.
