@@ -11,7 +11,7 @@ Each phase below is a [GitHub milestone](https://github.com/mnsami/coddy/milesto
 | Layer | Role | Works with any agent? |
 | --- | --- | --- |
 | Agent hook adapters | Default. Block early, with instructions; `coddy doctor` reports each agent's protection level | Per agent |
-| Git hooks + branch protection | The floor: nothing is committed or pushed to the default branch outside the workflow | Yes (not under jj, which doesn't run git hooks) |
+| Git hooks + branch protection | The floor: nothing is committed or pushed to the default branch outside the workflow | Yes (git hooks not under jj, which doesn't run them; the push refusal in the shell hook covers `jj git push` too) |
 | PR check (GitHub Action) | Always on. Fails a PR that isn't linked to a claimed, in-progress issue. Keyed on the issue link, not the branch name, so cloud agents' own branches pass | Yes, including cloud agents |
 | Strict mode | Opt-in. Each agent's sandbox can only write to its issue's worktree | Yes |
 
@@ -52,6 +52,7 @@ Extract a `coddy` CLI core with no Claude Code dependencies; Claude Code becomes
 ### M3 · The floor
 Enforcement every agent gets.
 - #29 Install git hooks that refuse commits outside a claimed issue branch
+- #141 Refuse a push to the default branch, a force push or a remote branch's delete before it runs, `jj git push` included: the local half of the floor
 - #14 Make git the default worktree tool, keep jj opt-in
 
 ### M4 · Agent adapters

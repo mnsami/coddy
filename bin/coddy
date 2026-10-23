@@ -41,7 +41,12 @@
 # snap and trip fingerprint the main checkout around each shell command and
 # reject the command's result when it left new changes there, or a new
 # worktree outside .worktrees/<issue>/; snap refuses a git worktree add or jj
-# workspace add that would make one before it runs.
+# workspace add that would make one before it runs, and a git push, git
+# send-pack or jj git push to the default branch, a force push or a remote
+# branch's delete.
+# Those push rules are ported from super-board's hooks/guard-protected-push.py
+# (https://github.com/EricTechPro/super-board), MIT License, Copyright (c)
+# 2026 Eric Tech: see THIRD_PARTY_NOTICES.md.
 set -u
 
 # The install this runs from, needing no project: its real directory, through
@@ -327,95 +332,389 @@ abspath() {
 # Where shell command $1, run in directory $2, would make a worktree with git
 # worktree add or jj workspace add: one absolute path per line (abspath), or
 # ?<word> for one its text cannot fix. Read as the shell reads it, in awk for
-# speed: segments split on ; & | ( ) and line breaks; quotes, backslashes,
-# comments, redirections and heredoc bodies taken apart, a $( inside double
-# quotes read as the command it runs; VAR=value prefixes, reserved words and
-# the env, command, builtin, exec, nohup and time wrappers skipped; a literal
-# cd or pushd followed (a subshell's dropped at its parenthesis; a popd
-# leaves the directory unknown), and git -C; each git or jj option that
-# takes a value skipped with it. $var, `cmd`, a glob, a brace, ~ and a cd
-# it cannot follow leave a word unresolved. Another check of a command's
-# text matches its own commands in run.
+# speed and in time linear in the text: segments split on ; & | ( ) and line
+# breaks; quotes, backslashes, comments, redirections and heredoc bodies
+# taken apart; a $( or backtick
+# substitution, quoted or not, read as commands of its own and as one word
+# its text cannot fix in the command around it, whose words after it stay
+# in it, a backtick one ending at the first backtick no backslash escapes,
+# whatever quotes it crosses, and one still open at the end of the text
+# closed there; a heredoc fed to a shell (sh, bash, dash, ksh or zsh reading
+# its script from stdin) read in place as commands, however deep, in the
+# directory at that point, a cd in it kept to it; VAR=value prefixes,
+# reserved words and the env, command, builtin, exec, nohup, time, timeout,
+# nice and xargs wrappers skipped, with each option that takes a value and
+# timeout's duration (env -C followed), and a word of unquoted substitutions
+# alone, which may expand to nothing and bash then drops, so the word after
+# it is read as the command, as is a command name past the unquoted
+# substitutions it starts with (? or :? for one that cannot be fixed
+# either); a literal cd or pushd followed (a subshell's dropped at its
+# parenthesis; a popd, or a cd or pushd reached past such a word or
+# substitution, which then may be the command bash runs, leaves the
+# directory unknown), and git -C; each git or jj option that
+# takes a value skipped with it. $var, a substitution, a glob, a brace, ~, a
+# line break and a cd it cannot follow leave a word unresolved. Another
+# check of a command's text matches its own commands in run: a git push, git
+# send-pack or jj git push (git-push and git-send-pack by any path; under a
+# -c help.autocorrect, a subcommand one edit from push) prints, after a
+# colon, what it would do (push): :to <branch>; HEAD, @ and a git push with
+# no refspec read as the branch checked out where it runs (:here, branchin)
+# or in the git dir --git-dir or GIT_DIR names (:gd), unless the command's
+# -c remote.<name>.push or push.default=matching says otherwise; :glob
+# <pattern> for a refspec pattern; :all for every branch; :force; :delete;
+# :? <word> for a target its text cannot fix; nothing for a dry run, -h or
+# a git -v before the subcommand.
 adds() {
   local p d
   d=$(cd "$2" 2>/dev/null && pwd -P) || d=$2
   while IFS= read -r p; do
-    case "$p" in \?*) echo "$p" ;; *) abspath "$p" "$d" || echo "?$p" ;; esac
+    case "$p" in
+      ":here "*) p=$(abspath "${p#:here }" "$d") && p=$(branchin "$p") || { echo ":? HEAD"; continue; }; [ -z "$p" ] || echo ":to $p" ;;
+      ":gd "*) p=$(abspath "${p#:gd }" "$d") && p=$(isgit "$p" && headref) || { echo ":? HEAD"; continue; }; [ -z "$p" ] || echo ":to $p" ;;
+      \?*|:*) echo "$p" ;;
+      *) abspath "$p" "$d" || echo "?$p" ;;
+    esac
   done < <(printf '%s\n' "$1" | LC_ALL=C awk '
     function path(b, p) { return p ~ /^\// ? p : b == "" ? "" : b "/" p }
-    function run(   j, x, t, g, n, m, v, vb, dd) {
-      for (j = 1; j <= k; j++) if (seg[j] !~ /^([A-Za-z_][A-Za-z0-9_]*=|-)/ && seg[j] !~ /^(env|command|builtin|exec|nohup|time|!|[{]|[}]|then|else|elif|do|if|while|until)$/) break
-      if (j > k || bad[j]) return
-      t = seg[j]; sub(/.*\//, "", t)
+    # A line of the push being read, held in pb until it is known to push.
+    function put(l) { pb = pb l "\n" }
+    # A tagged line, unresolved when s spans lines, so no line reads as a path.
+    function say(tag, s) { if (s ~ /\n/) { tag = ":?"; gsub(/\n/, " ", s) } put(tag " " s) }
+    # a is one edit (an insert, a delete, a substitution or a transposition)
+    # from b.
+    function typo(a, b,   x, y, i) {
+      x = length(a); y = length(b)
+      if (a == b || x - y > 1 || y - x > 1) return 0
+      for (i = 1; substr(a, i, 1) == substr(b, i, 1); i++) ;
+      if (x != y) return x > y ? substr(a, i + 1) == substr(b, i) : substr(a, i) == substr(b, i + 1)
+      return substr(a, i + 1) == substr(b, i + 1) || substr(a, i, 2) == substr(b, i + 1, 1) substr(b, i, 1) && substr(a, i + 2) == substr(b, i + 2)
+    }
+    # The -c remote.<name>.push values the command gives remote r (any
+    # remote when r is ""), each after a \035; pm when its last -c
+    # push.default is matching.
+    function conf(r,   C, N, i, x, v, s) {
+      pm = 0; N = split(cf, C, "\035")
+      for (i = 2; i <= N; i++) {
+        x = C[i]; v = ""; if (index(x, "=")) { v = substr(x, index(x, "=") + 1); x = substr(x, 1, index(x, "=") - 1) }
+        if (tolower(x) == "push.default") pm = v == "matching"
+        else if (x ~ /^[Rr][Ee][Mm][Oo][Tt][Ee]\..+\.[Pp][Uu][Ss][Hh]$/ && (r == "" || substr(x, 8, length(x) - 12) == r)) s = s "\035" v
+      }
+      return s
+    }
+    # Where HEAD reaches, as word x of a push run in g: the branch checked out
+    # there, or in the git dir --git-dir or GIT_DIR names (gd; ? when its text
+    # cannot be fixed), resolved against g.
+    function head(g, x,   p) {
+      p = gd == "" ? g : gd == "?" ? "" : path(g, gd)
+      if (p == "") say(":?", x); else say(gd == "" ? ":here" : ":gd", p)
+    }
+    # Refspec x, xb when its text cannot be fixed: [+]<src>[:<dst>], whose
+    # dst is src when it has none; a quoted * makes it a pattern git matches
+    # against whole ref names.
+    function ref(x, xb, g,   s, c, d) {
+      if (xb) { say(":?", x); return }
+      s = x; if (s ~ /^\+/) { put(":force"); s = substr(s, 2) }
+      if (s == ":") { al = 1; return }
+      c = index(s, ":"); if (c == 1) dl = 1
+      d = c ? substr(s, c + 1) : s; if (d == "") d = substr(s, 1, c - 1)
+      if (d == "HEAD" || d == "@") head(g, x)
+      else if (index(d, "*")) say(":glob", d)
+      else { sub(/^(refs\/)?heads\//, "", d); if (d !~ /^refs\//) say(":to", d) }
+    }
+    # What the git push, git send-pack (sp) or jj git push whose subcommand
+    # is word j, run in directory g ("" when unknown), would push, each by its
+    # own options: git long ones by any prefix, as git takes them, each
+    # undone by a later --no- form (--no-force-with-lease every lease, and
+    # --no-mirror a git push -f too). Nothing for a dry run or -h, which
+    # push nothing.
+    function push(j, t, g, sp, dd,   x, c, m, v, vb, n, s, tg, any, dr, r, rb, R, N, u, hp, fo, le, de, pr, mi, ao, si) {
+      pb = ""; al = dl = 0
+      for (j++; j <= k; j++) {
+        x = seg[j]
+        if (!dd && x == "--") { dd = 1; continue }
+        if (t == "jj") {
+          if (dd) continue
+          if (x == "--dry-run" || x == "--help" || x == "-h") { dr = 1; continue }
+          v = ""; vb = 0
+          if (x ~ /^--/) {
+            c = x; sub(/=.*/, "", c)
+            if (x ~ /=/) { v = substr(x, index(x, "=") + 1); vb = bad[j] }
+            else if (c ~ /^--(remote|bookmark|tag|revisions?|change|named|option|repository|at-operation|at-op|color|config|config-toml|config-file)$/) { v = seg[++j]; vb = bad[j] }
+          } else if (x ~ /^-./) {
+            for (m = 2; m <= length(x); m++) if (index("btrcoR", c = substr(x, m, 1))) {
+              if (m < length(x)) { v = substr(x, m + 1); sub(/^=/, "", v); vb = bad[j] } else { v = seg[++j]; vb = bad[j] }
+              c = "-" c; break
+            }
+          } else continue
+          if (c == "--all" || c == "--tracked") al = any = 1
+          else if (c == "--deleted") dl = any = 1
+          else if (c ~ /^-(c|t|-change|-tag)$/) any = 1
+          else if (c ~ /^-(b|-bookmark|-named)$/) {
+            any = 1; if (c == "--named") sub(/=.*/, "", v); else sub(/^exact:/, "", v)
+            say(!vb && v ~ /^[A-Za-z0-9._\/@+-]+$/ ? ":to" : ":?", v)
+          }
+          continue
+        }
+        if (!dd && x ~ /^--./) {
+          c = substr(x, 3); sub(/=.*/, "", c); u = c ~ /^no-./; if (u) c = substr(c, 4)
+          if (!u && c ~ /^help(-all)?$/) hp = 1
+          else if (c ~ /^dr/ && index("dry-run", c) == 1) dr = !u
+          else if (c == "force") fo = !u
+          else if (index("force-with-lease", c) == 1) le = !u
+          else if (!sp && index("delete", c) == 1) de = !u
+          else if (!sp && index("prune", c) == 1) pr = !u
+          else if (index("mirror", c) == 1) { mi = !u; if (u && !sp) fo = 0 }
+          else if (index("all", c) == 1 || !sp && index("branches", c) == 1) ao = !u
+          else if (sp && c ~ /^std/ && index("stdin", c) == 1) si = u ? "" : x
+          else if (!sp && index("tags", c) == 1) tg = !u
+          else if (!u && x !~ /=/ && (index(sp ? "remote" : "repo", c) == 1 || index("push-option", c) == 1 || index("receive-pack", c) == 1 || index("exec", c) == 1 || !sp && index("recurse-submodules", c) == 1)) j++
+          continue
+        }
+        if (!dd && x ~ /^-./) {
+          for (m = 2; m <= length(x); m++) {
+            c = substr(x, m, 1)
+            if (c == "f") fo = 1; else if (c == "n") dr = 1; else if (c == "h") hp = 1; else if (c == "d" && !sp) de = 1; else if (c == "o" && !sp) { if (m == length(x)) j++; break }
+          }
+          continue
+        }
+        # The first word is the repository, --repo or not; each after it a
+        # refspec, or tag and the tag it names.
+        if (++n == 1) { r = x; rb = bad[j]; continue }
+        if (!sp && x == "tag" && !bad[j]) { j++; continue }
+        ref(x, bad[j], g)
+      }
+      # No refspec: a repository word its text cannot fix may split into
+      # some; else the command -c config refspecs, or matching (send-pack,
+      # push.default=matching), or the branch checked out. Under xargs, its
+      # input may add some.
+      al = al || ao || mi; dl = dl || de || pr || mi
+      if (t == "git" && n < 2 && !al && !tg && !dl && !xa) {
+        if (rb) say(":?", r)
+        else if (!sp && (s = conf(n ? r : "")) != "") { N = split(substr(s, 2), R, "\035"); for (m = 1; m <= N; m++) ref(R[m], 0, g) }
+        else if (sp || pm) al = 1
+        else head(g, "HEAD")
+      }
+      if (fo || le) put(":force")
+      if (dl) put(":delete")
+      if (al) put(":all")
+      if (si != "") say(":?", si)
+      if (t == "jj" && !any) say(":?", "jj git push")
+      if (xa) say(":?", "xargs")
+      if (!dr && !hp) printf "%s", pb
+    }
+    # The command word of the segment, past VAR=value prefixes, reserved
+    # words and wrappers with their options, each that takes a value with it,
+    # and timeout with its duration: its index, dg the directory it runs in
+    # (env -C), gd the git dir a GIT_DIR prefix names, xa set under xargs. A
+    # word that may expand to nothing (em), which bash drops, is skipped, le
+    # set; so are the unquoted substitutions a word starts with (lit).
+    function lead(   j, x, v, m, c, s, wr, du) {
+      dg = cw; gd = ""; xa = 0; le = 0
+      for (j = base + 1; j <= k; j++) {
+        x = seg[j]
+        if (em[j]) { le = 1; continue }
+        if (x ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { if (x ~ /^GIT_DIR=/) gd = bad[j] ? "?" : substr(x, 9); continue }
+        x = lit(j)
+        if (x ~ /^(env|command|builtin|exec|nohup|time|timeout|nice|xargs|!|[{]|[}]|then|else|elif|do|if|while|until)$/) { wr = x; du = x == "timeout"; xa = xa || x == "xargs"; continue }
+        if (x !~ /^-/) { if (!du) break; du = 0; continue }
+        if (x ~ /^--./) {
+          c = substr(x, 3); m = index(c, "="); v = m ? substr(c, m + 1) : ""; if (m) c = substr(c, 1, m - 1)
+          s = wr == "env" ? " unset chdir split-string" : wr == "timeout" ? " signal kill-after" : wr == "nice" ? " adjustment" : wr == "xargs" ? " arg-file delimiter max-args max-procs max-chars process-slot-var" : ""
+          if (!index(s, " " c)) continue
+          if (!m) v = seg[++j]
+          if (wr == "env" && index("chdir", c) == 1) dg = bad[j] ? "" : path(dg, v)
+          continue
+        }
+        s = wr == "env" ? "uCSP" : wr == "timeout" ? "sk" : wr == "nice" ? "n" : wr == "xargs" ? "adEIJLnPRSs" : wr == "exec" ? "a" : ""
+        for (m = 2; m <= length(x); m++) if (index(s, c = substr(x, m, 1))) {
+          v = m < length(x) ? substr(x, m + 1) : seg[++j]
+          if (wr == "env" && c == "C") dg = bad[j] ? "" : path(dg, v)
+          break
+        }
+      }
+      return j
+    }
+    # Word j as a command name: past the unquoted substitutions it starts
+    # with (pf long), which may expand to nothing, when the rest is plain;
+    # lb when it is not, and le when it holds a substitution, which may.
+    function lit(j) {
+      lb = bad[j]; if (pf[j] || lb && (index(seg[j], "$(...)") || index(seg[j], "`...`"))) le = 1
+      if (!pf[j] || bp[j] > pf[j]) return seg[j]
+      lb = 0; return substr(seg[j], pf[j] + 1)
+    }
+    # The segment feeds its heredoc to a shell that reads its script from
+    # stdin: sh, bash, dash, ksh or zsh with options alone, -s with its
+    # arguments, and no -c.
+    function shin(   j, x, s) {
+      j = lead(); if (j > k) return 0
+      x = lit(j); sub(/.*\//, "", x)
+      if (lb || x !~ /^(ba|da|k|z)?sh$/) return 0
+      for (j++; j <= k && seg[j] ~ /^-./ && seg[j] != "--"; j++) {
+        if (seg[j] ~ /^-[^-]*c/) return 0
+        if (seg[j] ~ /^-[^-]*s/) s = 1
+        if (seg[j] ~ /^-[^-]*o$/) j++
+      }
+      if (seg[j] == "--") j++
+      return j > k || s
+    }
+    function run(   j, x, t, g, n, m, v, vb, dd, a, p, ac, xb) {
+      j = lead(); g = dg; cf = ""
+      if (j > k) return
+      # GIT and JJ run git and jj on a case-insensitive file system; git-push
+      # and git-send-pack, by any path, git push and git send-pack. A name
+      # read through a word its text cannot fix counts when its last part
+      # is plain.
+      x = lit(j); xb = lb; p = match(x, /.*\//) ? RLENGTH : 0; t = substr(x, p + 1)
+      if (tolower(t) ~ /^(git|jj|git-push|git-send-pack)$/) t = tolower(t)
+      # One past a word that may expand to nothing is unresolved: as the path
+      # of a worktree add when the segment names one, else as a push target.
+      if (xb && (bp[j] > p || t !~ /^(git|jj|git-push|git-send-pack)$/)) {
+        if (le) { for (v = j + 1; v <= k && seg[v] !~ /^(worktree|workspace)$/; v++) ; gsub(/\n/, " ", x); print (v > k ? ":? " : "?") x }
+        return
+      }
+      if (t == "git-push" || t == "git-send-pack") { push(j, "git", g, t == "git-send-pack", 0); return }
       if (t == "popd") { cw = ""; return }
       if (t == "cd" || t == "pushd") {
+        if (le) { cw = ""; return }
         for (j++; j <= k && seg[j] ~ /^-./; j++) ;
         cw = j > k ? ENVIRON["HOME"] : bad[j] || seg[j] == "-" ? "" : path(cw, seg[j]); return
       }
       if (t != "git" && t != "jj") return
-      g = cw; n = 0; dd = 0
+      n = 0; dd = 0
       for (j++; j <= k; j++) {
         x = seg[j]
         if (!dd && x == "--") { dd = 1; continue }
-        if (!dd && x ~ /^--/) { if (x ~ /^--(git-dir|work-tree|namespace|config-env|super-prefix|attr-source|reason|repository|at-operation|at-op|color|config|config-file|config-toml|name|revision|message|sparse-patterns)$/) j++; continue }
+        if (!dd && t == "git" && x ~ /^(-h|--help|-v|--version)$/) return
+        if (!dd && x ~ /^--/) {
+          if (t == "git" && x ~ /^--git-dir(=|$)/) { if (x == "--git-dir") j++; gd = bad[j] ? "?" : x == "--git-dir" ? seg[j] : substr(x, 11) }
+          else if (x ~ /^--(work-tree|namespace|config-env|super-prefix|attr-source|shallow-file|reason|repository|at-operation|at-op|color|config|config-file|config-toml|name|revision|message|sparse-patterns)$/) j++
+          continue
+        }
         if (!dd && x ~ /^-./) {
           for (m = 2; m <= length(x); m++) if (index("CcbBRrm", v = substr(x, m, 1))) {
             if (m < length(x)) { v = substr(x, m + 1); vb = bad[j] } else { j++; v = seg[j]; vb = bad[j] }
-            if (substr(x, m, 1) == "C" && t == "git") g = vb ? "" : path(g, v)
+            if (t == "git" && substr(x, m, 1) == "C") g = vb ? "" : path(g, v)
+            # The command -c config a push reads: help.autocorrect, push.default, remote.<name>.push.
+            if (t == "git" && substr(x, m, 1) == "c" && !vb) { cf = cf "\035" v; if (tolower(v) ~ /^help\.autocorrect(=|$)/) ac = 1 }
             break
           }
           continue
         }
-        n++
-        if (n == 1 && x != (t == "git" ? "worktree" : "workspace") || n == 2 && x != "add") return
-        if (n == 3) { v = bad[j] ? "" : path(g, x); print (v == "" ? "?" x : v); return }
+        if (++n == 1) a = x
+        if (t == "git" && n == 1 && (x == "push" || x == "send-pack" || ac && typo(x, "push")) || t == "jj" && n == 2 && a == "git" && x == "push") { push(j, t, g, x == "send-pack", dd); return }
+        if (n == 1 && x != (t == "git" ? "worktree" : "workspace") && (t == "git" || x != "git") || n == 2 && (a == "git" || x != "add")) return
+        # A path that spans lines is unresolved, so no line of it reads as a tag.
+        if (n == 3) { v = bad[j] ? "" : path(g, x); if (v ~ /\n/) v = ""; gsub(/\n/, " ", x); print (v == "" ? "?" x : v); return }
       }
     }
-    { s = s (NR > 1 ? "\n" : "") $0 }
-    END {
-      n = split(s, ch, ""); cw = "."; k = 0; w = ""; o = 0; b = 0; q = ""; want = ""; hd = ""; sd = 0
-      for (i = 1; i <= n + 1; i++) {
-        c = i <= n ? ch[i] : "\n"
+    # Region text s laid into CH after a gap, its lines indexed by their
+    # first char: LN their length, OC (counted in ON) where each text
+    # stands, as written and with its leading tabs stripped. Its first char.
+    function reg(s,   A, m, i, p, l, t) {
+      p = NC + 2; m = split(s, A, ""); for (i = 1; i <= m; i++) CH[p + i - 1] = A[i]
+      NC = p + m - 1; m = split(s, A, "\n"); l = p
+      for (i = 1; i <= m; i++) {
+        t = A[i]; sub(/^\t+/, "", t); LN[l] = length(A[i])
+        OC[p, 0, A[i], ++ON[p, 0, A[i]]] = l; OC[p, 1, t, ++ON[p, 1, t]] = l
+        l += LN[l] + 1
+      }
+      return p
+    }
+    # Where the heredoc on word w that starts at p in region r ends, no
+    # later than e: the first char of the first line there that reads w,
+    # its leading tabs stripped when st, or 0. A region is read in order,
+    # so the place of each word in its list (OP) only moves on.
+    function term(r, p, e, w, st,   y, x) {
+      y = r SUBSEP st SUBSEP w
+      while (OP[y] < ON[y] && OC[y, OP[y] + 1] < p) OP[y]++
+      x = OP[y] < ON[y] ? OC[y, OP[y] + 1] : 0
+      return x <= e ? x : 0
+    }
+    # Text CH[i .. n] of region r, read as the shell reads it in time linear
+    # in its length, each segment handed to run, its words from base on; st
+    # when a <<- body has its lines tab-stripped. A frame opened here is
+    # closed here, at the end of the text if not before, as its ) would: a
+    # $( keeps the segment and word around it while its own commands are
+    # read, and comes back as one word of them, unresolved; a ( keeps the
+    # directory; a heredoc fed to a shell (shin, h) is read in place as a
+    # script of its own up to the line that ends it (term), the directory
+    # put back after it. A backtick ends at the first backtick no backslash
+    # escapes, whatever quotes it crosses: its text, unescaped as bash does,
+    # is read as a region of its own. A word of unquoted
+    # substitutions alone may expand to nothing (ee, then em), as may those
+    # a word starts with (ep long, then pf), a run of them kept as one.
+    function lex(r, i, n, st,   c, d, e, x, y, z, q, w, o, b, wb, rd, sb, sv, op, want, hd, strip, hk, hs, ee, ep) {
+      y = sd; q = w = want = hd = ""; o = b = wb = hk = hs = ep = 0; ee = 1
+      for (; i <= n + 1; i++) {
+        c = i <= n ? CH[i] : "\n"; e = rd = sb = 0
         if (q != "" && i <= n) {
           if (q == "\047") { if (c == "\047") q = ""; else w = w c }
           else if (c == "\"") q = ""
-          else if (c == "\\") { d = ch[i + 1]; if (d == "$" || d == "`" || d == "\"" || d == "\\") { w = w d; i++ } else if (d == "\n") i++; else w = w c }
-          else if (c == "$" && ch[i + 1] == "(") { w = w c; b = 1; q = ""; nq = 1 }
-          else { if (c == "$" || c == "`") b = 1; w = w c }
+          else if (c == "\\") { d = i < n ? CH[i + 1] : ""; if (d == "$" || d == "`" || d == "\"" || d == "\\") { w = w d; i++ } else if (d == "\n") i++; else w = w c }
+          else if (c == "$" && i < n && CH[i + 1] == "(") { sb = 1; i++ }
+          else if (c == "`") sb = 2
+          else { if (c == "$") { b = 1; wb = length(w) + 1 } w = w c }
+          if (!sb) continue
+        } else {
+          if (q != "") { b = 1; wb = length(w); q = "" }
+          if (c == "$" && i < n && CH[i + 1] == "(") { sb = 1; i++; o = 1 }
+          else if (c == "`") { sb = 2; o = 1 }
+          else if (c == "\047" || c == "\"") { q = c; o = 1; ee = 0 }
+          else if (c == "\\") { if (i < n && (d = CH[++i]) != "\n") { w = w d; o = 1; ee = 0 } }
+          else if (index("$*?[{", c) || c == "~" && !o) { w = w c; o = 1; b = 1; wb = length(w); ee = 0 }
+          else if (c == "#" && !o) { while (i < n && CH[i + 1] != "\n") i++ }
+          else if (c == " " || c == "\t") e = 1
+          else if (c == "<" || c == ">" || c == "&" && i < n && CH[i + 1] == ">") { if (o && w ~ /^[0-9]+$/) o = 0; e = 1; rd = 1 }
+          else if (index(";&|()\n", c)) e = 2
+          else { w = w c; o = 1; ee = 0 }
+        }
+        if (sb == 2) {
+          z = ""
+          for (x = i + 1; x <= n && CH[x] != "`"; x++)
+            if (CH[x] == "\\" && x < n) { x++; z = z (index(q == "" ? "$`\\" : "$`\\\"", CH[x]) ? "" : "\\") CH[x] }
+            else z = z CH[x]
+          i = x > n ? n : x; x = reg(z); z = cw; sv = base; base = k
+          lex(x, x, NC, st)
+          k = base; base = sv; cw = z
+          w = (ee ? "" : w) "`...`"; b = 1; wb = length(w); if (ee) ep = wb
           continue
         }
-        if (q != "") { b = 1; q = "" }
-        e = 0; r = 0
-        if (c == "\047" || c == "\"") { q = c; o = 1 }
-        else if (c == "\\") { if (i < n && (d = ch[++i]) != "\n") { w = w d; o = 1 } }
-        else if (index("$`*?[{", c) || c == "~" && !o) { w = w c; o = 1; b = 1 }
-        else if (c == "#" && !o) { while (i < n && ch[i + 1] != "\n") i++ }
-        else if (c == " " || c == "\t") e = 1
-        else if (c == "<" || c == ">" || c == "&" && ch[i + 1] == ">") { if (o && w ~ /^[0-9]+$/) o = 0; e = 1; r = 1 }
-        else if (index(";&|()\n", c)) e = 2
-        else { w = w c; o = 1 }
-        if (e && o) { if (want == "hd") hd = w; else if (want == "") { seg[++k] = w; bad[k] = b }; want = "" }
-        if (e) { w = ""; o = 0; b = 0 }
-        if (r) {
+        if (sb) {
+          ft[++sd] = "$"; stk[sd] = cw; fq[sd] = q; fw[sd] = w; fwant[sd] = want; fhk[sd] = hk; fk[sd] = k; fbase[sd] = base; fee[sd] = ee; fep[sd] = ep
+          base = k; q = w = want = ""; o = b = wb = hk = ep = 0; ee = 1
+          continue
+        }
+        if (e && o) { if (want == "hd") { hd = w; hk = 1 } else if (want == "") { seg[++k] = w; bad[k] = b; bp[k] = wb; em[k] = ee; pf[k] = ep }; want = "" }
+        if (e) { w = ""; o = b = wb = ep = 0; ee = 1 }
+        if (rd) {
           op = c
-          while (i < n && index(" << <<< <<- <& <> >> >& >| &> &>> ", " " op ch[i + 1] " ")) op = op ch[++i]
+          while (i < n && index(" << <<< <<- <& <> >> >& >| &> &>> ", " " op CH[i + 1] " ")) op = op CH[++i]
           want = op == "<<" || op == "<<-" ? "hd" : "skip"; strip = op == "<<-"
         }
         if (e == 2) {
-          if (k) run(); k = 0; want = ""
-          if (c == "(") { stk[++sd] = cw; rq[sd] = nq; nq = 0 }
-          else if (c == ")" && sd) { cw = stk[sd]; if (rq[sd--]) { q = "\""; o = 1; b = 1 } }
-          else if (c == "\n" && hd != "") {
-            while (i < n) {
-              l = ""; while (i < n && ch[i + 1] != "\n") l = l ch[++i]
-              i++; if (strip) sub(/^\t+/, "", l)
-              if (l == hd) break
+          if (hk) { hs = shin(); hk = 0 }
+          if (k > base) run()
+          k = base; want = ""
+          if (c == "(") { ft[++sd] = "("; stk[sd] = cw }
+          else if (sd > y && ft[sd] != "h" && (c == ")" || i > n)) {
+            cw = stk[sd]
+            if (ft[sd] == "$") {
+              k = fk[sd]; base = fbase[sd]; w = (fee[sd] ? "" : fw[sd]) "$(...)"; o = b = 1; wb = length(w); q = fq[sd]; want = fwant[sd]; hk = fhk[sd]; ee = fee[sd]; ep = ee ? wb : fep[sd]
             }
-            hd = ""
+            sd--; if (i > n) i--
+          }
+          else if (sd > y && i > n) { cw = stk[sd]; n = fn[sd]; i = fi[sd]; st = fst[sd]; sd--; hd = ""; hk = hs = 0 }
+          else if (c == "\n" && hd != "" && i <= n) {
+            x = term(r, i + 1, n, hd, st || strip); z = x ? x + LN[x] : n; if (z > n) z = n
+            if (hs) { ft[++sd] = "h"; stk[sd] = cw; fn[sd] = n; fi[sd] = z; fst[sd] = st; st = st || strip; if (x) n = x - 1 }
+            else i = z
+            hd = ""; hs = 0
           }
         }
       }
-    }')
+    }
+    { s = s (NR > 1 ? "\n" : "") $0 }
+    END { cw = "."; x = reg(s); lex(x, x, NC, 0) }')
 }
 # Path $1, physical, is where coddy keeps worktrees: under .worktrees/<issue>/
 # or the agent's worktrees/<name>/ at the physical root $R.
@@ -480,6 +779,57 @@ gitwts() {
 # its first line, read no further than a NUL or 1024 characters, so a huge
 # or sparse file stalls no hook.
 gid() { local l=""; [ -f "$1/.git" ] && { read -r -d '' -n 1024 l < "$1/.git"; } 2>/dev/null; l=${l%%$'\n'*}; case "$l" in "gitdir: "*/?*) gi=${l##*/} ;; *) return 1 ;; esac; }
+# Whether git dir $1 is a repository as git tests one, its HEAD read into l:
+# a HEAD git takes (a link read as the ref it names), and objects and refs,
+# found through a commondir file when there is one (relative to $1, line
+# breaks trimmed from its end as git trims them; one that is not a plain
+# file, which git dies or hangs on, or is empty fails). Every file is read no
+# further than a NUL or 1024 characters, so a huge or sparse one stalls no
+# hook.
+isgit() {
+  local c=$1 m=""
+  l=""; if [ -L "$1/HEAD" ]; then l="ref: $(readlink "$1/HEAD")"; elif [ -f "$1/HEAD" ]; then { IFS= read -r -d '' -n 1024 l < "$1/HEAD"; } 2>/dev/null; fi
+  [[ $l =~ ^(ref:[[:space:]]*refs/|[0-9a-f]{40}) ]] || return 1
+  if [ -e "$1/commondir" ]; then
+    [ -f "$1/commondir" ] && { IFS= read -r -d '' -n 1024 m < "$1/commondir"; } 2>/dev/null
+    m=${m%"${m##*[!$'\n\r']}"}; [ -n "$m" ] || return 1
+    case "$m" in /*) c=$m ;; *) c="$1/$m" ;; esac
+  fi
+  [ -d "$c/objects" ] && [ -d "$c/refs" ]
+}
+# The branch the HEAD line in l names, trimmed as git trims it: nothing when
+# HEAD is detached; status 1 when it names no branch git could have (a
+# reftable repository's stub included).
+headref() {
+  [[ $l =~ ^[0-9a-f]{40} ]] && return 0
+  [[ $l =~ ^ref:[[:space:]]*refs/heads/([^[:space:]]+)[[:space:]]*$ ]] && [[ /${BASH_REMATCH[1]} != */.* ]] || return 1
+  echo "${BASH_REMATCH[1]}"
+}
+# The branch checked out in directory $1, physical, found as git finds it but
+# never by git, which would run what a command planted there: at each level
+# up, a .git that is a gitdir: file (git dies on a bad one; its first line
+# read no further than a NUL or 1024 characters and trimmed as git trims
+# it), or else a .git that is a repository (isgit; git walks past any
+# other), or else the directory itself as a bare one (headref). Nothing when
+# no repository holds $1 or HEAD is detached; status 1 when $1 is no
+# directory, so a cd into it fails and leaves the shell where it was, or
+# HEAD names no branch git could have.
+branchin() {
+  local g=$1 x l
+  [ -d "$1" ] || return 1
+  while :; do
+    x="$g/.git"
+    if [ -f "$x" ]; then
+      { IFS= read -r -d '' -n 1024 l < "$x"; } 2>/dev/null; l=${l%"${l##*[!$'\n\r']}"}
+      case "$l" in "gitdir: "?*) x=${l#gitdir: }; case "$x" in /*) ;; *) x="$g/$x" ;; esac ;; *) return 0 ;; esac
+      isgit "$x"; break
+    fi
+    isgit "$x" || isgit "${g:-/}" && break
+    [ -n "$g" ] || return 0
+    g=${g%/*}
+  done
+  headref
+}
 # Outside worktree line $1, with its fd 3 records $2 and $3 ($3 may be
 # empty); on fd 4 too, as "moved <line>" when snap recorded $2 ($seen,
 # trip's alone), "kept <line>" when it recorded $3 alone, else "made
@@ -611,20 +961,34 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # A git worktree add or jj workspace add that would make a worktree
     # outside coddy's (coddywt) is refused before it runs, read from the
     # command's text (adds): a spelling it cannot read passes, saying so, and
-    # the fingerprint reports the worktree once the command has run. The
-    # snapshot comes first, so trip finds it whatever happens here.
-    case "$in" in *worktree*|*workspace*) ;; *) exit 0 ;; esac
-    command -v jq >/dev/null || { printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"coddy could not read this command for a git worktree add or jj workspace add, since jq is missing, so it was let through: a worktree it makes outside .worktrees/<issue>/ is reported once it has run."}}'; exit 0; }
+    # the fingerprint reports the worktree once the command has run. So is a
+    # git push, git send-pack or jj git push to the default branch, a force
+    # push, the issue's own branch included, and a remote branch's delete,
+    # which coddy leaves to a person; a target it cannot read passes, saying
+    # so, and nothing reports it afterwards. The snapshot comes first, so
+    # trip finds it whatever happens here. A push is named in any case, or
+    # as send-pack, or under help.autocorrect by a typo.
+    case "$in" in *worktree*|*workspace*|*[Pp][Uu][Ss][Hh]*|*send-pack*|*[Aa][Uu][Tt][Oo][Cc][Oo][Rr][Rr][Ee][Cc][Tt]*) ;; *) exit 0 ;; esac
+    command -v jq >/dev/null || { printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"coddy could not read this command for a git worktree add, a jj workspace add or a push, since jq is missing, so it was let through: a worktree it makes outside .worktrees/<issue>/ is reported once it has run, a push is not."}}'; exit 0; }
     cmd=$(jq -r '.tool_input.command // empty' <<<"$in") cwd=$(jq -r '.cwd // empty' <<<"$in")
-    code=2 unk=""
+    code=2 unk="" pu=""
+    pr="Issue work reaches $b through a pull request: /coddy:ship pushes the issue's branch and opens one."
     warnmode command
     while IFS= read -r p; do
       case "$p" in
         \?*) unk="$unk ${p#\?}" ;;
+        ":? "*) pu="$pu ${p#:? }" ;;
+        ":to "*) [ "${p#:to }" != "$b" ] || die "that command would push to $b, the default branch. $pr" ;;
+        ":glob "*) p=${p#:glob }; x=${p%%\**} p=${p#*\*}; case "refs/heads/$b" in "$x"*"$p") die "that command would push to $b, the default branch. $pr" ;; esac ;;
+        :all) die "that command would push every branch, $b, the default branch, included. $pr" ;;
+        :force) die "that command would force-push, which rewrites the remote's history, so coddy leaves it to a person." ;;
+        :delete) die "that command would delete a remote branch, which coddy leaves to a person." ;;
         *) coddywt "$p" || die "that command would make a worktree at $p, outside .worktrees/<issue>/${CODDY_AGENT_DIR:+ and $CODDY_AGENT_DIR/worktrees/<name>/}. Issue work belongs in .worktrees/<issue>/: run /coddy:start <issue>, which makes it." ;;
       esac
     done < <(adds "$cmd" "${cwd:-$PWD}")
-    [ -z "$unk" ] || note "coddy could not tell where this command's git worktree add or jj workspace add puts its worktree (${unk# }), so it was let through: one it makes outside .worktrees/<issue>/ is reported once it has run."
+    [ -z "$unk" ] || unk="coddy could not tell where this command's git worktree add or jj workspace add puts its worktree (${unk# }), so it was let through: one it makes outside .worktrees/<issue>/ is reported once it has run."
+    [ -z "$pu" ] || unk="${unk:+$unk }coddy could not tell which branch this command's push reaches (${pu# }), so it was let through: a push to $b, a force push and a branch delete are a person's to make."
+    [ -z "$unk" ] || note "$unk"
     exit 0
   fi
   code=2 msg="" keep=""
