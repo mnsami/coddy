@@ -63,7 +63,6 @@ One plugin per agent, each carrying the same skills, briefs and `bin/coddy`; wha
 - #33 Copilot CLI adapter: reads `.claude-plugin/` directly and passes `CLAUDE_PLUGIN_ROOT` and `CLAUDE_PROJECT_DIR` to hooks, so the Claude Code shims run as they are
 - Gemini CLI adapter: an extension (`gemini-extension.json`) with BeforeTool hooks (issue to be filed)
 - #34 coddy doctor: prerequisites and per-agent enforcement level
-- #15 Create issue worktrees through Claude Code's WorktreeCreate/WorktreeRemove hooks
 
 ### M5 · Parallel-convenient
 - #35 next --parallel N: pick issues that can safely run side by side
