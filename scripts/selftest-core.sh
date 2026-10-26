@@ -832,7 +832,20 @@ rm -rf "$tmp/gl" "$tmp/glgit"
 mkdir -p "$dp/src"; git init -q --bare "$dp/src/b"; echo "$tmp/devil" > "$dp/.git/commondir"
 t 2 "guard: from a bare repository nested in the project, a commondir in the project's git dir is refused" gdir "$dp/src/b"
 t 2 "guard: and from its refs directory" gdir "$dp/src/b/refs"
+rm -f "$dp/.git/commondir"
+t 0 "guard: and from a bare repository nested in the project whose git dir is its own, the walk goes back to the project and nothing is refused" gdir "$dp/src/b"
 rm -rf "$dp/.git/commondir" "$dp/src"
+# the injected verbs and the rest, from a start whose git dir leads to another repository E (a commondir to E, a bare repository nested above a project .git holding one): none runs git there, so E's core.fsmonitor never runs, and none reports E as the root
+mkdir -p "$tmp/sE"; git init -q "$tmp/sE"; printf '#!/bin/sh\ntouch "%s/sMark"\n' "$tmp" > "$tmp/sfsm"; chmod +x "$tmp/sfsm"; git -C "$tmp/sE" config core.fsmonitor "$tmp/sfsm"
+mkdir -p "$tmp/sa/.git" "$tmp/sa/sub" "$tmp/sb/.git" "$tmp/sb/src"; echo "$tmp/sE/.git" > "$tmp/sa/.git/commondir"; echo "$tmp/sE/.git" > "$tmp/sb/.git/commondir"; git init -q --bare "$tmp/sb/src/b"
+for sd in "$tmp/sa/sub" "$tmp/sb/src/b"; do
+  for v in sweep status config detect; do
+    t 0 "$v: from a start whose git dir leads to another repository (${sd#"$tmp"/}) exits 0 and runs none of its programs" sh -c "CODDY_ROOT='$sd' '$here/bin/coddy' $v >'$tmp/sout' 2>&1; e=\$?; [ \$e = 0 ] && [ ! -e '$tmp/sMark' ] && ! grep -q 'root: $tmp/sE' '$tmp/sout'"
+  done
+  t 2 "verify: and a verb that mutates refuses (${sd#"$tmp"/})" env CODDY_ROOT="$sd" "$here/bin/coddy" verify 1
+  t 2 "exclude: and so does exclude (${sd#"$tmp"/})" env CODDY_ROOT="$sd" "$here/bin/coddy" exclude config
+done
+rm -rf "$tmp/sE" "$tmp/sa" "$tmp/sb" "$tmp/sfsm" "$tmp/sMark" "$tmp/sout"
 # a session outside any project whose .git directory leads to an onboarded repository: the root is that repository, so the hooks refuse
 mkdir -p "$tmp/d2/sub/.git" "$tmp/d2/.git/objects" "$tmp/d2/.git/refs"; echo 'ref: refs/heads/main' > "$tmp/d2/.git/HEAD"; echo "$dp/.git" > "$tmp/d2/.git/commondir"
 t 2 "guard: a commondir to an onboarded repository above a rejected .git is refused" gdir "$tmp/d2/sub"

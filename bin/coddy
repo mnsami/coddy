@@ -114,7 +114,10 @@ isgit() {
 # under .git/modules/, which holds none, so the hooks stay inert there as git
 # alone left them, and doctor names that .git file rather than a missing
 # config), and the
-# hooks, which run git outside any sandbox, refuse (oddly). odd names the
+# hooks, which run git outside any sandbox, refuse (oddly), and so does every
+# other verb but githook and doctor (see below). A bare repository nested in the
+# project does not move the root there when the project's .git is a real
+# directory. odd names the
 # .git that is odd, whichever root is kept; one above the project is never odd.
 # Where git fails the walk stops at
 # the project a /.worktrees/ path names, or at a start that holds a config
@@ -195,7 +198,7 @@ fi
 [ -n "$odd" ] || if [ -e "$root/.git" ] || [ -L "$root/.git" ] || [ -n "$proj" ]; then
   if [ -L "$root/.git" ] || [ ! -d "$root/.git" ]; then
     odd="$root/.git"
-    [ -f "$root/.coddy.yml" ] || [ -f "$root/$legacy" ] || [ -z "$back" ] || { [ ! -f "$back/.coddy.yml" ] && [ ! -f "$back/$legacy" ]; } || root=$back
+    [ -f "$root/.coddy.yml" ] || [ -f "$root/$legacy" ] || [ -z "$back" ] || { [ ! -f "$back/.coddy.yml" ] && [ ! -f "$back/$legacy" ]; } || { [ -d "$back/.git" ] && [ ! -L "$back/.git" ]; } || root=$back
     [ -e "$odd" ] || [ -L "$odd" ] || odd="$root/.git"
   elif [ -e "$root/.git/commondir" ] || [ -L "$root/.git/commondir" ]; then odd="$root/.git/commondir"
   fi
@@ -214,6 +217,12 @@ confpath() { if [ -f "$root/.coddy.yml" ]; then conf="$root/.coddy.yml"; else co
 confpath
 self="${0##*/}" # how the caller names this command: coddy, or a shim's name
 code=1
+
+# With the main checkout's git dir not its own (odd) the root may be another
+# repository's, so the verbs the prompts inject say so in one line, exit 0 and
+# read nothing from it; every other verb refuses (oddly) before its first git
+# call, and sweep, which is only ever injected, is silent.
+case "${1-}" in config|detect|status) [ -z "$odd" ] || { echo "git_dir: $(printf %s "$odd" | tr -d '[:cntrl:]') is not the main checkout's own git dir (fix: remove it$([ -L "$odd" ] || echo ", or put the .git directory back,") by hand)"; exit 0; } ;; esac
 
 if [ "${1-}" = config ]; then
   if [ -f "$conf" ]; then cat "$conf"; else echo "NOT_ONBOARDED"; fi; exit 0
@@ -327,6 +336,7 @@ oddly() {
 # slash: a directory-only pattern does not match the path while the
 # directory is absent, and the line would be added on every run.
 if [ "${1-}" = exclude ]; then
+  oddly
   case "${2-}" in
     answers) [ -n "${CODDY_AGENT_DIR-}" ] || die "exclude answers needs CODDY_AGENT_DIR"; p="$CODDY_AGENT_DIR/coddy" ;;
     config) p=.coddy.yml ;;
@@ -1230,6 +1240,7 @@ if [ "${1-}" = doctor ]; then
   [ -z "$odd" ] || ! gitlink || { echo "git_dir: $odd $glmsg (fix: open the session in the main checkout, or remove the file by hand if it was not put there on purpose)"; exit 1; }
   [ -z "$odd" ] || { echo "git_dir: $odd is not the main checkout's own git dir (fix: remove it$([ -L "$odd" ] || echo ", or put the .git directory back,") by hand)"; exit 1; }
 fi
+[ -z "$odd" ] || { [ "${1-}" = sweep ] && exit 0; oddly; }
 [ -f "$conf" ] || { [ "${1-}" = sweep ] && exit 0; die "NOT_ONBOARDED"; }
 # This file by a path the cd below leaves valid, for the git hooks start writes.
 src="${BASH_SOURCE[0]-}"; case "$src" in /*|'') ;; *) src="$PWD/$src" ;; esac
