@@ -805,6 +805,15 @@ mkdir -p "$dp/lsub"; ln -s /nowhere "$dp/lsub/.git"
 t 0 "doctor: a .git link in a subdirectory with no config is git_dir" dsaysat "$dp/lsub" '^git_dir: '
 rm -rf "$dp/lsub"; mkdir -p "$dp/lsub/.git"; echo /nowhere > "$dp/lsub/.git/commondir"
 t 0 "doctor: so is a commondir to nowhere" dsaysat "$dp/lsub" '^git_dir: '
+t 0 "doctor: and says to remove the file, not to open the session elsewhere" sh -c "echo 'gitdir: /nowhere' > '$dp/lsub/.git/commondir'; CODDY_ROOT='$dp/lsub' '$here/bin/coddy' doctor 2>&1 | grep -q 'is not the main checkout.s own git dir'"
+# a repository git rejects planted at .worktrees/.git (or in place of an issue worktree's .git) leaves the root the project: a main-checkout write is still refused
+plant() { mkdir -p "$1/objects" "$1/refs"; echo 'ref: refs/heads/main' > "$1/HEAD"; printf '[core]\n\trepositoryformatversion = 9\n' > "$1/config"; }
+gdir() { printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$dp/README.md" | CODDY_ROOT="$1" CODDY_PID=$$ "$here/bin/coddy" guard; }
+mkdir -p "$dp/.worktrees/5"; plant "$dp/.worktrees/.git"
+t 2 "guard: from a jj workspace under a planted .worktrees/.git, the main checkout is refused" gdir "$dp/.worktrees/5"
+rm -rf "$dp/.worktrees/.git"; plant "$dp/.worktrees/5/.git"
+t 2 "guard: from a worktree whose .git is a rejected repository, the main checkout is refused" gdir "$dp/.worktrees/5"
+rm -rf "$dp/.worktrees/5"
 rm -rf "$dp/lsub"; mkdir -p "$dp/lsub"; ln -s /etc/hosts "$dp/lsub/.git"
 t 0 "doctor: a .git link where git fails is git_dir" dsaysat "$dp/lsub" '^git_dir: .*lsub/.git'
 rm -rf "$dp/lsub"; mkdir -p "$dp/lsub/.git" "$tmp/lcd"; ln -s "$tmp/lcd" "$dp/lsub/.git/commondir"

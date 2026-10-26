@@ -113,7 +113,9 @@ isgit() {
 # the project a /.worktrees/ path names, or at a start that holds a config
 # itself (a git-less root), never at a repository above it, and the fallback
 # (the nearest repository above holding a config) runs only for a start that
-# names neither: from a .worktrees/ path the root is the project. A session in a checkout whose .git is a gitdir: file naming a git dir
+# names neither; from a .worktrees/ path the root is the project, odd or not
+# (git rejecting a .git planted at or below it leaves the walk stopped there).
+# A session in a checkout whose .git is a gitdir: file naming a git dir
 # elsewhere (a submodule, a bare repository's worktree) holding a config is
 # refused too, its message saying to open the session in the main checkout. A
 # linked worktree's own git dir holds a commondir by design. Not caught: a .git file that names a
@@ -152,7 +154,7 @@ if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "
   # holds one.
   if [ -n "$odd" ] && [ ! -f "$root/.coddy.yml" ] && [ ! -f "$root/$legacy" ]; then
     pb=$(cd "$back" && pwd -P)
-    case "$pb/" in "$groot"/?*) root=$groot ;; *) upcfg "$pb" ;; esac
+    case "$pb/" in "$(cd "$groot" && pwd -P)"/?*) root=$groot ;; *) upcfg "$pb" ;; esac
   fi
   rel="${rel#"$root"/}"
   case "$dir" in */"$rel") root="${dir%/"$rel"}" ;; esac
@@ -164,6 +166,14 @@ else
   # Never above the project a .worktrees/ path names: a repository up there
   # (the project nested in another) is no root of ours.
   [ -z "$g" ] || case "$top/" in "$g"/?*) ;; *) root=$g ;; esac
+  # Under a .worktrees/ path (or a git-less root) a repository git rejects, or
+  # a link, at or below the project is no root: the odd .git is still named,
+  # and the root is the project.
+  if [ -n "$top" ] && [ -n "$g" ]; then
+    if [ -L "$g/.git" ]; then odd="$g/.git"
+    elif [ -d "$g/.git" ] && { [ -e "$g/.git/commondir" ] || [ -L "$g/.git/commondir" ]; }; then odd="$g/.git/commondir"; fi
+  fi
+  [ -z "$top" ] || root=$top
 fi
 # The root's own git dir is held to the same test whichever way the root was
 # found: git failing in a worktree whose .git is garbage lands on the second
@@ -283,7 +293,7 @@ warnmode() { [ "$(cfg guard)" = warn ] || return 0; wm=$1; die() { note "coddy w
 # not its own (odd) they run none and refuse every edit and command, in
 # either guard mode, after trip's report so far, $1.
 # A .git that is a gitdir: file (a submodule's, a bare repository's worktree's).
-gitlink() { local l=""; [ -L "$odd" ] || [ ! -f "$odd" ] || { IFS= read -r -n 1024 l < "$odd"; } 2>/dev/null; [[ $l == gitdir:* ]]; }
+gitlink() { local l=""; case "$odd" in */commondir) return 1 ;; esac; [ -L "$odd" ] || [ ! -f "$odd" ] || { IFS= read -r -n 1024 l < "$odd"; } 2>/dev/null; [[ $l == gitdir:* ]]; }
 glmsg="is a file naming a git dir elsewhere, and coddy does not run its hooks in a checkout whose .git points at a git dir elsewhere (a submodule or a bare repository's worktree included)"
 oddly() {
   [ -n "$odd" ] || return 0
