@@ -721,6 +721,7 @@ t 0 "doctor: outside a project, the four install lines alone" test "$(CODDY_ROOT
 dp="$tmp/dp"; git init -q --bare "$tmp/dorigin.git"; git clone -q "$tmp/dorigin.git" "$dp" 2>/dev/null
 (cd "$dp" && git checkout -q -b main && echo hi > README.md && git add -A && git commit -q -m init && git push -q -u origin main)
 dd() { CODDY_ROOT="$dp" "$here/bin/coddy" "$@"; }
+dsaysat() { CODDY_ROOT="$1" "$here/bin/coddy" doctor 2>&1 | grep -q "$2"; }
 dsays() { dd doctor 2>&1 | grep -q "$1"; }
 t 0 "doctor: not onboarded" dsays '^config: none (fix: /coddy:onboard)$'
 t 1 "doctor: not onboarded exits 1" dd doctor
@@ -755,6 +756,19 @@ prob "AGENTS.md missing" '^agents_md: AGENTS.md is missing' 'mv AGENTS.md "$tmp/
 prob "AGENTS.md without the block" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; echo "# x" > AGENTS.md' 'cp "$tmp/am" AGENTS.md'
 prob "AGENTS.md with a lone marker" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; sed -i.bak "/coddy:end/d" AGENTS.md; rm AGENTS.md.bak' 'cp "$tmp/am" AGENTS.md'
 prob "AGENTS.md with reversed markers" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; sed -i.bak "s/coddy:begin/coddy:X/;s/coddy:end/coddy:begin/;s/coddy:X/coddy:end/" AGENTS.md; rm AGENTS.md.bak' 'cp "$tmp/am" AGENTS.md'
+# a recorded coddy path holding a quote is read back as start wrote it
+qd="$tmp/q'd"; mkdir -p "$qd"; : > "$qd/coddy"; chmod +x "$qd/coddy"; qc="$tmp/q'\\''d/coddy"
+qset() { QC="$qc" awk '/^c=/ { print "c=\047" ENVIRON["QC"] "\047"; next } 1' "$tmp/pc" > .git/hooks/coddy/pre-commit; chmod +x .git/hooks/coddy/pre-commit; }
+(cd "$dp" && cp .git/hooks/coddy/pre-commit "$tmp/pc" && qset)
+t 0 "doctor: a recorded path with a quote reads as ok" sh -c "PATH=/usr/bin:/bin CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -qx 'hooks: ok'"
+rm "$qd/coddy"
+t 0 "doctor: and gone, when it is" sh -c "PATH=/usr/bin:/bin CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -q '^hooks: pre-commit runs .*q.d/coddy, which is gone'"
+(cd "$dp" && cp "$tmp/pc" .git/hooks/coddy/pre-commit)
+prob "a commondir in the git dir" '^git_dir: ' 'echo . > .git/commondir' 'rm .git/commondir'
+# a root outside git holding a config is a project: the config line, not silence
+mkdir -p "$tmp/nogit"; cp "$tmp/dp.yml" "$tmp/nogit/.coddy.yml"
+t 0 "doctor: a root outside git with a config is checked" dsaysat "$tmp/nogit" '^config: ok'
+t 1 "doctor: and exits 1, git being absent" env CODDY_ROOT="$tmp/nogit" "$here/bin/coddy" doctor
 sed -i.bak 's/^tracker:.*/tracker: jira/' "$dp/.coddy.yml"; rm "$dp/.coddy.yml.bak"; rm "$dp/.github/workflows/coddy.yml"
 t 0 "doctor: the PR check is not checked under jira" dd doctor
 cp "$tmp/dp.yml" "$dp/.coddy.yml"

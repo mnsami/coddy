@@ -1119,8 +1119,11 @@ if [ "${1-}" = githook ]; then
 fi
 
 if [ "${1-}" = doctor ]; then
-  [ -n "${proj-}" ] || exit 0
+  # a root outside git (a jj workspace with no .git) is a project when it holds a config
+  [ -n "${proj-}" ] || [ -f "$conf" ] || exit 0
   [ -f "$conf" ] || { echo "config: none (fix: /coddy:onboard)"; exit 1; }
+  # no git call below runs against a git dir that points at another repository
+  [ -z "$odd" ] || { echo "git_dir: $odd is not the main checkout's own git dir (fix: remove it, or put the .git directory back, by hand)"; exit 1; }
 fi
 [ -f "$conf" ] || { [ "${1-}" = sweep ] && exit 0; die "NOT_ONBOARDED"; }
 # This file by a path the cd below leaves valid, for the git hooks start writes.
