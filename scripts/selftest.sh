@@ -763,6 +763,24 @@ mkdir -p src/.git; t 2 "root: a garbage .git dir in a subdirectory leaves the gu
 rm -rf src; mkdir src; echo garbage > src/.git
 t 2 "root: so does a garbage .git file, where git fails" hk "$repo/src" guard "$repo/README.md"
 rm -rf src
+# a .git git takes itself (a link to a real repository) is no root above it; where git fails, the walk's stop gets the same fallback
+for lk in "$repo/.git" /etc/hosts; do
+  rm -rf src; mkdir src; ln -s "$lk" src/.git
+  t 2 "root: a .git link to $lk in a subdirectory with no config refuses guard" hk "$repo/src" guard "$repo/src/x"
+  t 2 "root: and snap" hk "$repo/src" snap
+done
+rm -rf src; mkdir -p src/.git "$tmp/cd"; ln -s "$tmp/cd" src/.git/commondir
+t 2 "root: a commondir link to a directory in a subdirectory with no config refuses guard" hk "$repo/src" guard "$repo/src/x"
+t 2 "root: and snap" hk "$repo/src" snap
+rm -rf src "$tmp/cd"
+# a session in a linked git worktree, the checkout's .git swapped for a link
+mkdir -p "$tmp/f6"; git init -q "$tmp/f6"; git -C "$tmp/f6" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+printf 'tracker: github\nworktree: git\n' > "$tmp/f6/.coddy.yml"; git -C "$tmp/f6" worktree add -q --detach .worktrees/5
+mv "$tmp/f6/.git" "$tmp/f6/.gitx"; ln -s .gitx "$tmp/f6/.git"
+t 2 "root: a session in a linked worktree, the checkout's .git a link, refuses guard" hk "$tmp/f6/.worktrees/5" guard "$tmp/f6/x"
+t 2 "root: and snap" hk "$tmp/f6/.worktrees/5" snap
+t 0 "root: and the message says the link is to be removed" sh -c "hk() { printf '{\"tool_input\":{\"file_path\":\"/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/f6/.worktrees/5' bash '$here/scripts/issue.sh' guard 2>&1; }; hk | grep -qF '$tmp/f6/.git is a link'"
+rm -rf "$tmp/f6"
 mkdir -p "$tmp/f4"; git init -q "$tmp/f4"; printf 'tracker: github\nworktree: git\n' > "$tmp/f4/.coddy.yml"
 mv "$tmp/f4/.git" "$tmp/f4git"; echo "gitdir: $tmp/f4git" > "$tmp/f4/.git"
 t 2 "root: a root .git that is a gitdir: file elsewhere refuses snap" hk "$tmp/f4" snap

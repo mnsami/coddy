@@ -805,6 +805,13 @@ mkdir -p "$dp/lsub"; ln -s /nowhere "$dp/lsub/.git"
 t 0 "doctor: a .git link in a subdirectory with no config is git_dir" dsaysat "$dp/lsub" '^git_dir: '
 rm -rf "$dp/lsub"; mkdir -p "$dp/lsub/.git"; echo /nowhere > "$dp/lsub/.git/commondir"
 t 0 "doctor: so is a commondir to nowhere" dsaysat "$dp/lsub" '^git_dir: '
+rm -rf "$dp/lsub"; mkdir -p "$dp/lsub"; ln -s /etc/hosts "$dp/lsub/.git"
+t 0 "doctor: a .git link where git fails is git_dir" dsaysat "$dp/lsub" '^git_dir: .*lsub/.git'
+rm -rf "$dp/lsub"; mkdir -p "$dp/lsub/.git" "$tmp/lcd"; ln -s "$tmp/lcd" "$dp/lsub/.git/commondir"
+t 0 "doctor: a commondir link to a directory is git_dir" dsaysat "$dp/lsub" '^git_dir: '
+rm -rf "$dp/lsub" "$tmp/lcd"; mkdir -p "$dp/lsub"; ln -s "$dp/.git" "$dp/lsub/.git"
+t 0 "doctor: a .git link to a real repository is git_dir, the root above it" dsaysat "$dp/lsub" '^git_dir: .*lsub/.git is not'
+t 0 "doctor: and a link's fix is to remove it" dsaysat "$dp/lsub" 'fix: remove it by hand'
 rm -rf "$dp/lsub"
 # a relative root naming no directory ends
 t 0 "root: a relative CODDY_ROOT naming no directory ends" timeout 10 env CODDY_ROOT=nosuchdir "$here/bin/coddy" status
