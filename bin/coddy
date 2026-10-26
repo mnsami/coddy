@@ -72,19 +72,20 @@ fi
 # a HEAD git takes (a link read as the ref it names), and objects and refs,
 # found through a commondir file when there is one (relative to $1, line
 # breaks trimmed from its end as git trims them; one that is not a plain
-# file, which git dies or hangs on, or is empty fails). Every file is read no
+# file, which git dies or hangs on, or is empty fails; objects and refs need
+# only be searchable, as git's access(X_OK) has it). Every file is read no
 # further than a NUL or 1024 characters, so a huge or sparse one stalls no
 # hook.
 isgit() {
   local c=$1 m=""
   l=""; if [ -L "$1/HEAD" ]; then l="ref: $(readlink "$1/HEAD")"; elif [ -f "$1/HEAD" ]; then { IFS= read -r -d '' -n 1024 l < "$1/HEAD"; } 2>/dev/null; fi
-  [[ $l =~ ^(ref:[[:space:]]*refs/|[0-9a-f]{40}) ]] || return 1
+  [[ $l =~ ^(ref:[[:space:]]*refs/|[0-9a-fA-F]{40}) ]] || return 1
   if [ -e "$1/commondir" ]; then
     [ -f "$1/commondir" ] && { IFS= read -r -d '' -n 1024 m < "$1/commondir"; } 2>/dev/null
     m=${m%"${m##*[!$'\n\r']}"}; [ -n "$m" ] || return 1
     case "$m" in /*) c=$m ;; *) c="$1/$m" ;; esac
   fi
-  [ -d "$c/objects" ] && [ -d "$c/refs" ]
+  [ -x "$c/objects" ] && [ -x "$c/refs" ]
 }
 # The project's main checkout, from CODDY_ROOT or the working directory: the
 # root, a subdirectory, an issue worktree (git or jj, whose workspace has no
@@ -97,8 +98,9 @@ isgit() {
 # repository's config, whose programs (core.fsmonitor) git runs, and moves
 # the root there; so does a .git that is a link, or not a directory, at the
 # checkout. They are read without git: walking up from $dir past every .git
-# directory that is no repository (git walks past those too, isgit), the
-# first .git is the checkout's and a link or a commondir in it is odd, and
+# directory that is no repository (git walks past those too, isgit) and no
+# further than git's own root when that is at or above $dir (git took the .git
+# there, so nothing above it is the checkout's), the first .git is the checkout's and a link or a commondir in it is odd, and
 # so is the root's own .git, which must be a real directory (whichever way
 # the root was found, so a worktree whose own .git is garbage does not skip
 # it). odd names what is wrong: the root stays the checkout's (git's root when
@@ -109,7 +111,8 @@ isgit() {
 # .git file names git's root under .git/modules/, which holds none, so the
 # hooks stay inert there as git alone left them), and the
 # hooks, which run git outside any sandbox, refuse (oddly). odd names the
-# .git that is odd, whichever root is kept. Where git fails the walk stops at
+# .git that is odd, whichever root is kept; one above the project is never odd.
+# Where git fails the walk stops at
 # the project a /.worktrees/ path names, or at a start that holds a config
 # itself (a git-less root), never at a repository above it, and the fallback
 # (the nearest repository above holding a config) runs only for a start that
@@ -124,11 +127,14 @@ isgit() {
 # worktree rewritten.
 # walk: g up from itself to the first .git that is a link, a repository or,
 # with $1, any file (a linked worktree's); git failed in a start with $1
-# empty, so a garbage .git file there is walked past too.
+# empty, so a garbage .git file there is walked past too. It stops at $stop,
+# git's own root (physical) when that is at or above the start: git took the
+# .git there, whatever isgit says of it, so nothing above is the checkout's.
 walk() {
   while [ -n "$g" ]; do
     if [ -L "$g/.git" ] || { [ -d "$g/.git" ] && { [ -e "$g/.git/commondir" ] || [ -L "$g/.git/commondir" ] || isgit "$g/.git"; }; }; then break
-    elif [ -n "${1-}" ] && [ -e "$g/.git" ] && [ ! -d "$g/.git" ]; then break; fi
+    elif [ -n "${1-}" ] && [ -e "$g/.git" ] && [ ! -d "$g/.git" ]; then break
+    elif [ "$g" = "$stop" ]; then break; fi
     case "$g" in */*) g=${g%/*} ;; *) g="" ;; esac
   done
 }
@@ -139,9 +145,11 @@ upcfg() {
   while [ -n "$g" ] && ! { [ -d "$g/.git" ] && { [ -f "$g/.coddy.yml" ] || [ -f "$g/$legacy" ]; }; }; do case "$g" in */*) g=${g%/*} ;; *) g="" ;; esac; done
   [ -z "$g" ] || root=$g
 }
-dir="${CODDY_ROOT:-$PWD}" odd="" proj="" back="" groot=""
+dir="${CODDY_ROOT:-$PWD}" odd="" proj="" back="" groot="" stop=""
 if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "$dir" && cd "$common/.." && pwd); then
-  proj=1 groot=$root rel=$(cd "$dir" && pwd -P); g=$rel; walk files
+  proj=1 groot=$root rel=$(cd "$dir" && pwd -P); g=$rel
+  pg=$(cd "$groot" && pwd -P); case "$rel/" in "${pg%/}"/*) stop=$pg ;; esac
+  walk files
   if [ "$rel" = "$g" ]; then back=$(cd "$dir" && pwd); else back=$g; fi
   if [ -L "$g/.git" ]; then
     odd="$g/.git"; root=$back
@@ -169,9 +177,9 @@ else
   # Under a .worktrees/ path (or a git-less root) a repository git rejects, or
   # a link, at or below the project is no root: the odd .git is still named,
   # and the root is the project.
-  if [ -n "$top" ] && [ -n "$g" ]; then
+  if [ -n "$top" ] && [ -n "$g" ]; then case "$g/" in "$top"/*)
     if [ -L "$g/.git" ]; then odd="$g/.git"
-    elif [ -d "$g/.git" ] && { [ -e "$g/.git/commondir" ] || [ -L "$g/.git/commondir" ]; }; then odd="$g/.git/commondir"; fi
+    elif [ -d "$g/.git" ] && { [ -e "$g/.git/commondir" ] || [ -L "$g/.git/commondir" ]; }; then odd="$g/.git/commondir"; fi ;; esac
   fi
   [ -z "$top" ] || root=$top
 fi
@@ -886,7 +894,7 @@ gid() { local l=""; [ -f "$1/.git" ] && { read -r -d '' -n 1024 l < "$1/.git"; }
 # HEAD is detached; status 1 when it names no branch git could have (a
 # reftable repository's stub included).
 headref() {
-  [[ $l =~ ^[0-9a-f]{40} ]] && return 0
+  [[ $l =~ ^[0-9a-fA-F]{40} ]] && return 0
   [[ $l =~ ^ref:[[:space:]]*refs/heads/([^[:space:]]+)[[:space:]]*$ ]] && [[ /${BASH_REMATCH[1]} != */.* ]] || return 1
   echo "${BASH_REMATCH[1]}"
 }

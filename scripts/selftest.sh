@@ -816,10 +816,23 @@ rm -rf "$tmp/f9" "$tmp/f9sub"
 mkdir -p "$tmp/g1/proj"; printf 'tracker: github\nworktree: jj\n' > "$tmp/g1/proj/.coddy.yml"
 for lk in /nowhere /etc/hosts; do
   rm -rf "$tmp/g1/.git"; ln -s "$lk" "$tmp/g1/.git"
-  t 2 "root: a git-less onboarded root under a .git link to $lk refuses guard" hk "$tmp/g1/proj" guard "$tmp/g1/proj/x"
+  t 0 "root: a git-less onboarded root under a .git link to $lk allows an agent-dir edit" hk "$tmp/g1/proj" guard "$tmp/g1/proj/.claude/x"
+  t 0 "root: and from .worktrees/<id>" hk "$tmp/g1/proj/.worktrees/5" guard "$tmp/g1/proj/.claude/x"
 done
 rm -rf "$tmp/g1/.git"; mkdir -p "$tmp/g1/.git"; echo /nowhere > "$tmp/g1/.git/commondir"
-t 2 "root: a git-less onboarded root under a commondir to nowhere refuses guard" hk "$tmp/g1/proj" guard "$tmp/g1/proj/x"
+t 0 "root: a git-less onboarded root under a commondir to nowhere allows an agent-dir edit" hk "$tmp/g1/proj" guard "$tmp/g1/proj/.claude/x"
+t 0 "root: and from .worktrees/<id>" hk "$tmp/g1/proj/.worktrees/5" guard "$tmp/g1/proj/.claude/x"
+# an uppercased detached HEAD is a repository to git: the walk stops at git's root, so a link or commondir above the project moves nothing
+mkdir -p "$tmp/g3"; git init -q "$tmp/g3/proj"; git -C "$tmp/g3/proj" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+printf 'tracker: github\nworktree: git\n' > "$tmp/g3/proj/.coddy.yml"
+git -C "$tmp/g3/proj" rev-parse HEAD | tr a-f A-F > "$tmp/g3/proj/.git/HEAD"
+ln -s /nowhere "$tmp/g3/.git"
+t 2 "root: an uppercase HEAD under a dangling .git link above still refuses guard on a main-checkout edit" hk "$tmp/g3/proj" guard "$tmp/g3/proj/x"
+t 0 "root: and allows an agent-dir edit" hk "$tmp/g3/proj" guard "$tmp/g3/proj/.claude/x"
+rm -f "$tmp/g3/.git"; mkdir "$tmp/g3/.git"; echo /nowhere > "$tmp/g3/.git/commondir"
+t 2 "root: and under a commondir above, guard refuses a main-checkout edit" hk "$tmp/g3/proj" guard "$tmp/g3/proj/x"
+t 0 "root: and the agent dir is allowed" hk "$tmp/g3/proj" guard "$tmp/g3/proj/.claude/x"
+rm -rf "$tmp/g3"
 rm -rf "$tmp/g1"
 # a project with no config nested in an onboarded repository, its .git renamed, a session in .worktrees/<id> whose .git is a link: the config above is no config of the project's
 mkdir -p "$tmp/g2/p/.worktrees/5/.gitdirx"; git init -q "$tmp/g2"; printf 'tracker: github\nworktree: git\n' > "$tmp/g2/.coddy.yml"
