@@ -732,6 +732,35 @@ for cd in ../.evilgit "$tmp/evil/.git"; do
 done
 rm -rf .evilgit "$tmp/evil/.coddy.yml"; git worktree remove --force .worktrees/82
 tripped 0 "commondir: removed, the hooks are back" 'true'
+# The hooks find the checkout's git dir the way git does, without git: past a
+# .git directory that is no repository (an empty one under .worktrees/<id>
+# or a subdirectory, which git walks past to the commondir it would
+# follow), refusing a .git that is a link, and putting the root back at the
+# checkout when the root's .git is a gitdir: file naming one elsewhere.
+hk() { printf '{"tool_use_id":"w","tool_input":{"file_path":"%s"}}' "${3-/x}" | CLAUDE_PROJECT_DIR="$1" bash "$here/scripts/issue.sh" "$2"; }
+printf 'tracker: github\nworktree: git\n' > "$tmp/evil/.coddy.yml"; echo "$tmp/evil/.git" > .git/commondir
+mkdir -p .worktrees/87/.git src/deep/.git; rm -f "$tmp/fsm"
+t 2 "root: snap refuses from a worktree holding an empty .git dir" hk "$repo/.worktrees/87" snap
+t 2 "root: and from a subdirectory holding one" hk "$repo/src/deep" snap
+t 1 "root: and git ran none of its programs" test -e "$tmp/fsm"
+rm -rf .worktrees/87 src .git/commondir "$tmp/evil/.coddy.yml"
+rm -f "$tmp/fsm"; mkdir src; ln -s "$tmp/evil/.git" src/.git; printf 'tracker: github\nworktree: git\n' > src/.coddy.yml
+t 2 "root: snap refuses a .git that is a link, in a subdirectory" hk "$repo/src" snap
+t 2 "root: and guard" hk "$repo/src" guard "$repo/src/x"
+t 1 "root: and git ran none of its programs" test -e "$tmp/fsm"
+rm -rf src
+mkdir -p src/.git; t 2 "root: a garbage .git dir in a subdirectory leaves the guard on" hk "$repo/src" guard "$repo/README.md"
+rm -rf src; mkdir src; echo garbage > src/.git
+t 2 "root: so does a garbage .git file, where git fails" hk "$repo/src" guard "$repo/README.md"
+rm -rf src
+mkdir -p "$tmp/f4"; git init -q "$tmp/f4"; printf 'tracker: github\nworktree: git\n' > "$tmp/f4/.coddy.yml"
+mv "$tmp/f4/.git" "$tmp/f4git"; echo "gitdir: $tmp/f4git" > "$tmp/f4/.git"
+t 2 "root: a root .git that is a gitdir: file elsewhere refuses snap" hk "$tmp/f4" snap
+t 2 "root: and guard" hk "$tmp/f4" guard "$tmp/f4/x"
+mkdir -p "$tmp/f5/.claude"; printf 'tracker: github\nworktree: git\n' > "$tmp/f5/.coddy.yml"
+t 0 "root: a plain root with no .git passes guard with proj set in the environment" env proj=1 bash -c "printf '{\"tool_input\":{\"file_path\":\"$tmp/f5/.claude/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/f5' bash '$here/scripts/issue.sh' guard"
+t 0 "root: and snap" env proj=1 bash -c "printf '{\"tool_use_id\":\"w\"}' | CLAUDE_PROJECT_DIR='$tmp/f5' bash '$here/scripts/issue.sh' snap"
+rm -rf "$tmp/f4" "$tmp/f4git" "$tmp/f5"
 git worktree add -q --detach .worktrees/84
 # A worktree git moved out of .worktrees/<id>/ was not made.
 wire snap w; git worktree move .worktrees/84 "$wo" >/dev/null 2>&1

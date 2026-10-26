@@ -787,6 +787,22 @@ t 0 "doctor: from a worktree with a garbage .git, a commondir in the root's git 
 t 1 "doctor: and exits 1" env CODDY_ROOT="$dp/.worktrees/9" "$here/bin/coddy" doctor
 t 1 "doctor: and git ran none of its programs" test -e "$tmp/dfsm"
 rm -rf "$dp/.git/commondir" "$dp/.worktrees/9" "$tmp/devil"
+# an empty .git dir under a worktree is walked past as git does: the root's commondir is found
+printf '#!/bin/sh\n: > "%s"\n' "$tmp/dfsm" > "$tmp/dfsm.sh"; chmod +x "$tmp/dfsm.sh"
+cp -R "$dp/.git" "$tmp/devil"; git --git-dir="$tmp/devil" config core.fsmonitor "$tmp/dfsm.sh"
+mkdir -p "$dp/.worktrees/8/.git"; echo "$tmp/devil" > "$dp/.git/commondir"; rm -f "$tmp/dfsm"
+t 0 "doctor: from a worktree holding an empty .git dir, a commondir in the root's git dir is git_dir" dsaysat "$dp/.worktrees/8" '^git_dir: '
+t 1 "doctor: and git ran none of its programs" test -e "$tmp/dfsm"
+rm -rf "$dp/.git/commondir" "$dp/.worktrees/8"
+# a .git that is a link is git_dir too, in a subdirectory no matter what it names
+mkdir -p "$dp/lsub"; ln -s "$tmp/devil" "$dp/lsub/.git"; cp "$dp/.coddy.yml" "$dp/lsub/.coddy.yml"
+t 0 "doctor: a .git that is a link is git_dir" dsaysat "$dp/lsub" '^git_dir: '
+t 1 "doctor: and exits 1" env CODDY_ROOT="$dp/lsub" "$here/bin/coddy" doctor
+t 1 "doctor: and git ran none of its programs" test -e "$tmp/dfsm"
+rm -rf "$dp/lsub" "$tmp/devil"
+# proj in the environment makes nothing odd outside git
+mkdir -p "$tmp/pj"
+t 0 "doctor: outside any project, a proj in the environment changes nothing" env proj=1 CODDY_ROOT="$tmp/pj" "$here/bin/coddy" doctor
 # a root outside git holding a config is a project: the config line, not silence
 mkdir -p "$tmp/nogit"; cp "$tmp/dp.yml" "$tmp/nogit/.coddy.yml"
 t 0 "doctor: a root outside git with a config is checked" dsaysat "$tmp/nogit" '^config: ok'
