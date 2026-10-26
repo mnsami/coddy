@@ -749,6 +749,16 @@ t 2 "root: snap refuses a .git that is a link, in a subdirectory" hk "$repo/src"
 t 2 "root: and guard" hk "$repo/src" guard "$repo/src/x"
 t 1 "root: and git ran none of its programs" test -e "$tmp/fsm"
 rm -rf src
+# no config in the subdirectory: the root stays at git's, so the hooks still refuse
+for lk in /nowhere "$tmp"; do
+  rm -rf src; mkdir src; ln -s "$lk" src/.git
+  t 2 "root: a .git link to $lk in a subdirectory with no config refuses guard" hk "$repo/src" guard "$repo/src/x"
+  t 2 "root: and snap" hk "$repo/src" snap
+done
+rm -rf src; mkdir -p src/.git; echo /nowhere > src/.git/commondir
+t 2 "root: a commondir to nowhere in a subdirectory with no config refuses guard" hk "$repo/src" guard "$repo/src/x"
+t 2 "root: and snap" hk "$repo/src" snap
+rm -rf src
 mkdir -p src/.git; t 2 "root: a garbage .git dir in a subdirectory leaves the guard on" hk "$repo/src" guard "$repo/README.md"
 rm -rf src; mkdir src; echo garbage > src/.git
 t 2 "root: so does a garbage .git file, where git fails" hk "$repo/src" guard "$repo/README.md"
@@ -757,6 +767,7 @@ mkdir -p "$tmp/f4"; git init -q "$tmp/f4"; printf 'tracker: github\nworktree: gi
 mv "$tmp/f4/.git" "$tmp/f4git"; echo "gitdir: $tmp/f4git" > "$tmp/f4/.git"
 t 2 "root: a root .git that is a gitdir: file elsewhere refuses snap" hk "$tmp/f4" snap
 t 2 "root: and guard" hk "$tmp/f4" guard "$tmp/f4/x"
+t 0 "root: and the message names the checkout's .git" sh -c "hk() { printf '{\"tool_input\":{\"file_path\":\"/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/f4' bash '$here/scripts/issue.sh' guard 2>&1; }; hk | grep -qF '$tmp/f4/.git is not a directory'"
 mkdir -p "$tmp/f5/.claude"; printf 'tracker: github\nworktree: git\n' > "$tmp/f5/.coddy.yml"
 t 0 "root: a plain root with no .git passes guard with proj set in the environment" env proj=1 bash -c "printf '{\"tool_input\":{\"file_path\":\"$tmp/f5/.claude/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/f5' bash '$here/scripts/issue.sh' guard"
 t 0 "root: and snap" env proj=1 bash -c "printf '{\"tool_use_id\":\"w\"}' | CLAUDE_PROJECT_DIR='$tmp/f5' bash '$here/scripts/issue.sh' snap"

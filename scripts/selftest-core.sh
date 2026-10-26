@@ -800,6 +800,15 @@ t 0 "doctor: a .git that is a link is git_dir" dsaysat "$dp/lsub" '^git_dir: '
 t 1 "doctor: and exits 1" env CODDY_ROOT="$dp/lsub" "$here/bin/coddy" doctor
 t 1 "doctor: and git ran none of its programs" test -e "$tmp/dfsm"
 rm -rf "$dp/lsub" "$tmp/devil"
+# the same with no config in the subdirectory, and a commondir to nowhere
+mkdir -p "$dp/lsub"; ln -s /nowhere "$dp/lsub/.git"
+t 0 "doctor: a .git link in a subdirectory with no config is git_dir" dsaysat "$dp/lsub" '^git_dir: '
+rm -rf "$dp/lsub"; mkdir -p "$dp/lsub/.git"; echo /nowhere > "$dp/lsub/.git/commondir"
+t 0 "doctor: so is a commondir to nowhere" dsaysat "$dp/lsub" '^git_dir: '
+rm -rf "$dp/lsub"
+# a relative root naming no directory ends
+t 0 "root: a relative CODDY_ROOT naming no directory ends" timeout 10 env CODDY_ROOT=nosuchdir "$here/bin/coddy" status
+t 0 "root: and one with a slash" timeout 10 env CODDY_ROOT=no/such "$here/bin/coddy" status
 # proj in the environment makes nothing odd outside git
 mkdir -p "$tmp/pj"
 t 0 "doctor: outside any project, a proj in the environment changes nothing" env proj=1 CODDY_ROOT="$tmp/pj" "$here/bin/coddy" doctor

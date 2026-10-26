@@ -101,8 +101,10 @@ isgit() {
 # first .git is the checkout's and a link or a commondir in it is odd, and
 # so is the root's own .git, which must be a real directory (whichever way
 # the root was found, so a worktree whose own .git is garbage does not skip
-# it). odd names what is wrong: the root stays the checkout's, and the hooks,
-# which run git outside any sandbox, refuse (oddly). A linked worktree's own
+# it). odd names what is wrong: the root stays the checkout's (git's root, or
+# the nearest repository above holding a config, when the link sits in a
+# subdirectory with none), and the hooks, which run git outside any sandbox,
+# refuse (oddly). A linked worktree's own
 # git dir holds a commondir by design. Not caught: a .git file that names a
 # whole repository elsewhere, a repository planted where it is the first
 # .git up from $dir (src/.git) and the .git file or admin dir of a linked
@@ -114,17 +116,28 @@ walk() {
   while [ -n "$g" ]; do
     if [ -L "$g/.git" ] || { [ -d "$g/.git" ] && { [ -e "$g/.git/commondir" ] || [ -L "$g/.git/commondir" ] || isgit "$g/.git"; }; }; then break
     elif [ -n "${1-}" ] && [ -e "$g/.git" ] && [ ! -d "$g/.git" ]; then break; fi
-    g=${g%/*}
+    case "$g" in */*) g=${g%/*} ;; *) g="" ;; esac
   done
 }
+legacy=".claude/coddy.yml"
 dir="${CODDY_ROOT:-$PWD}" odd="" proj="" back=""
 if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "$dir" && cd "$common/.." && pwd); then
-  proj=1 rel=$(cd "$dir" && pwd -P); g=$rel; walk files
+  proj=1 groot=$root rel=$(cd "$dir" && pwd -P); g=$rel; walk files
   if [ "$rel" = "$g" ]; then back=$(cd "$dir" && pwd); else back=$g; fi
   if [ -L "$g/.git" ]; then
     odd="$g/.git"; root=$back
   elif [ -d "$g/.git" ] && { [ -e "$g/.git/commondir" ] || [ -L "$g/.git/commondir" ]; }; then
     odd="$g/.git/commondir"; root=$back
+  fi
+  # A root with no config would switch the hooks off: keep it at git's root
+  # when git walked past the link, else at the nearest repository above that
+  # holds one.
+  if [ -n "$odd" ] && [ ! -f "$root/.coddy.yml" ] && [ ! -f "$root/$legacy" ]; then
+    pb=$(cd "$back" && pwd -P); g=$pb
+    case "$pb/" in "$groot"/*) root=$groot ;; *)
+      while [ -n "$g" ] && ! { [ -d "$g/.git" ] && { [ -f "$g/.coddy.yml" ] || [ -f "$g/$legacy" ]; }; }; do case "$g" in */*) g=${g%/*} ;; *) g="" ;; esac; done
+      [ -z "$g" ] || root=$g ;;
+    esac
   fi
   rel="${rel#"$root"/}"
   case "$dir" in */"$rel") root="${dir%/"$rel"}" ;; esac
@@ -134,21 +147,12 @@ else
 fi
 # The root's own git dir is held to the same test whichever way the root was
 # found: git failing in a worktree whose .git is garbage lands on the second
-# branch, with the root's .git untouched. No .git there is a plain jj root. A
-# root .git that is no repository under an ancestor that is one and holds a
-# config is a planted stop on the way to it.
+# branch, with the root's .git untouched. No .git there is a plain jj root.
 [ -n "$odd" ] || if [ -e "$root/.git" ] || [ -L "$root/.git" ] || [ -n "$proj" ]; then
-  if [ -L "$root/.git" ] || [ ! -d "$root/.git" ]; then odd="$root/.git"; [ -z "$back" ] || root=$back
+  if [ -L "$root/.git" ] || [ ! -d "$root/.git" ]; then [ -z "$back" ] || root=$back; odd="$root/.git"
   elif [ -e "$root/.git/commondir" ] || [ -L "$root/.git/commondir" ]; then odd="$root/.git/commondir"
-  elif ! isgit "$root/.git"; then
-    g=${root%/*}
-    while [ -n "$g" ]; do
-      if [ -d "$g/.git" ] && [ ! -L "$g/.git" ] && isgit "$g/.git" && { [ -f "$g/.coddy.yml" ] || [ -f "$g/.claude/coddy.yml" ]; }; then odd="$root/.git"; break; fi
-      g=${g%/*}
-    done
   fi
 fi
-legacy=".claude/coddy.yml"
 # .coddy.yml when it exists, else the legacy file; trip asks again after it
 # has put the config back.
 confpath() { if [ -f "$root/.coddy.yml" ]; then conf="$root/.coddy.yml"; else conf="$root/$legacy"; fi; cname="${conf#"$root"/}"; }
