@@ -813,6 +813,12 @@ rm -rf "$dp/lsub" "$tmp/lcd"; mkdir -p "$dp/lsub"; ln -s "$dp/.git" "$dp/lsub/.g
 t 0 "doctor: a .git link to a real repository is git_dir, the root above it" dsaysat "$dp/lsub" '^git_dir: .*lsub/.git is not'
 t 0 "doctor: and a link's fix is to remove it" dsaysat "$dp/lsub" 'fix: remove it by hand'
 rm -rf "$dp/lsub"
+# a .git that is a gitdir: file elsewhere (a submodule, a bare repository's worktree): git_dir says to open the session in the main checkout
+mkdir -p "$tmp/gl" "$tmp/glgit"; git init -q "$tmp/gl"; cp "$tmp/dp.yml" "$tmp/gl/.coddy.yml"; mv "$tmp/gl/.git" "$tmp/glgit/g"; echo "gitdir: $tmp/glgit/g" > "$tmp/gl/.git"
+t 0 "doctor: a .git that is a gitdir: file is git_dir, naming the file" dsaysat "$tmp/gl" "^git_dir: $tmp/gl/.git is a file naming a git dir elsewhere"
+t 0 "doctor: and the fix is to open the session in the main checkout" dsaysat "$tmp/gl" 'fix: open the session in the main checkout, or remove the file by hand'
+t 1 "doctor: and exits 1" env CODDY_ROOT="$tmp/gl" "$here/bin/coddy" doctor
+rm -rf "$tmp/gl" "$tmp/glgit"
 # a relative root naming no directory ends
 t 0 "root: a relative CODDY_ROOT naming no directory ends" timeout 10 env CODDY_ROOT=nosuchdir "$here/bin/coddy" status
 t 0 "root: and one with a slash" timeout 10 env CODDY_ROOT=no/such "$here/bin/coddy" status

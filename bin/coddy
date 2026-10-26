@@ -108,10 +108,15 @@ isgit() {
 # without to the checkout only if that holds a config: an absorbed submodule's
 # .git file names git's root under .git/modules/, which holds none, so the
 # hooks stay inert there as git alone left them), and the
-# hooks, which run git outside any sandbox, refuse (oddly). Where git fails
-# the walk stops at the project a /.worktrees/ path names, never at a
-# repository above it, and its fallback runs there alone. A linked worktree's own
-# git dir holds a commondir by design. Not caught: a .git file that names a
+# hooks, which run git outside any sandbox, refuse (oddly). odd names the
+# .git that is odd, whichever root is kept. Where git fails the walk stops at
+# the project a /.worktrees/ path names, or at a start that holds a config
+# itself (a git-less root), never at a repository above it, and the fallback
+# (the nearest repository above holding a config) runs only for a start that
+# names neither: from a .worktrees/ path the root is the project. A session in a checkout whose .git is a gitdir: file naming a git dir
+# elsewhere (a submodule, a bare repository's worktree) holding a config is
+# refused too, its message saying to open the session in the main checkout. A
+# linked worktree's own git dir holds a commondir by design. Not caught: a .git file that names a
 # whole repository elsewhere, a repository planted where it is the first
 # .git up from $dir (src/.git) and the .git file or admin dir of a linked
 # worktree rewritten.
@@ -154,6 +159,7 @@ if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "
 else
   root="$dir"; g=$(cd "$dir" 2>/dev/null && pwd) || g=$dir; top=""
   case "$g" in */.worktrees/*) top="${g%%/.worktrees/*}"; root=$top ;; esac
+  [ -n "$top" ] || ! { [ -f "$g/.coddy.yml" ] || [ -f "$g/$legacy" ]; } || top=$g
   walk
   # Never above the project a .worktrees/ path names: a repository up there
   # (the project nested in another) is no root of ours.
@@ -164,7 +170,9 @@ fi
 # branch, with the root's .git untouched. No .git there is a plain jj root.
 [ -n "$odd" ] || if [ -e "$root/.git" ] || [ -L "$root/.git" ] || [ -n "$proj" ]; then
   if [ -L "$root/.git" ] || [ ! -d "$root/.git" ]; then
-    [ -f "$root/.coddy.yml" ] || [ -f "$root/$legacy" ] || [ -z "$back" ] || { [ ! -f "$back/.coddy.yml" ] && [ ! -f "$back/$legacy" ]; } || root=$back; odd="$root/.git"
+    odd="$root/.git"
+    [ -f "$root/.coddy.yml" ] || [ -f "$root/$legacy" ] || [ -z "$back" ] || { [ ! -f "$back/.coddy.yml" ] && [ ! -f "$back/$legacy" ]; } || root=$back
+    [ -e "$odd" ] || [ -L "$odd" ] || odd="$root/.git"
   elif [ -e "$root/.git/commondir" ] || [ -L "$root/.git/commondir" ]; then odd="$root/.git/commondir"
   fi
 fi
@@ -173,8 +181,8 @@ fi
 # where git succeeded the root is set above, and from a .worktrees/ path it
 # starts at the project, as the strip does, never at the link inside it.
 if [ -z "$odd" ] || [ -n "$proj" ]; then :; else
-  [ -z "$top" ] || root=$top
-  [ -f "$root/.coddy.yml" ] || [ -f "$root/$legacy" ] || upcfg "$(cd "$root" 2>/dev/null && pwd -P || echo "$root")"
+  if [ -n "$top" ]; then root=$top
+  elif [ ! -f "$root/.coddy.yml" ] && [ ! -f "$root/$legacy" ]; then upcfg "$(cd "$root" 2>/dev/null && pwd -P || echo "$root")"; fi
 fi
 # .coddy.yml when it exists, else the legacy file; trip asks again after it
 # has put the config back.
@@ -274,12 +282,16 @@ warnmode() { [ "$(cfg guard)" = warn ] || return 0; wm=$1; die() { note "coddy w
 # The hooks run git outside any sandbox: with the main checkout's git dir
 # not its own (odd) they run none and refuse every edit and command, in
 # either guard mode, after trip's report so far, $1.
+# A .git that is a gitdir: file (a submodule's, a bare repository's worktree's).
+gitlink() { local l=""; [ -L "$odd" ] || [ ! -f "$odd" ] || { IFS= read -r -n 1024 l < "$odd"; } 2>/dev/null; [[ $l == gitdir:* ]]; }
+glmsg="is a file naming a git dir elsewhere, and coddy does not run its hooks in a checkout whose .git points at a git dir elsewhere (a submodule or a bare repository's worktree included)"
 oddly() {
   [ -n "$odd" ] || return 0
   code=2
   case "$odd" in
     */commondir) die "${1-}$odd, which git never writes in a main checkout, points git there at another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you remove that file by hand." ;;
     *) [ ! -L "$odd" ] || die "${1-}$odd is a link, so git there reads another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you remove it by hand."
+       ! gitlink || die "${1-}$odd $glmsg, so it refuses every edit and command until you open the session in the main checkout, or remove the file by hand if it was not put there on purpose."
        die "${1-}$odd is not a directory, so git there reads another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you put the main checkout's .git directory back by hand." ;;
   esac
 }
@@ -1185,6 +1197,7 @@ if [ "${1-}" = doctor ]; then
   [ -n "${proj-}" ] || [ -f "$conf" ] || exit 0
   [ -f "$conf" ] || { echo "config: none (fix: /coddy:onboard)"; exit 1; }
   # no git call below runs against a git dir that points at another repository
+  [ -z "$odd" ] || ! gitlink || { echo "git_dir: $odd $glmsg (fix: open the session in the main checkout, or remove the file by hand if it was not put there on purpose)"; exit 1; }
   [ -z "$odd" ] || { echo "git_dir: $odd is not the main checkout's own git dir (fix: remove it$([ -L "$odd" ] || echo ", or put the .git directory back,") by hand)"; exit 1; }
 fi
 [ -f "$conf" ] || { [ "${1-}" = sweep ] && exit 0; die "NOT_ONBOARDED"; }
