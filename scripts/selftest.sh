@@ -790,6 +790,28 @@ mkdir -p "$tmp/f5/.claude"; printf 'tracker: github\nworktree: git\n' > "$tmp/f5
 t 0 "root: a plain root with no .git passes guard with proj set in the environment" env proj=1 bash -c "printf '{\"tool_input\":{\"file_path\":\"$tmp/f5/.claude/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/f5' bash '$here/scripts/issue.sh' guard"
 t 0 "root: and snap" env proj=1 bash -c "printf '{\"tool_use_id\":\"w\"}' | CLAUDE_PROJECT_DIR='$tmp/f5' bash '$here/scripts/issue.sh' snap"
 rm -rf "$tmp/f4" "$tmp/f4git" "$tmp/f5"
+# groot in the environment moves nothing: git failing in a subdirectory with no config still gets the fallback
+rm -rf src; mkdir src; ln -s /etc/hosts src/.git
+t 2 "root: a groot in the environment leaves a .git link, where git fails, refusing guard" env groot="$repo/src" bash -c "printf '{\"tool_input\":{\"file_path\":\"$repo/src/x\"}}' | CLAUDE_PROJECT_DIR='$repo/src' bash '$here/scripts/issue.sh' guard"
+t 2 "root: and snap" env groot="$repo/src" bash -c "printf '{\"tool_use_id\":\"w\"}' | CLAUDE_PROJECT_DIR='$repo/src' bash '$here/scripts/issue.sh' snap"
+rm -rf src
+# a session in an absorbed submodule of an onboarded project: git's root there is .git/modules/, which holds no config, so the hooks are inert as ever
+mkdir -p "$tmp/f7/.claude"; git init -q "$tmp/f7"; git -C "$tmp/f7" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+printf 'tracker: github\nworktree: git\n' > "$tmp/f7/.coddy.yml"; git init -q "$tmp/f7sub"; git -C "$tmp/f7sub" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+git -C "$tmp/f7" -c protocol.file.allow=always submodule add -q "$tmp/f7sub" vendor/sub >/dev/null 2>&1
+t 0 "root: a session in an absorbed submodule of an onboarded project passes guard" hk "$tmp/f7/vendor/sub" guard "$tmp/f7/README.md"
+t 0 "root: and snap" hk "$tmp/f7/vendor/sub" snap
+t 2 "root: while the project's own checkout still refuses guard" hk "$tmp/f7" guard "$tmp/f7/README.md"
+rm -rf "$tmp/f7" "$tmp/f7sub"
+# a project nested in another repository, its .git renamed, a session in .worktrees/<id>: the walk stops at the project the path names, so the guard stays on as git failing there always left it
+mkdir -p "$tmp/f8"; git init -q "$tmp/f8"; git -C "$tmp/f8" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+mkdir -p "$tmp/f8/p/.claude"; git init -q "$tmp/f8/p"; git -C "$tmp/f8/p" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+printf 'tracker: github\nworktree: git\n' > "$tmp/f8/p/.coddy.yml"; git -C "$tmp/f8/p" worktree add -q --detach .worktrees/5
+mv "$tmp/f8/p/.git" "$tmp/f8/p/.gitx"
+t 2 "root: a nested project, its .git renamed, refuses guard from .worktrees/<id>" hk "$tmp/f8/p/.worktrees/5" guard "$tmp/f8/p/x"
+rm -f "$tmp/f8/p/.worktrees/5/.git"; ln -s /etc/hosts "$tmp/f8/p/.worktrees/5/.git"
+t 2 "root: and snap, the worktree's own .git a link" hk "$tmp/f8/p/.worktrees/5" snap
+rm -rf "$tmp/f8"
 git worktree add -q --detach .worktrees/84
 # A worktree git moved out of .worktrees/<id>/ was not made.
 wire snap w; git worktree move .worktrees/84 "$wo" >/dev/null 2>&1

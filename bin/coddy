@@ -104,8 +104,13 @@ isgit() {
 # it). odd names what is wrong: the root stays the checkout's (git's root when
 # strictly above the link, else the nearest repository above holding a config,
 # when the link sits in a subdirectory with none, git failing there or not;
-# the root's own link leaves a root holding a config where it is), and the
-# hooks, which run git outside any sandbox, refuse (oddly). A linked worktree's own
+# the root's own link leaves a root holding a config where it is, and moves one
+# without to the checkout only if that holds a config: an absorbed submodule's
+# .git file names git's root under .git/modules/, which holds none, so the
+# hooks stay inert there as git alone left them), and the
+# hooks, which run git outside any sandbox, refuse (oddly). Where git fails
+# the walk stops at the project a /.worktrees/ path names, never at a
+# repository above it, and its fallback runs there alone. A linked worktree's own
 # git dir holds a commondir by design. Not caught: a .git file that names a
 # whole repository elsewhere, a repository planted where it is the first
 # .git up from $dir (src/.git) and the .git file or admin dir of a linked
@@ -127,7 +132,7 @@ upcfg() {
   while [ -n "$g" ] && ! { [ -d "$g/.git" ] && { [ -f "$g/.coddy.yml" ] || [ -f "$g/$legacy" ]; }; }; do case "$g" in */*) g=${g%/*} ;; *) g="" ;; esac; done
   [ -z "$g" ] || root=$g
 }
-dir="${CODDY_ROOT:-$PWD}" odd="" proj="" back=""
+dir="${CODDY_ROOT:-$PWD}" odd="" proj="" back="" groot=""
 if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "$dir" && cd "$common/.." && pwd); then
   proj=1 groot=$root rel=$(cd "$dir" && pwd -P); g=$rel; walk files
   if [ "$rel" = "$g" ]; then back=$(cd "$dir" && pwd); else back=$g; fi
@@ -147,21 +152,30 @@ if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "
   rel="${rel#"$root"/}"
   case "$dir" in */"$rel") root="${dir%/"$rel"}" ;; esac
 else
-  root="$dir"; g=$(cd "$dir" 2>/dev/null && pwd) || g=$dir; walk
-  if [ -n "$g" ]; then root=$g; else case "$root" in */.worktrees/*) root="${root%%/.worktrees/*}" ;; esac; fi
+  root="$dir"; g=$(cd "$dir" 2>/dev/null && pwd) || g=$dir; top=""
+  case "$g" in */.worktrees/*) top="${g%%/.worktrees/*}"; root=$top ;; esac
+  walk
+  # Never above the project a .worktrees/ path names: a repository up there
+  # (the project nested in another) is no root of ours.
+  [ -z "$g" ] || case "$top/" in "$g"/?*) ;; *) root=$g ;; esac
 fi
 # The root's own git dir is held to the same test whichever way the root was
 # found: git failing in a worktree whose .git is garbage lands on the second
 # branch, with the root's .git untouched. No .git there is a plain jj root.
 [ -n "$odd" ] || if [ -e "$root/.git" ] || [ -L "$root/.git" ] || [ -n "$proj" ]; then
   if [ -L "$root/.git" ] || [ ! -d "$root/.git" ]; then
-    [ -f "$root/.coddy.yml" ] || [ -f "$root/$legacy" ] || [ -z "$back" ] || root=$back; odd="$root/.git"
+    [ -f "$root/.coddy.yml" ] || [ -f "$root/$legacy" ] || [ -z "$back" ] || { [ ! -f "$back/.coddy.yml" ] && [ ! -f "$back/$legacy" ]; } || root=$back; odd="$root/.git"
   elif [ -e "$root/.git/commondir" ] || [ -L "$root/.git/commondir" ]; then odd="$root/.git/commondir"
   fi
 fi
 # git failing in a start the walk stopped at (a .git link or commondir) lands
-# here with the root at that directory: the fallback covers it too.
-[ -z "$odd" ] || [ -f "$root/.coddy.yml" ] || [ -f "$root/$legacy" ] || [ "$root" = "${groot-}" ] || upcfg "$(cd "$root" 2>/dev/null && pwd -P || echo "$root")"
+# here with the root at that directory: the fallback covers that alone, since
+# where git succeeded the root is set above, and from a .worktrees/ path it
+# starts at the project, as the strip does, never at the link inside it.
+if [ -z "$odd" ] || [ -n "$proj" ]; then :; else
+  [ -z "$top" ] || root=$top
+  [ -f "$root/.coddy.yml" ] || [ -f "$root/$legacy" ] || upcfg "$(cd "$root" 2>/dev/null && pwd -P || echo "$root")"
+fi
 # .coddy.yml when it exists, else the legacy file; trip asks again after it
 # has put the config back.
 confpath() { if [ -f "$root/.coddy.yml" ]; then conf="$root/.coddy.yml"; else conf="$root/$legacy"; fi; cname="${conf#"$root"/}"; }
