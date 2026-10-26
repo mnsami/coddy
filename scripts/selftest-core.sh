@@ -748,7 +748,11 @@ t 0 "doctor: jj missing under worktree: jj" says '^jj: missing (fix: install jj'
 cp "$tmp/dp.yml" "$dp/.coddy.yml"
 prob "core.hooksPath elsewhere" '^hooks: core.hooksPath is /elsewhere' 'git config core.hooksPath /elsewhere' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
 prob "a hook without coddy's header" '^hooks: pre-push is missing or not one coddy start wrote' 'cp .git/hooks/coddy/pre-push "$tmp/pp"; echo "#!/bin/sh" > .git/hooks/coddy/pre-push' 'cp "$tmp/pp" .git/hooks/coddy/pre-push'
-prob "the recorded coddy path gone" '^hooks: pre-commit runs .*which is gone' 'cp .git/hooks/coddy/pre-commit "$tmp/pc"; sed -i.bak "s#^c=.*#c=/nonexistent/coddy#" .git/hooks/coddy/pre-commit; rm .git/hooks/coddy/pre-commit.bak' 'cp "$tmp/pc" .git/hooks/coddy/pre-commit'
+# written quoted as start writes it, and run under a PATH without coddy: the fallback to `command -v coddy` must not hide it
+(cd "$dp" && cp .git/hooks/coddy/pre-commit "$tmp/pc" && sed -i.bak "s#^c=.*#c='/nonexistent/coddy'#" .git/hooks/coddy/pre-commit && rm .git/hooks/coddy/pre-commit.bak)
+t 0 "doctor: the recorded coddy path gone" sh -c "PATH=/usr/bin:/bin CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -q '^hooks: pre-commit runs /nonexistent/coddy, which is gone'"
+t 1 "doctor: the recorded coddy path gone exits 1" env PATH=/usr/bin:/bin CODDY_ROOT="$dp" "$here/bin/coddy" doctor
+(cd "$dp" && cp "$tmp/pc" .git/hooks/coddy/pre-commit)
 prob "a hook git would skip" '^hooks: pre-push is not executable' 'chmod -x .git/hooks/coddy/pre-push' 'chmod +x .git/hooks/coddy/pre-push'
 prob "hooks not installed" '^hooks: core.hooksPath is not set.*(fix: /coddy:start <issue>)' 'git config --unset core.hooksPath' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
 prob "PR check missing" '^pr_check: .*is missing or not a plain file (fix: copy ' 'rm .github/workflows/coddy.yml' 'cp "$here/templates/coddy.yml" .github/workflows/coddy.yml'
@@ -757,6 +761,15 @@ prob "AGENTS.md missing" '^agents_md: AGENTS.md is missing' 'mv AGENTS.md "$tmp/
 prob "AGENTS.md without the block" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; echo "# x" > AGENTS.md' 'cp "$tmp/am" AGENTS.md'
 prob "AGENTS.md with a lone marker" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; sed -i.bak "/coddy:end/d" AGENTS.md; rm AGENTS.md.bak' 'cp "$tmp/am" AGENTS.md'
 prob "AGENTS.md with reversed markers" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; sed -i.bak "s/coddy:begin/coddy:X/;s/coddy:end/coddy:begin/;s/coddy:X/coddy:end/" AGENTS.md; rm AGENTS.md.bak' 'cp "$tmp/am" AGENTS.md'
+# AGENTS.md as a link: to a file holding the block it reads ok, to a directory or nowhere it fails
+(cd "$dp" && mv AGENTS.md "$tmp/am" && ln -s "$tmp/am" AGENTS.md)
+t 0 "doctor: AGENTS.md linked to a file holding the block" dd doctor
+(cd "$dp" && rm AGENTS.md && ln -s "$tmp" AGENTS.md)
+t 0 "doctor: AGENTS.md linked to a directory" dsays '^agents_md: AGENTS.md is missing'
+(cd "$dp" && rm AGENTS.md && ln -s "$tmp/nonexistent-am" AGENTS.md)
+t 0 "doctor: AGENTS.md dangling" dsays '^agents_md: AGENTS.md is missing'
+t 1 "doctor: AGENTS.md dangling exits 1" dd doctor
+(cd "$dp" && rm AGENTS.md && mv "$tmp/am" AGENTS.md)
 # a recorded coddy path holding a quote is read back as start wrote it
 qd="$tmp/q'd"; mkdir -p "$qd"; : > "$qd/coddy"; chmod +x "$qd/coddy"; qc="$tmp/q'\\''d/coddy"
 qset() { QC="$qc" awk '/^c=/ { print "c=\047" ENVIRON["QC"] "\047"; next } 1' "$tmp/pc" > .git/hooks/coddy/pre-commit; chmod +x .git/hooks/coddy/pre-commit; }
@@ -766,6 +779,14 @@ rm "$qd/coddy"
 t 0 "doctor: and gone, when it is" sh -c "PATH=/usr/bin:/bin CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -q '^hooks: pre-commit runs .*q.d/coddy, which is gone'"
 (cd "$dp" && cp "$tmp/pc" .git/hooks/coddy/pre-commit)
 prob "a commondir in the git dir" '^git_dir: ' 'echo . > .git/commondir' 'rm .git/commondir'
+# a root reached from a .worktrees/<id> whose .git is garbage (git fails there): the root's own git dir is still held to the commondir test, running no planted program
+cp -R "$dp/.git" "$tmp/devil"; printf '#!/bin/sh\n: > "%s"\n' "$tmp/dfsm" > "$tmp/dfsm.sh"; chmod +x "$tmp/dfsm.sh"; git --git-dir="$tmp/devil" config core.fsmonitor "$tmp/dfsm.sh"
+mkdir -p "$dp/.worktrees/9"; echo garbage > "$dp/.worktrees/9/.git"; echo "$tmp/devil" > "$dp/.git/commondir"
+rm -f "$tmp/dfsm"
+t 0 "doctor: from a worktree with a garbage .git, a commondir in the root's git dir is git_dir" dsaysat "$dp/.worktrees/9" '^git_dir: '
+t 1 "doctor: and exits 1" env CODDY_ROOT="$dp/.worktrees/9" "$here/bin/coddy" doctor
+t 1 "doctor: and git ran none of its programs" test -e "$tmp/dfsm"
+rm -rf "$dp/.git/commondir" "$dp/.worktrees/9" "$tmp/devil"
 # a root outside git holding a config is a project: the config line, not silence
 mkdir -p "$tmp/nogit"; cp "$tmp/dp.yml" "$tmp/nogit/.coddy.yml"
 t 0 "doctor: a root outside git with a config is checked" dsaysat "$tmp/nogit" '^config: ok'

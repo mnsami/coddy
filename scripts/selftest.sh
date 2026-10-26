@@ -724,6 +724,10 @@ for cd in ../.evilgit "$tmp/evil/.git"; do
   t 2 "commondir: guard refuses every edit: $cd" guard "$repo/.claude/x"
   t 2 "commondir: from a linked worktree too: $cd" lw snap w
   t 1 "commondir: and git ran none of its programs: $cd" test -e "$tmp/fsm"
+  mkdir -p .worktrees/85; echo garbage > .worktrees/85/.git; rm -f "$tmp/fsm"
+  t 2 "commondir: snap refuses from a worktree whose .git is garbage: $cd" sh -c "printf '{\"tool_use_id\":\"w\"}' | CLAUDE_PROJECT_DIR='$repo/.worktrees/85' bash '$here/scripts/issue.sh' snap"
+  t 1 "commondir: and that ran none of its programs: $cd" test -e "$tmp/fsm"
+  rm -rf .worktrees/85
   rm .git/commondir
 done
 rm -rf .evilgit "$tmp/evil/.coddy.yml"; git worktree remove --force .worktrees/82

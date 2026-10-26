@@ -78,7 +78,8 @@ fi
 # writes there, points every git call in the checkout at another
 # repository's config, whose programs (core.fsmonitor) git runs, and moves
 # the root there. So the nearest .git up from $dir, when a directory, and
-# the root's .git, which must be one, are read for it without git, and odd
+# the root's .git, which must be one (whichever way the root was found, so a
+# worktree whose own .git is garbage does not skip it), are read for it without git, and odd
 # names what is wrong: the root stays the checkout's, and the hooks, which
 # run git outside any sandbox, refuse (oddly). A linked worktree's own git
 # dir holds a commondir by design.
@@ -91,10 +92,15 @@ if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "
   fi
   rel="${rel#"$root"/}"
   case "$dir" in */"$rel") root="${dir%/"$rel"}" ;; esac
-  [ -n "$odd" ] || if [ ! -d "$root/.git" ]; then odd="$root/.git"; elif [ -e "$root/.git/commondir" ] || [ -L "$root/.git/commondir" ]; then odd="$root/.git/commondir"; fi
 else
   root="$dir"
   case "$root" in */.worktrees/*) root="${root%%/.worktrees/*}" ;; esac
+fi
+# The root's own git dir is held to the same test whichever way the root was
+# found: git failing in a worktree whose .git is garbage lands on the second
+# branch, with the root's .git untouched. No .git there is a plain jj root.
+[ -n "$odd" ] || if [ -e "$root/.git" ] || [ -L "$root/.git" ] || [ -n "${proj-}" ]; then
+  if [ ! -d "$root/.git" ]; then odd="$root/.git"; elif [ -e "$root/.git/commondir" ] || [ -L "$root/.git/commondir" ]; then odd="$root/.git/commondir"; fi
 fi
 legacy=".claude/coddy.yml"
 # .coddy.yml when it exists, else the legacy file; trip asks again after it
@@ -1216,7 +1222,7 @@ if [ "$cmd" = doctor ]; then
     elif ! cmp -s "$w" "$tpl"; then say pr_check "$w differs from $tpl (fix: copy it over $w)"
     else say pr_check ok; fi
   fi
-  if [ -L AGENTS.md ] || [ ! -f AGENTS.md ]; then say agents_md "AGENTS.md is missing or not a plain file (fix: add the block in step 6 of $inst/skills/onboard/SKILL.md)"
+  if [ ! -f AGENTS.md ]; then say agents_md "AGENTS.md is missing or not a plain file (fix: add the block in step 6 of $inst/skills/onboard/SKILL.md)"
   elif awk '/<!-- coddy:begin -->/ { b++; if (!bl) bl = NR } /<!-- coddy:end -->/ { e++; if (!el) el = NR } END { exit !(b == 1 && e == 1 && bl < el) }' AGENTS.md; then say agents_md ok
   else say agents_md "AGENTS.md needs exactly one coddy:begin marker before one coddy:end (fix: replace the block with the one in step 6 of $inst/skills/onboard/SKILL.md)"; fi
   exit "$bad"
