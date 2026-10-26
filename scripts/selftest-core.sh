@@ -702,17 +702,61 @@ t 0 "get.sh: a trailing / on CODDY_HOME is dropped" says "^cloned: $tmp/h9 at " 
 t 0 "get.sh: from the link too" test "$(readlink "$tmp/b9/coddy")" = "$tmp/h9/bin/coddy"
 t 0 "doctor: from stdin says why it cannot" says 'not stdin' sh -c "bash -s doctor < '$here/bin/coddy'"
 # doctor names the install it runs from: get.sh's through the PATH link, another from a checkout.
-doc() { HOME="$gh" CODDY_HOME="$cs" "$@" doctor; }
+# CODDY_ROOT names no project here ($tmp is no repository), so only the install prints.
+doc() { HOME="$gh" CODDY_HOME="$cs" CODDY_ROOT="$tmp" "$@" doctor; }
 t 0 "doctor: through the link, the real install dir" says "^install: $(cd "$cs" && pwd -P)\$" doc "$gh/bin/coddy"
 t 0 "doctor: via get.sh" says '^via: get.sh$' doc "$gh/bin/coddy"
 t 0 "doctor: the installed commit" says "^commit: $(sha)\$" doc "$gh/bin/coddy"
 t 0 "doctor: the version" says "^version: $(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$here/.claude-plugin/plugin.json")\$" doc "$gh/bin/coddy"
 t 0 "doctor: from this checkout, via other" says '^via: other$' doc "$here/bin/coddy"
 t 0 "doctor: naming this checkout" says "^install: $(cd "$here" && pwd -P)\$" doc "$here/bin/coddy"
-t 0 "doctor: with no HOME" says '^via: other$' env -u HOME -u CODDY_HOME "$here/bin/coddy" doctor
-t 1 "doctor: and no unbound variable" says 'unbound' env -u HOME -u CODDY_HOME "$here/bin/coddy" doctor
-t 0 "doctor: a CDPATH does not move it" sh -c "cd '$here' && CDPATH='$gh' HOME='$gh' bash bin/coddy doctor | grep -qx 'install: $(cd "$here" && pwd -P)'"
+t 0 "doctor: with no HOME" says '^via: other$' env -u HOME -u CODDY_HOME CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
+t 1 "doctor: and no unbound variable" says 'unbound' env -u HOME -u CODDY_HOME CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
+t 0 "doctor: a CDPATH does not move it" sh -c "cd '$here' && CDPATH='$gh' HOME='$gh' CODDY_ROOT='$tmp' bash bin/coddy doctor | grep -qx 'install: $(cd "$here" && pwd -P)'"
 mkdir -p "$tmp/dl/real/bin" "$tmp/dl/x"; cp "$here/bin/coddy" "$tmp/dl/real/bin/"; ln -s ../real/bin "$tmp/dl/x/bin"
-t 0 "doctor: through a linked bin/, the real install dir" says "^install: $(cd "$tmp/dl/real" && pwd -P)\$" "$tmp/dl/x/bin/coddy" doctor
+t 0 "doctor: through a linked bin/, the real install dir" says "^install: $(cd "$tmp/dl/real" && pwd -P)\$" env CODDY_ROOT="$tmp" "$tmp/dl/x/bin/coddy" doctor
+t 0 "doctor: outside a project, the four install lines alone" test "$(CODDY_ROOT="$tmp" "$here/bin/coddy" doctor | wc -l)" -eq 4
+
+# doctor in a project: a line per check, ok or the problem with its fix; exit 1 on any; writes nothing.
+dp="$tmp/dp"; git init -q --bare "$tmp/dorigin.git"; git clone -q "$tmp/dorigin.git" "$dp" 2>/dev/null
+(cd "$dp" && git checkout -q -b main && echo hi > README.md && git add -A && git commit -q -m init && git push -q -u origin main)
+dd() { CODDY_ROOT="$dp" "$here/bin/coddy" "$@"; }
+dsays() { dd doctor 2>&1 | grep -q "$1"; }
+t 0 "doctor: not onboarded" dsays '^config: none (fix: /coddy:onboard)$'
+t 1 "doctor: not onboarded exits 1" dd doctor
+printf 'version: 2\ntracker: github\nworktree: git\ndefault_branch: main\nverify: true\n' > "$dp/.coddy.yml"
+dd start 1 feat/1-x >/dev/null 2>&1
+mkdir -p "$dp/.github/workflows"; cp "$here/templates/coddy.yml" "$dp/.github/workflows/coddy.yml"
+awk '/^   <!-- coddy:begin -->$/,/^   <!-- coddy:end -->$/' "$here/skills/onboard/SKILL.md" | sed 's/^   //' > "$dp/AGENTS.md"
+t 0 "doctor: onboarded, started, PR check and AGENTS.md in place: all ok" dd doctor
+t 1 "doctor: and no check line that is not ok" sh -c "CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -E '^(config|worktree|default_branch|jq|git|jj|hooks|pr_check|agents_md): ' | grep -v ': ok'"
+before=$( (cd "$dp" && cat .git/config; git for-each-ref; find . -path ./.git -prune -o -path ./.worktrees -prune -o -type f -print | sort | xargs cksum) )
+dd doctor >/dev/null 2>&1
+t 0 "doctor: changes nothing" test "$before" = "$( (cd "$dp" && cat .git/config; git for-each-ref; find . -path ./.git -prune -o -path ./.worktrees -prune -o -type f -print | sort | xargs cksum) )"
+# prob <name> <line pattern> <break> <repair>: the break gives that line and exit 1, the repair restores all ok
+prob() { (cd "$dp" && eval "$3") >/dev/null 2>&1; t 0 "doctor: $1" dsays "$2"; t 1 "doctor: $1 exits 1" dd doctor; (cd "$dp" && eval "$4") >/dev/null 2>&1; t 0 "doctor: $1, repaired" dd doctor; }
+cp "$dp/.coddy.yml" "$tmp/dp.yml"
+prob "config behind" '^config: .*(fix: /coddy:migrate)' 'sed -i.bak "/^version:/d" .coddy.yml; rm .coddy.yml.bak' 'cp "$tmp/dp.yml" .coddy.yml'
+prob "unknown worktree" "^worktree: unknown value 'svn'" 'sed -i.bak "s/^worktree:.*/worktree: svn/" .coddy.yml; rm .coddy.yml.bak' 'cp "$tmp/dp.yml" .coddy.yml'
+prob "default_branch missing" '^default_branch: origin/main is missing' 'git update-ref -d refs/remotes/origin/main' 'git fetch -q origin'
+mkdir "$tmp/nojqd"; for x in bash sh sed awk cat grep git cmp ps head wc cut tr; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojqd/$x"; done
+t 0 "doctor: jq missing" says '^jq: missing (fix: install jq)' env PATH="$tmp/nojqd" CODDY_ROOT="$dp" "$BASH" "$here/bin/coddy" doctor
+sed -i.bak 's/^worktree:.*/worktree: jj/' "$dp/.coddy.yml"; rm "$dp/.coddy.yml.bak"
+ln -s "$(command -v jq)" "$tmp/nojqd/jq"
+t 0 "doctor: jj missing under worktree: jj" says '^jj: missing (fix: install jj' env PATH="$tmp/nojqd" CODDY_ROOT="$dp" "$BASH" "$here/bin/coddy" doctor
+cp "$tmp/dp.yml" "$dp/.coddy.yml"
+prob "core.hooksPath elsewhere" '^hooks: core.hooksPath is /elsewhere' 'git config core.hooksPath /elsewhere' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
+prob "a hook without coddy's header" '^hooks: pre-push is missing or not one coddy start wrote' 'cp .git/hooks/coddy/pre-push "$tmp/pp"; echo "#!/bin/sh" > .git/hooks/coddy/pre-push' 'cp "$tmp/pp" .git/hooks/coddy/pre-push'
+prob "the recorded coddy path gone" '^hooks: pre-commit runs .*which is gone' 'cp .git/hooks/coddy/pre-commit "$tmp/pc"; sed -i.bak "s#^c=.*#c=/nonexistent/coddy#" .git/hooks/coddy/pre-commit; rm .git/hooks/coddy/pre-commit.bak' 'cp "$tmp/pc" .git/hooks/coddy/pre-commit'
+prob "hooks not installed" '^hooks: core.hooksPath is not set.*(fix: /coddy:start <issue>)' 'git config --unset core.hooksPath' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
+prob "PR check missing" '^pr_check: .*is missing or not a plain file (fix: copy ' 'rm .github/workflows/coddy.yml' 'cp "$here/templates/coddy.yml" .github/workflows/coddy.yml'
+prob "PR check different" '^pr_check: .*differs from ' 'echo x >> .github/workflows/coddy.yml' 'cp "$here/templates/coddy.yml" .github/workflows/coddy.yml'
+prob "AGENTS.md missing" '^agents_md: AGENTS.md is missing' 'mv AGENTS.md "$tmp/am"' 'mv "$tmp/am" AGENTS.md'
+prob "AGENTS.md without the block" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; echo "# x" > AGENTS.md' 'cp "$tmp/am" AGENTS.md'
+prob "AGENTS.md with a lone marker" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; sed -i.bak "/coddy:end/d" AGENTS.md; rm AGENTS.md.bak' 'cp "$tmp/am" AGENTS.md'
+prob "AGENTS.md with reversed markers" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; sed -i.bak "s/coddy:begin/coddy:X/;s/coddy:end/coddy:begin/;s/coddy:X/coddy:end/" AGENTS.md; rm AGENTS.md.bak' 'cp "$tmp/am" AGENTS.md'
+sed -i.bak 's/^tracker:.*/tracker: jira/' "$dp/.coddy.yml"; rm "$dp/.coddy.yml.bak"; rm "$dp/.github/workflows/coddy.yml"
+t 0 "doctor: the PR check is not checked under jira" dd doctor
+cp "$tmp/dp.yml" "$dp/.coddy.yml"
 
 exit $fail

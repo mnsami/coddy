@@ -56,7 +56,7 @@ It clones `main` into `~/.coddy` (a rerun fast-forwards it, and stops on
 local changes to tracked files), links `coddy` into `~/.local/bin` and
 prints the line to add when that is not on your `PATH`. Your agent reads
 the skills as Markdown from `~/.coddy/skills/`, starting with
-`onboard/SKILL.md`. `coddy doctor` says which install a `coddy` runs from.
+`onboard/SKILL.md`. `coddy doctor` says which install a `coddy` runs from and, inside a project, what is missing or off (config, tools, git hooks, PR check, `AGENTS.md`), each with its fix; it exits 1 on any problem and changes nothing.
 The plugin keeps its own copy and does not use `~/.coddy`.
 
 You also need:

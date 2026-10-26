@@ -15,7 +15,7 @@
 #   coddy exclude answers | config  put the agent's coddy/ directory, or .coddy.yml, into git's info/exclude unless git ignores it already
 #   coddy forget answers            remove the agent's coddy/onboard-answers.json once the config is written
 #   coddy migrate                   the config brought up to the current schema version, for /coddy:migrate to write
-#   coddy doctor                    the install this runs from: its directory, how it got there, version and commit
+#   coddy doctor                    the install this runs from (its directory, how it got there, version and commit) and, in a project, what is missing or off, one line per check
 #   coddy guard                     PreToolUse hook on Edit/Write (hooks/hooks.json)
 #   coddy snap | trip               Pre/PostToolUse hooks on Bash
 #   coddy githook pre-commit|pre-push   the git hooks start installs under .git/hooks/coddy
@@ -49,8 +49,9 @@
 # 2026 Eric Tech: see THIRD_PARTY_NOTICES.md.
 set -u
 
-# The install this runs from, needing no project: its real directory, through
-# a PATH link or a shim that sources it; get.sh's when that is CODDY_HOME.
+# The install this runs from: its real directory, through a PATH link or a
+# shim that sources it; get.sh's when that is CODDY_HOME. Outside a project
+# that is all doctor prints; inside one, the checks after the config guard.
 if [ "${1-}" = doctor ]; then
   p="${BASH_SOURCE[0]-}" i=0; unset CDPATH # a CDPATH would send cd elsewhere and echo there
   [ -n "$p" ] || { echo "coddy: doctor needs to run from its file, not stdin" >&2; exit 1; }
@@ -64,7 +65,7 @@ if [ "${1-}" = doctor ]; then
   echo "via: $([ "$d" = "$h" ] && echo get.sh || echo other)"
   echo "version: ${v:-unknown}"
   echo "commit: ${c:-none}"
-  exit 0
+  inst=$d
 fi
 
 # The project's main checkout, from CODDY_ROOT or the working directory: the
@@ -83,7 +84,7 @@ fi
 # dir holds a commondir by design.
 dir="${CODDY_ROOT:-$PWD}" odd=""
 if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "$dir" && cd "$common/.." && pwd); then
-  rel=$(cd "$dir" && pwd -P); g=$rel
+  proj=1 rel=$(cd "$dir" && pwd -P); g=$rel
   while [ -n "$g" ] && [ ! -e "$g/.git" ] && [ ! -L "$g/.git" ]; do g=${g%/*}; done
   if [ -d "$g/.git" ] && { [ -e "$g/.git/commondir" ] || [ -L "$g/.git/commondir" ]; }; then
     odd="$g/.git/commondir"; if [ "$rel" = "$g" ]; then root=$(cd "$dir" && pwd); else root=$g; fi
@@ -1117,6 +1118,10 @@ if [ "${1-}" = githook ]; then
   printf %s "$in" | "$p" "$@"; exit
 fi
 
+if [ "${1-}" = doctor ]; then
+  [ -n "${proj-}" ] || exit 0
+  [ -f "$conf" ] || { echo "config: none (fix: /coddy:onboard)"; exit 1; }
+fi
 [ -f "$conf" ] || { [ "${1-}" = sweep ] && exit 0; die "NOT_ONBOARDED"; }
 # This file by a path the cd below leaves valid, for the git hooks start writes.
 src="${BASH_SOURCE[0]-}"; case "$src" in /*|'') ;; *) src="$PWD/$src" ;; esac
@@ -1169,12 +1174,47 @@ if [ "${1-}" = migrate ]; then
   echo "---"; printf '%s' "$out"; exit 0
 fi
 cmd="${1-}" issue="${2-}"
-[ "$cmd" = sweep ] || case "$issue" in ''|*[!A-Za-z0-9_-]*) die "issue id must look like 42 or ABC-123, got '$issue'" ;; esac
+[ "$cmd" = sweep ] || [ "$cmd" = doctor ] || case "$issue" in ''|*[!A-Za-z0-9_-]*) die "issue id must look like 42 or ABC-123, got '$issue'" ;; esac
 wt=".worktrees/$issue" rec=".git/coddy/$issue.branch"
 # No worktree key is git from version 2, jj below it (no version is 0, read as migrate does).
 tool=$(cfg worktree)
 if [ -z "$tool" ]; then v=$(cfg version | tr -d '[:space:]'); v=${v#"${v%%[!0]*}"}; case "$v" in ''|1) tool=jj ;; *) tool=git ;; esac; fi
 base=$(cfg default_branch); base="${base:-main}"
+
+# doctor in a project: one line per check, ok or the problem and a fix in plain
+# text, and exit 1 on any problem. Reads only: no write, no fetch, no hook run.
+if [ "$cmd" = doctor ]; then
+  bad=0
+  say() { echo "$1: $2"; case "$2" in ok*) ;; *) bad=1 ;; esac; }
+  # the same test migrate uses: a changed: line
+  if mig=$(CODDY_ROOT="$root" bash "$src" migrate 2>&1); then
+    if printf '%s\n' "$mig" | grep -q '^changed:'; then say config "$cname is behind the schema (fix: /coddy:migrate)"; else say config "ok ($cname)"; fi
+  else say config "$cname cannot be migrated: ${mig%%$'\n'*}"; fi
+  case "$tool" in git|jj) say worktree "ok ($tool)" ;; *) say worktree "unknown value '$tool' (fix: set it to git or jj with /coddy:config)" ;; esac
+  if git rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null 2>&1; then say default_branch "ok (origin/$base)"; else say default_branch "origin/$base is missing here (fix: fetch origin, or set default_branch with /coddy:config)"; fi
+  for x in jq git; do if command -v "$x" >/dev/null 2>&1; then say "$x" ok; else say "$x" "missing (fix: install $x)"; fi; done
+  if [ "$tool" = jj ]; then if command -v jj >/dev/null 2>&1; then say jj ok; else say jj "missing (fix: install jj, or set worktree to git with /coddy:config)"; fi; fi
+  hp=$(git config core.hooksPath) gd="$root/.git/hooks/coddy" e=""
+  case "$hp" in /*) [ "$hp" -ef "$gd" ] || e="core.hooksPath is $hp, not coddy's directory" ;; *) e="core.hooksPath is ${hp:-not set}, not coddy's directory" ;; esac
+  for h in pre-commit pre-push; do
+    [ -z "$e" ] || break
+    f="$gd/$h"
+    if ! { [ -f "$f" ] && [ ! -L "$f" ] && grep -q '^# Written by coddy start: ' "$f"; }; then e="$h is missing or not one coddy start wrote"; break; fi
+    c=$(sed -n "s/^c='\(.*\)'\$/\1/p" "$f" | head -1); c=${c//"'\\''"/"'"}
+    [ -x "$c" ] || command -v coddy >/dev/null 2>&1 || e="$h runs $c, which is gone, and coddy is not on PATH"
+  done
+  if [ -n "$e" ]; then say hooks "$e (fix: /coddy:start <issue>)"; else say hooks ok; fi
+  if [ "$(cfg tracker)" = github ]; then
+    w=.github/workflows/coddy.yml tpl="$inst/templates/coddy.yml"
+    if [ -L .github ] || [ -L .github/workflows ] || [ -L "$w" ] || [ ! -f "$w" ]; then say pr_check "$w is missing or not a plain file (fix: copy $tpl to $w)"
+    elif ! cmp -s "$w" "$tpl"; then say pr_check "$w differs from $tpl (fix: copy it over $w)"
+    else say pr_check ok; fi
+  fi
+  if [ -L AGENTS.md ] || [ ! -f AGENTS.md ]; then say agents_md "AGENTS.md is missing or not a plain file (fix: add the block in step 6 of $inst/skills/onboard/SKILL.md)"
+  elif awk '/<!-- coddy:begin -->/ { b++; if (!bl) bl = NR } /<!-- coddy:end -->/ { e++; if (!el) el = NR } END { exit !(b == 1 && e == 1 && bl < el) }' AGENTS.md; then say agents_md ok
+  else say agents_md "AGENTS.md needs exactly one coddy:begin marker before one coddy:end (fix: replace the block with the one in step 6 of $inst/skills/onboard/SKILL.md)"; fi
+  exit "$bad"
+fi
 
 # The worktree sits on branch $1: checked out (git), an ancestor of @ (jj).
 on() {
