@@ -1188,7 +1188,8 @@ base=$(cfg default_branch); base="${base:-main}"
 # text, and exit 1 on any problem. Reads only: no write, no fetch, no hook run.
 if [ "$cmd" = doctor ]; then
   bad=0
-  say() { echo "$1: $2"; case "$2" in ok*) ;; *) bad=1 ;; esac; }
+  # config, git and the hook files are the project's to write: no control character reaches the terminal
+  say() { echo "$1: $(printf %s "$2" | tr -d '[:cntrl:]')"; case "$2" in ok*) ;; *) bad=1 ;; esac; }
   # the same test migrate uses: a changed: line
   if mig=$(CODDY_ROOT="$root" bash "$src" migrate 2>&1); then
     if printf '%s\n' "$mig" | grep -q '^changed:'; then say config "$cname is behind the schema (fix: /coddy:migrate)"; else say config "ok ($cname)"; fi
@@ -1198,18 +1199,20 @@ if [ "$cmd" = doctor ]; then
   for x in jq git; do if command -v "$x" >/dev/null 2>&1; then say "$x" ok; else say "$x" "missing (fix: install $x)"; fi; done
   if [ "$tool" = jj ]; then if command -v jj >/dev/null 2>&1; then say jj ok; else say jj "missing (fix: install jj, or set worktree to git with /coddy:config)"; fi; fi
   hp=$(git config core.hooksPath) gd="$root/.git/hooks/coddy" e=""
-  case "$hp" in /*) [ "$hp" -ef "$gd" ] || e="core.hooksPath is $hp, not coddy's directory" ;; *) e="core.hooksPath is ${hp:-not set}, not coddy's directory" ;; esac
+  case "$hp" in /*) [ "$hp" -ef "$gd" ] || e="core.hooksPath is $hp, not coddy's directory" ;; *) if [ -n "$hp" ]; then e="core.hooksPath is $hp, not coddy's directory"; else e="core.hooksPath is not set"; fi ;; esac
   for h in pre-commit pre-push; do
     [ -z "$e" ] || break
     f="$gd/$h"
     if ! { [ -f "$f" ] && [ ! -L "$f" ] && grep -q '^# Written by coddy start: ' "$f"; }; then e="$h is missing or not one coddy start wrote"; break; fi
+    [ -x "$f" ] || { e="$h is not executable, so git skips it"; break; }
     c=$(sed -n "s/^c='\(.*\)'\$/\1/p" "$f" | head -1); c=${c//"'\\''"/"'"}
-    [ -x "$c" ] || command -v coddy >/dev/null 2>&1 || e="$h runs $c, which is gone, and coddy is not on PATH"
+    { [ -f "$c" ] && [ -x "$c" ]; } || command -v coddy >/dev/null 2>&1 || e="$h runs $c, which is gone, and coddy is not on PATH"
   done
   if [ -n "$e" ]; then say hooks "$e (fix: /coddy:start <issue>)"; else say hooks ok; fi
   if [ "$(cfg tracker)" = github ]; then
     w=.github/workflows/coddy.yml tpl="$inst/templates/coddy.yml"
     if [ -L .github ] || [ -L .github/workflows ] || [ -L "$w" ] || [ ! -f "$w" ]; then say pr_check "$w is missing or not a plain file (fix: copy $tpl to $w)"
+    elif [ ! -f "$tpl" ]; then say pr_check "the install has no $tpl to compare $w with (fix: reinstall coddy)"
     elif ! cmp -s "$w" "$tpl"; then say pr_check "$w differs from $tpl (fix: copy it over $w)"
     else say pr_check ok; fi
   fi

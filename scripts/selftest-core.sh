@@ -749,6 +749,7 @@ cp "$tmp/dp.yml" "$dp/.coddy.yml"
 prob "core.hooksPath elsewhere" '^hooks: core.hooksPath is /elsewhere' 'git config core.hooksPath /elsewhere' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
 prob "a hook without coddy's header" '^hooks: pre-push is missing or not one coddy start wrote' 'cp .git/hooks/coddy/pre-push "$tmp/pp"; echo "#!/bin/sh" > .git/hooks/coddy/pre-push' 'cp "$tmp/pp" .git/hooks/coddy/pre-push'
 prob "the recorded coddy path gone" '^hooks: pre-commit runs .*which is gone' 'cp .git/hooks/coddy/pre-commit "$tmp/pc"; sed -i.bak "s#^c=.*#c=/nonexistent/coddy#" .git/hooks/coddy/pre-commit; rm .git/hooks/coddy/pre-commit.bak' 'cp "$tmp/pc" .git/hooks/coddy/pre-commit'
+prob "a hook git would skip" '^hooks: pre-push is not executable' 'chmod -x .git/hooks/coddy/pre-push' 'chmod +x .git/hooks/coddy/pre-push'
 prob "hooks not installed" '^hooks: core.hooksPath is not set.*(fix: /coddy:start <issue>)' 'git config --unset core.hooksPath' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
 prob "PR check missing" '^pr_check: .*is missing or not a plain file (fix: copy ' 'rm .github/workflows/coddy.yml' 'cp "$here/templates/coddy.yml" .github/workflows/coddy.yml'
 prob "PR check different" '^pr_check: .*differs from ' 'echo x >> .github/workflows/coddy.yml' 'cp "$here/templates/coddy.yml" .github/workflows/coddy.yml'
