@@ -828,6 +828,21 @@ t 0 "doctor: a .git that is a gitdir: file is git_dir, naming the file" dsaysat 
 t 0 "doctor: and the fix is to open the session in the main checkout" dsaysat "$tmp/gl" 'fix: open the session in the main checkout, or remove the file by hand'
 t 1 "doctor: and exits 1" env CODDY_ROOT="$tmp/gl" "$here/bin/coddy" doctor
 rm -rf "$tmp/gl" "$tmp/glgit"
+# a start inside a bare repository nested in the project: git took no .git at its root, so the walk still reaches the project's own, whose commondir is refused
+mkdir -p "$dp/src"; git init -q --bare "$dp/src/b"; echo "$tmp/devil" > "$dp/.git/commondir"
+t 2 "guard: from a bare repository nested in the project, a commondir in the project's git dir is refused" gdir "$dp/src/b"
+t 2 "guard: and from its refs directory" gdir "$dp/src/b/refs"
+rm -rf "$dp/.git/commondir" "$dp/src"
+# a session outside any project whose .git directory leads to an onboarded repository: the root is that repository, so the hooks refuse
+mkdir -p "$tmp/d2/sub/.git" "$tmp/d2/.git/objects" "$tmp/d2/.git/refs"; echo 'ref: refs/heads/main' > "$tmp/d2/.git/HEAD"; echo "$dp/.git" > "$tmp/d2/.git/commondir"
+t 2 "guard: a commondir to an onboarded repository above a rejected .git is refused" gdir "$tmp/d2/sub"
+rm -rf "$tmp/d2"
+# a session in an absorbed submodule of an onboarded project: doctor names the .git file, not a missing config
+mkdir -p "$tmp/smsub" "$tmp/smsup"; git init -q "$tmp/smsub"; git -C "$tmp/smsub" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+git init -q "$tmp/smsup"; cp "$tmp/dp.yml" "$tmp/smsup/.coddy.yml"; git -C "$tmp/smsup" -c protocol.file.allow=always submodule add -q "$tmp/smsub" sm
+t 0 "doctor: a session in an absorbed submodule is git_dir, naming its .git file" dsaysat "$tmp/smsup/sm" "^git_dir: $tmp/smsup/sm/.git is a file naming a git dir elsewhere"
+t 1 "doctor: and exits 1" env CODDY_ROOT="$tmp/smsup/sm" "$here/bin/coddy" doctor
+rm -rf "$tmp/smsub" "$tmp/smsup"
 # a relative root naming no directory ends
 t 0 "root: a relative CODDY_ROOT naming no directory ends" timeout 10 env CODDY_ROOT=nosuchdir "$here/bin/coddy" status
 t 0 "root: and one with a slash" timeout 10 env CODDY_ROOT=no/such "$here/bin/coddy" status

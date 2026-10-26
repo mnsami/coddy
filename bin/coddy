@@ -99,17 +99,21 @@ isgit() {
 # the root there; so does a .git that is a link, or not a directory, at the
 # checkout. They are read without git: walking up from $dir past every .git
 # directory that is no repository (git walks past those too, isgit) and no
-# further than git's own root when that is at or above $dir (git took the .git
-# there, so nothing above it is the checkout's), the first .git is the checkout's and a link or a commondir in it is odd, and
+# further than git's own root when that is at or above $dir and git took a .git
+# there (not a bare repository's parent: nothing above a .git git took is the
+# checkout's), the first .git is the checkout's and a link or a commondir in it is odd, and
 # so is the root's own .git, which must be a real directory (whichever way
 # the root was found, so a worktree whose own .git is garbage does not skip
 # it). odd names what is wrong: the root stays the checkout's (git's root when
 # strictly above the link, else the nearest repository above holding a config,
 # when the link sits in a subdirectory with none, git failing there or not;
 # the root's own link leaves a root holding a config where it is, and moves one
-# without to the checkout only if that holds a config: an absorbed submodule's
-# .git file names git's root under .git/modules/, which holds none, so the
-# hooks stay inert there as git alone left them), and the
+# without to the checkout only if that holds a config; where the nearest
+# repository above holds none and git's root does, git's root, so oddly refuses
+# without running git: an absorbed submodule's .git file names git's root
+# under .git/modules/, which holds none, so the hooks stay inert there as git
+# alone left them, and doctor names that .git file rather than a missing
+# config), and the
 # hooks, which run git outside any sandbox, refuse (oddly). odd names the
 # .git that is odd, whichever root is kept; one above the project is never odd.
 # Where git fails the walk stops at
@@ -128,8 +132,9 @@ isgit() {
 # walk: g up from itself to the first .git that is a link, a repository or,
 # with $1, any file (a linked worktree's); git failed in a start with $1
 # empty, so a garbage .git file there is walked past too. It stops at $stop,
-# git's own root (physical) when that is at or above the start: git took the
-# .git there, whatever isgit says of it, so nothing above is the checkout's.
+# git's own root (physical) when that is at or above the start and git took a
+# .git there (its common dir is that root's own .git, not a bare repository's
+# parent), whatever isgit says of it, so nothing above is the checkout's.
 walk() {
   while [ -n "$g" ]; do
     if [ -L "$g/.git" ] || { [ -d "$g/.git" ] && { [ -e "$g/.git/commondir" ] || [ -L "$g/.git/commondir" ] || isgit "$g/.git"; }; }; then break
@@ -148,7 +153,7 @@ upcfg() {
 dir="${CODDY_ROOT:-$PWD}" odd="" proj="" back="" groot="" stop=""
 if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "$dir" && cd "$common/.." && pwd); then
   proj=1 groot=$root rel=$(cd "$dir" && pwd -P); g=$rel
-  pg=$(cd "$groot" && pwd -P); case "$rel/" in "${pg%/}"/*) stop=$pg ;; esac
+  pg=$(cd "$groot" && pwd -P); case "$rel/" in "${pg%/}"/*) [ "$(cd "$dir" && cd "$common" 2>/dev/null && pwd -P)" != "${pg%/}/.git" ] || stop=$pg ;; esac
   walk files
   if [ "$rel" = "$g" ]; then back=$(cd "$dir" && pwd); else back=$g; fi
   if [ -L "$g/.git" ]; then
@@ -163,6 +168,7 @@ if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "
   if [ -n "$odd" ] && [ ! -f "$root/.coddy.yml" ] && [ ! -f "$root/$legacy" ]; then
     pb=$(cd "$back" && pwd -P)
     case "$pb/" in "$(cd "$groot" && pwd -P)"/?*) root=$groot ;; *) upcfg "$pb" ;; esac
+    [ -f "$root/.coddy.yml" ] || [ -f "$root/$legacy" ] || { [ ! -f "$groot/.coddy.yml" ] && [ ! -f "$groot/$legacy" ]; } || root=$groot
   fi
   rel="${rel#"$root"/}"
   case "$dir" in */"$rel") root="${dir%/"$rel"}" ;; esac
@@ -1213,6 +1219,12 @@ fi
 if [ "${1-}" = doctor ]; then
   # a root outside git (a jj workspace with no .git) is a project when it holds a config
   [ -n "${proj-}" ] || [ -f "$conf" ] || exit 0
+  # a session in an absorbed submodule: root is the git dir under the superproject's, which has no .git
+  if [ "$odd" = "$root/.git" ] && [ ! -e "$odd" ] && [ ! -L "$odd" ] && [ -n "$back" ]; then
+    o=$odd odd=$back/.git
+    ! gitlink || { echo "git_dir: $odd $glmsg (fix: open the session in the main checkout, or remove the file by hand if it was not put there on purpose)"; exit 1; }
+    odd=$o
+  fi
   [ -f "$conf" ] || { echo "config: none (fix: /coddy:onboard)"; exit 1; }
   # no git call below runs against a git dir that points at another repository
   [ -z "$odd" ] || ! gitlink || { echo "git_dir: $odd $glmsg (fix: open the session in the main checkout, or remove the file by hand if it was not put there on purpose)"; exit 1; }
