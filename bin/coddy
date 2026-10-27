@@ -79,7 +79,7 @@ fi
 isgit() {
   local c=$1 m=""
   l=""; if [ -L "$1/HEAD" ]; then l="ref: $(readlink "$1/HEAD")"; elif [ -f "$1/HEAD" ]; then { IFS= read -r -d '' -n 1024 l < "$1/HEAD"; } 2>/dev/null; fi
-  [[ $l =~ ^(ref:[[:space:]]*refs/|[0-9a-fA-F]{40}) ]] || return 1
+  [[ $l =~ ^(ref:[$' \t\n\r']*refs/|[0-9a-fA-F]{40}) ]] || return 1
   if [ -e "$1/commondir" ]; then
     [ -f "$1/commondir" ] && { IFS= read -r -d '' -n 1024 m < "$1/commondir"; } 2>/dev/null
     m=${m%"${m##*[!$'\n\r']}"}; [ -n "$m" ] || return 1
@@ -221,6 +221,7 @@ if [ "$odd" = "$root/.git" ] && [ ! -e "$odd" ] && [ ! -L "$odd" ] && [ -n "$bac
 # The git_dir: line config, status and detect print, and doctor, in place of their output.
 gdmsg() {
   if gitlink; then echo "git_dir: $(printf %s "$odd" | tr -d '[:cntrl:]') $glmsg (fix: open the session in the main checkout, or remove the file by hand if it was not put there on purpose)"
+  elif [ ! -e "$odd" ] && [ ! -L "$odd" ]; then echo "git_dir: $(printf %s "$odd" | tr -d '[:cntrl:]') does not exist: the session started inside a bare repository nested in the project (fix: open the session in the main checkout)"
   else echo "git_dir: $(printf %s "$odd" | tr -d '[:cntrl:]') is not the main checkout's own git dir (fix: remove it$([ -L "$odd" ] || echo ", or put the .git directory back,") by hand)"; fi
 }
 # .coddy.yml when it exists, else the legacy file; trip asks again after it
@@ -334,6 +335,7 @@ oddly() {
     */commondir) die "${1-}$odd, which git never writes in a main checkout, points git there at another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you remove that file by hand." ;;
     *) [ ! -L "$odd" ] || die "${1-}$odd is a link, so git there reads another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you remove it by hand."
        ! gitlink || die "${1-}$odd $glmsg, so it refuses every edit and command until you open the session in the main checkout, or remove the file by hand if it was not put there on purpose."
+       [ -e "$odd" ] || die "${1-}$odd does not exist: the session started inside a bare repository nested in the project, where git reads another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you open the session in the main checkout."
        die "${1-}$odd is not a directory, so git there reads another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you put the main checkout's .git directory back by hand." ;;
   esac
 }
@@ -920,7 +922,7 @@ gid() { local l=""; [ -f "$1/.git" ] && { read -r -d '' -n 1024 l < "$1/.git"; }
 # reftable repository's stub included).
 headref() {
   [[ $l =~ ^[0-9a-fA-F]{40} ]] && return 0
-  [[ $l =~ ^ref:[[:space:]]*refs/heads/([^[:space:]]+)[[:space:]]*$ ]] && [[ /${BASH_REMATCH[1]} != */.* ]] || return 1
+  [[ $l =~ ^ref:[$' \t\n\r']*refs/heads/([^$' \t\n\r']+)[$' \t\n\r']*$ ]] && [[ /${BASH_REMATCH[1]} != */.* ]] || return 1
   echo "${BASH_REMATCH[1]}"
 }
 # The branch checked out in directory $1, physical, found as git finds it but
@@ -1240,9 +1242,9 @@ if [ "${1-}" = doctor ]; then
   # a root outside git (a jj workspace with no .git) is a project when it holds a config
   [ -n "${proj-}" ] || [ -f "$conf" ] || exit 0
   [ -z "$absorbed" ] || { gdmsg; exit 1; }
-  [ -f "$conf" ] || { echo "config: none (fix: /coddy:onboard)"; exit 1; }
   # no git call below runs against a git dir that points at another repository
   [ -z "$odd" ] || { gdmsg; exit 1; }
+  [ -f "$conf" ] || { echo "config: none (fix: /coddy:onboard)"; exit 1; }
 fi
 [ -z "$odd" ] || { [ "${1-}" = sweep ] && exit 0; oddly; }
 [ -f "$conf" ] || { [ "${1-}" = sweep ] && exit 0; die "NOT_ONBOARDED"; }

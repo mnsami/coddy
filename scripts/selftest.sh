@@ -765,6 +765,13 @@ mkdir -p src/.git; t 2 "root: a garbage .git dir in a subdirectory leaves the gu
 rm -rf src; mkdir src; echo garbage > src/.git
 t 2 "root: so does a garbage .git file, where git fails" hk "$repo/src" guard "$repo/README.md"
 rm -rf src
+# a HEAD git rejects (ref: then \v or \f) is no repository: a project holding one, below a repository, with a fatal .git between the start and it, runs no git in that repository
+git init -q "$tmp/vA"; git -C "$tmp/vA" config core.fsmonitor "$tmp/fsm.sh"
+for ws in $'\v' $'\f'; do
+  rm -rf "$tmp/vA/P"; mkdir -p "$tmp/vA/P/src/deep" "$tmp/vA/P/.git/objects" "$tmp/vA/P/.git/refs"; printf 'ref:%srefs/heads/main\n' "$ws" > "$tmp/vA/P/.git/HEAD"; echo garbage > "$tmp/vA/P/src/.git"; printf 'tracker: github\nworktree: git\n' > "$tmp/vA/P/.coddy.yml"
+  for h in snap trip; do rm -f "$tmp/fsm"; hk "$tmp/vA/P/src/deep" "$h" >/dev/null 2>&1; t 1 "root: a HEAD of ref: then $(printf %s "$ws" | od -An -c | tr -d ' ') is no repository, so $h runs no program of the one above" test -e "$tmp/fsm"; done
+done
+rm -rf "$tmp/vA"
 # a .git git takes itself (a link to a real repository) is no root above it; where git fails, the walk's stop gets the same fallback
 for lk in "$repo/.git" /etc/hosts; do
   rm -rf src; mkdir src; ln -s "$lk" src/.git

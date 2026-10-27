@@ -800,6 +800,16 @@ t 0 "doctor: a .git that is a link is git_dir" dsaysat "$dp/lsub" '^git_dir: '
 t 1 "doctor: and exits 1" env CODDY_ROOT="$dp/lsub" "$here/bin/coddy" doctor
 t 1 "doctor: and git ran none of its programs" test -e "$tmp/dfsm"
 rm -rf "$dp/lsub" "$tmp/devil"
+# a session started inside a bare repository nested two levels into the project: git's root, its parent, has no .git, so it is git_dir and says so; one level down roots at the project
+mkdir -p "$dp/bx/y"; git init -q --bare "$dp/bx/y/c.git"
+for st in bx/y/c.git bx/y/c.git/refs; do
+  t 0 "bare: from $st, doctor says the session started inside a bare repository" dsaysat "$dp/$st" '^git_dir: .*bare repository nested in the project'
+  t 1 "bare: and exits 1" env CODDY_ROOT="$dp/$st" "$here/bin/coddy" doctor
+  for v in config status detect; do t 0 "bare: and $v prints that line" sh -c "CODDY_ROOT='$dp/$st' '$here/bin/coddy' $v | grep -q '^git_dir: .*bare repository nested in the project'"; done
+done
+rm -rf "$dp/bx"; git init -q --bare "$dp/bc.git"
+t 0 "bare: one level down, doctor is not git_dir" sh -c "! CODDY_ROOT='$dp/bc.git' '$here/bin/coddy' doctor 2>&1 | grep -q '^git_dir: '"
+rm -rf "$dp/bc.git"
 # the same with no config in the subdirectory, and a commondir to nowhere
 mkdir -p "$dp/lsub"; ln -s /nowhere "$dp/lsub/.git"
 t 0 "doctor: a .git link in a subdirectory with no config is git_dir" dsaysat "$dp/lsub" '^git_dir: '
