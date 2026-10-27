@@ -470,8 +470,8 @@ t 0 "a verb runs from stdin" sh -c "bash -s state 1 < '$here/bin/coddy'"
 # macOS ships bash 3.2 as /bin/bash (5.x elsewhere): every script must parse there, and a [!a-z] class must not pass upper case in a UTF-8 locale
 if [ -x /bin/bash ]; then
   for f in "$here"/scripts/*.sh "$here/bin/coddy" "$here/get.sh"; do t 0 "/bin/bash: ${f#$here/} parses" /bin/bash -n "$f"; done
-  t 1 "/bin/bash: state refuses a key with an upper-case letter in a UTF-8 locale" env -u LC_ALL LANG=en_US.UTF-8 /bin/bash "$here/bin/coddy" state 1 Key=x
-  t 0 "/bin/bash: and for the key, not the lock" says "lower case words" env -u LC_ALL LANG=en_US.UTF-8 /bin/bash "$here/bin/coddy" state 1 Key=x
+  t 1 "/bin/bash: state refuses a key with an upper-case letter in a UTF-8 locale" env LC_ALL=en_US.UTF-8 /bin/bash "$here/bin/coddy" state 1 Key=x
+  t 0 "/bin/bash: and for the key, not the lock" says "lower case words" env LC_ALL=en_US.UTF-8 /bin/bash "$here/bin/coddy" state 1 Key=x
 fi
 t 1 "start from stdin fails" sh -c "bash -s start 1 feat/1-thing < '$here/bin/coddy'"
 t 0 "and says why" says 'not stdin' sh -c "bash -s start 1 feat/1-thing < '$here/bin/coddy'"
