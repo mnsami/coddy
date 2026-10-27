@@ -98,6 +98,8 @@ sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s|never a `bin/coddy`|never a copy|' "$her
 t 1 "one whose fallback drops the never-a-bin/coddy clause fails it" fallback "$tmp/next.md" status
 sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s/\$ARGUMENTS/$ARGS/' "$here/skills/triage/SKILL.md" > "$tmp/triage.md"
 t 1 "one whose fallback drops its variable fails it" fallback "$tmp/triage.md" status '$ARGUMENTS'
+# Every skill stops on a git_dir: line, which config, status and detect print in place of their output.
+for f in "$here"/skills/*/SKILL.md; do t 0 "skill $(basename "$(dirname "$f")") stops on a git_dir: line" grep -q 'git_dir:` line.*stop and show that line as it is' "$f"; done
 t 1 "no skill carries the injection syntax inside a line, which Claude Code would run" grep -qE '.!`' "$here"/skills/*/SKILL.md
 t 0 "onboard names the AGENTS.md begin marker" grep -qF '<!-- coddy:begin -->' "$here/skills/onboard/SKILL.md"
 t 0 "onboard names the AGENTS.md end marker" grep -qF '<!-- coddy:end -->' "$here/skills/onboard/SKILL.md"
@@ -627,6 +629,9 @@ t 0 "push: a git dir that is no repository passes with a message" noted 'could n
 # whose objects and refs come through its commondir.
 bare="$tmp/bare"; mkdir -p "$bare/objects" "$bare/refs"; printf 'ref: refs/heads/main\n' > "$bare/HEAD"
 t 2 "push: refused, HEAD read from a bare repository" shell "git -C '$bare' push origin HEAD" "$tmp"
+# a HEAD git accepts with whitespace after ref: is read whole, not cut at 255 characters
+for n in 237 240 246; do printf 'ref:%*srefs/heads/main\n' "$n" '' > "$bare/HEAD"; t 2 "push: refused, HEAD padded with $n blanks" shell "git -C '$bare' push origin HEAD" "$tmp"; t 2 "push: and by --git-dir, $n blanks" shell "git --git-dir='$bare' push origin HEAD" "$tmp"; done
+printf 'ref: refs/heads/main\n' > "$bare/HEAD"
 cm="$tmp/cm"; mkdir -p "$cm/.git/objects" "$cm/.git/refs" "$cm/sub/.git"; printf 'ref: refs/heads/feat\n' > "$cm/.git/HEAD"
 printf 'ref: refs/heads/main\n' > "$cm/sub/.git/HEAD"; printf '../../.git\r\n' > "$cm/sub/.git/commondir"
 t 0 "push: the enclosing repository's branch passes, saying nothing" silent 'git push origin HEAD' "$cm"
@@ -724,10 +729,145 @@ for cd in ../.evilgit "$tmp/evil/.git"; do
   t 2 "commondir: guard refuses every edit: $cd" guard "$repo/.claude/x"
   t 2 "commondir: from a linked worktree too: $cd" lw snap w
   t 1 "commondir: and git ran none of its programs: $cd" test -e "$tmp/fsm"
+  mkdir -p .worktrees/85; echo garbage > .worktrees/85/.git; rm -f "$tmp/fsm"
+  t 2 "commondir: snap refuses from a worktree whose .git is garbage: $cd" sh -c "printf '{\"tool_use_id\":\"w\"}' | CLAUDE_PROJECT_DIR='$repo/.worktrees/85' bash '$here/scripts/issue.sh' snap"
+  t 1 "commondir: and that ran none of its programs: $cd" test -e "$tmp/fsm"
+  rm -rf .worktrees/85
   rm .git/commondir
 done
 rm -rf .evilgit "$tmp/evil/.coddy.yml"; git worktree remove --force .worktrees/82
 tripped 0 "commondir: removed, the hooks are back" 'true'
+# The hooks find the checkout's git dir the way git does, without git: past a
+# .git directory that is no repository (an empty one under .worktrees/<id>
+# or a subdirectory, which git walks past to the commondir it would
+# follow), refusing a .git that is a link, and putting the root back at the
+# checkout when the root's .git is a gitdir: file naming one elsewhere.
+hk() { printf '{"tool_use_id":"w","tool_input":{"file_path":"%s"}}' "${3-/x}" | CLAUDE_PROJECT_DIR="$1" bash "$here/scripts/issue.sh" "$2"; }
+printf 'tracker: github\nworktree: git\n' > "$tmp/evil/.coddy.yml"; echo "$tmp/evil/.git" > .git/commondir
+mkdir -p .worktrees/87/.git src/deep/.git; rm -f "$tmp/fsm"
+t 2 "root: snap refuses from a worktree holding an empty .git dir" hk "$repo/.worktrees/87" snap
+t 2 "root: and from a subdirectory holding one" hk "$repo/src/deep" snap
+t 1 "root: and git ran none of its programs" test -e "$tmp/fsm"
+rm -rf .worktrees/87 src .git/commondir "$tmp/evil/.coddy.yml"
+rm -f "$tmp/fsm"; mkdir src; ln -s "$tmp/evil/.git" src/.git; printf 'tracker: github\nworktree: git\n' > src/.coddy.yml
+t 2 "root: snap refuses a .git that is a link, in a subdirectory" hk "$repo/src" snap
+t 2 "root: and guard" hk "$repo/src" guard "$repo/src/x"
+t 1 "root: and git ran none of its programs" test -e "$tmp/fsm"
+rm -rf src
+# no config in the subdirectory: the root stays at git's, so the hooks still refuse
+for lk in /nowhere "$tmp"; do
+  rm -rf src; mkdir src; ln -s "$lk" src/.git
+  t 2 "root: a .git link to $lk in a subdirectory with no config refuses guard" hk "$repo/src" guard "$repo/src/x"
+  t 2 "root: and snap" hk "$repo/src" snap
+done
+rm -rf src; mkdir -p src/.git; echo /nowhere > src/.git/commondir
+t 2 "root: a commondir to nowhere in a subdirectory with no config refuses guard" hk "$repo/src" guard "$repo/src/x"
+t 2 "root: and snap" hk "$repo/src" snap
+rm -rf src
+mkdir -p src/.git; t 2 "root: a garbage .git dir in a subdirectory leaves the guard on" hk "$repo/src" guard "$repo/README.md"
+rm -rf src; mkdir src; echo garbage > src/.git
+t 2 "root: so does a garbage .git file, where git fails" hk "$repo/src" guard "$repo/README.md"
+rm -rf src
+# a HEAD git rejects (ref: then \v or \f) is no repository: a project holding one, below a repository, with a fatal .git between the start and it, runs no git in that repository
+git init -q "$tmp/vA"; git -C "$tmp/vA" config core.fsmonitor "$tmp/fsm.sh"
+for ws in $'\v' $'\f'; do
+  rm -rf "$tmp/vA/P"; mkdir -p "$tmp/vA/P/src/deep" "$tmp/vA/P/.git/objects" "$tmp/vA/P/.git/refs"; printf 'ref:%srefs/heads/main\n' "$ws" > "$tmp/vA/P/.git/HEAD"; echo garbage > "$tmp/vA/P/src/.git"; printf 'tracker: github\nworktree: git\n' > "$tmp/vA/P/.coddy.yml"
+  for h in snap trip; do rm -f "$tmp/fsm"; hk "$tmp/vA/P/src/deep" "$h" >/dev/null 2>&1; t 1 "root: a HEAD of ref: then $(printf %s "$ws" | od -An -c | tr -d ' ') is no repository, so $h runs no program of the one above" test -e "$tmp/fsm"; done
+done
+rm -rf "$tmp/vA"
+# a .git git takes itself (a link to a real repository) is no root above it; where git fails, the walk's stop gets the same fallback
+for lk in "$repo/.git" /etc/hosts; do
+  rm -rf src; mkdir src; ln -s "$lk" src/.git
+  t 2 "root: a .git link to $lk in a subdirectory with no config refuses guard" hk "$repo/src" guard "$repo/src/x"
+  t 2 "root: and snap" hk "$repo/src" snap
+done
+rm -rf src; mkdir -p src/.git "$tmp/cd"; ln -s "$tmp/cd" src/.git/commondir
+t 2 "root: a commondir link to a directory in a subdirectory with no config refuses guard" hk "$repo/src" guard "$repo/src/x"
+t 2 "root: and snap" hk "$repo/src" snap
+rm -rf src "$tmp/cd"
+# a session in a linked git worktree, the checkout's .git swapped for a link
+mkdir -p "$tmp/f6"; git init -q "$tmp/f6"; git -C "$tmp/f6" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+printf 'tracker: github\nworktree: git\n' > "$tmp/f6/.coddy.yml"; git -C "$tmp/f6" worktree add -q --detach .worktrees/5
+mv "$tmp/f6/.git" "$tmp/f6/.gitx"; ln -s .gitx "$tmp/f6/.git"
+t 2 "root: a session in a linked worktree, the checkout's .git a link, refuses guard" hk "$tmp/f6/.worktrees/5" guard "$tmp/f6/x"
+t 2 "root: and snap" hk "$tmp/f6/.worktrees/5" snap
+t 0 "root: and the message says the link is to be removed" sh -c "hk() { printf '{\"tool_input\":{\"file_path\":\"/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/f6/.worktrees/5' bash '$here/scripts/issue.sh' guard 2>&1; }; hk | grep -qF '$tmp/f6/.git is a link'"
+rm -rf "$tmp/f6"
+mkdir -p "$tmp/f4"; git init -q "$tmp/f4"; printf 'tracker: github\nworktree: git\n' > "$tmp/f4/.coddy.yml"
+mv "$tmp/f4/.git" "$tmp/f4git"; echo "gitdir: $tmp/f4git" > "$tmp/f4/.git"
+t 2 "root: a root .git that is a gitdir: file elsewhere refuses snap" hk "$tmp/f4" snap
+t 2 "root: and guard" hk "$tmp/f4" guard "$tmp/f4/x"
+t 0 "root: and the message names the file and says to open the session in the main checkout" sh -c "hk() { printf '{\"tool_input\":{\"file_path\":\"/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/f4' bash '$here/scripts/issue.sh' guard 2>&1; }; hk | grep -F '$tmp/f4/.git is a file naming a git dir elsewhere' | grep -qF 'open the session in the main checkout, or remove the file by hand'"
+mkdir -p "$tmp/f5/.claude"; printf 'tracker: github\nworktree: git\n' > "$tmp/f5/.coddy.yml"
+t 0 "root: a plain root with no .git passes guard with proj set in the environment" env proj=1 bash -c "printf '{\"tool_input\":{\"file_path\":\"$tmp/f5/.claude/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/f5' bash '$here/scripts/issue.sh' guard"
+t 0 "root: and snap" env proj=1 bash -c "printf '{\"tool_use_id\":\"w\"}' | CLAUDE_PROJECT_DIR='$tmp/f5' bash '$here/scripts/issue.sh' snap"
+rm -rf "$tmp/f4" "$tmp/f4git" "$tmp/f5"
+# groot in the environment moves nothing: git failing in a subdirectory with no config still gets the fallback
+rm -rf src; mkdir src; ln -s /etc/hosts src/.git
+t 2 "root: a groot in the environment leaves a .git link, where git fails, refusing guard" env groot="$repo/src" bash -c "printf '{\"tool_input\":{\"file_path\":\"$repo/src/x\"}}' | CLAUDE_PROJECT_DIR='$repo/src' bash '$here/scripts/issue.sh' guard"
+t 2 "root: and snap" env groot="$repo/src" bash -c "printf '{\"tool_use_id\":\"w\"}' | CLAUDE_PROJECT_DIR='$repo/src' bash '$here/scripts/issue.sh' snap"
+rm -rf src
+# a session in an absorbed submodule of an onboarded project: git's root there is .git/modules/, which holds no config, so the hooks are inert as ever
+mkdir -p "$tmp/f7/.claude"; git init -q "$tmp/f7"; git -C "$tmp/f7" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+printf 'tracker: github\nworktree: git\n' > "$tmp/f7/.coddy.yml"; git init -q "$tmp/f7sub"; git -C "$tmp/f7sub" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+git -C "$tmp/f7" -c protocol.file.allow=always submodule add -q "$tmp/f7sub" vendor/sub >/dev/null 2>&1
+t 0 "root: a session in an absorbed submodule of an onboarded project passes guard" hk "$tmp/f7/vendor/sub" guard "$tmp/f7/README.md"
+t 0 "root: and snap" hk "$tmp/f7/vendor/sub" snap
+t 2 "root: while the project's own checkout still refuses guard" hk "$tmp/f7" guard "$tmp/f7/README.md"
+rm -rf "$tmp/f7" "$tmp/f7sub"
+# an onboarded submodule (its .git a gitdir: file naming a git dir elsewhere) stays refused, the message saying what to do
+mkdir -p "$tmp/f9"; git init -q "$tmp/f9"; git -C "$tmp/f9" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+git init -q "$tmp/f9sub"; git -C "$tmp/f9sub" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+git -C "$tmp/f9" -c protocol.file.allow=always submodule add -q "$tmp/f9sub" vendor/sub >/dev/null 2>&1
+printf 'tracker: github\nworktree: git\n' > "$tmp/f9/vendor/sub/.coddy.yml"
+t 2 "root: a session in a submodule holding its own config refuses guard" hk "$tmp/f9/vendor/sub" guard "$tmp/f9/vendor/sub/x"
+t 2 "root: and snap" hk "$tmp/f9/vendor/sub" snap
+t 0 "root: and the message names its .git, a git dir elsewhere, a submodule and the main checkout" sh -c "hk() { printf '{\"tool_input\":{\"file_path\":\"/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/f9/vendor/sub' bash '$here/scripts/issue.sh' guard 2>&1; }; hk | grep -F '$tmp/f9/vendor/sub/.git is a file naming a git dir elsewhere' | grep -F 'a submodule or a bare repository' | grep -qF 'open the session in the main checkout'"
+rm -rf "$tmp/f9" "$tmp/f9sub"
+# a git-less onboarded root (a jj project outside git) keeps its own root whatever .git sits above it, as it always did
+mkdir -p "$tmp/g1/proj"; printf 'tracker: github\nworktree: jj\n' > "$tmp/g1/proj/.coddy.yml"
+for lk in /nowhere /etc/hosts; do
+  rm -rf "$tmp/g1/.git"; ln -s "$lk" "$tmp/g1/.git"
+  t 0 "root: a git-less onboarded root under a .git link to $lk allows an agent-dir edit" hk "$tmp/g1/proj" guard "$tmp/g1/proj/.claude/x"
+  t 0 "root: and from .worktrees/<id>" hk "$tmp/g1/proj/.worktrees/5" guard "$tmp/g1/proj/.claude/x"
+done
+rm -rf "$tmp/g1/.git"; mkdir -p "$tmp/g1/.git"; echo /nowhere > "$tmp/g1/.git/commondir"
+t 0 "root: a git-less onboarded root under a commondir to nowhere allows an agent-dir edit" hk "$tmp/g1/proj" guard "$tmp/g1/proj/.claude/x"
+t 0 "root: and from .worktrees/<id>" hk "$tmp/g1/proj/.worktrees/5" guard "$tmp/g1/proj/.claude/x"
+# an uppercased detached HEAD is a repository to git: the walk stops at git's root, so a link or commondir above the project moves nothing
+mkdir -p "$tmp/g3"; git init -q "$tmp/g3/proj"; git -C "$tmp/g3/proj" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+printf 'tracker: github\nworktree: git\n' > "$tmp/g3/proj/.coddy.yml"
+git -C "$tmp/g3/proj" rev-parse HEAD | tr a-f A-F > "$tmp/g3/proj/.git/HEAD"
+ln -s /nowhere "$tmp/g3/.git"
+t 2 "root: an uppercase HEAD under a dangling .git link above still refuses guard on a main-checkout edit" hk "$tmp/g3/proj" guard "$tmp/g3/proj/x"
+t 0 "root: and allows an agent-dir edit" hk "$tmp/g3/proj" guard "$tmp/g3/proj/.claude/x"
+rm -f "$tmp/g3/.git"; mkdir "$tmp/g3/.git"; echo /nowhere > "$tmp/g3/.git/commondir"
+t 2 "root: and under a commondir above, guard refuses a main-checkout edit" hk "$tmp/g3/proj" guard "$tmp/g3/proj/x"
+t 0 "root: and the agent dir is allowed" hk "$tmp/g3/proj" guard "$tmp/g3/proj/.claude/x"
+rm -rf "$tmp/g3"
+rm -rf "$tmp/g1"
+# a project with no config nested in an onboarded repository, its .git renamed, a session in .worktrees/<id> whose .git is a link: the config above is no config of the project's
+mkdir -p "$tmp/g2/p/.worktrees/5/.gitdirx"; git init -q "$tmp/g2"; printf 'tracker: github\nworktree: git\n' > "$tmp/g2/.coddy.yml"
+git init -q "$tmp/g2/p"; mv "$tmp/g2/p/.git" "$tmp/g2/p/.gitx"; rmdir "$tmp/g2/p/.worktrees/5/.gitdirx"; ln -s /etc/hosts "$tmp/g2/p/.worktrees/5/.git"
+t 0 "root: a project with no config nested in an onboarded one stays inert from .worktrees/<id>, guard" hk "$tmp/g2/p/.worktrees/5" guard "$tmp/g2/p/x"
+t 0 "root: and snap" hk "$tmp/g2/p/.worktrees/5" snap
+rm -rf "$tmp/g2"
+# the root's .git a link and the session's own directory holding the config: the message names the link
+mkdir -p "$tmp/g3"; git init -q "$tmp/g3"; git -C "$tmp/g3" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+git -C "$tmp/g3" worktree add -q --detach .worktrees/5; printf 'tracker: github\nworktree: git\n' > "$tmp/g3/.worktrees/5/.coddy.yml"
+mv "$tmp/g3/.git" "$tmp/g3/.gitx"; ln -s .gitx "$tmp/g3/.git"
+t 2 "root: a root with no config whose .git is a link, a worktree holding one, refuses guard" hk "$tmp/g3/.worktrees/5" guard "$tmp/g3/x"
+t 0 "root: and the message names the root's .git, the link" sh -c "hk() { printf '{\"tool_input\":{\"file_path\":\"/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/g3/.worktrees/5' bash '$here/scripts/issue.sh' guard 2>&1; }; hk | grep -qF '$tmp/g3/.git is a link'"
+rm -rf "$tmp/g3"
+# a project nested in another repository, its .git renamed, a session in .worktrees/<id>: the walk stops at the project the path names, so the guard stays on as git failing there always left it
+mkdir -p "$tmp/f8"; git init -q "$tmp/f8"; git -C "$tmp/f8" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+mkdir -p "$tmp/f8/p/.claude"; git init -q "$tmp/f8/p"; git -C "$tmp/f8/p" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+printf 'tracker: github\nworktree: git\n' > "$tmp/f8/p/.coddy.yml"; git -C "$tmp/f8/p" worktree add -q --detach .worktrees/5
+mv "$tmp/f8/p/.git" "$tmp/f8/p/.gitx"
+t 2 "root: a nested project, its .git renamed, refuses guard from .worktrees/<id>" hk "$tmp/f8/p/.worktrees/5" guard "$tmp/f8/p/x"
+rm -f "$tmp/f8/p/.worktrees/5/.git"; ln -s /etc/hosts "$tmp/f8/p/.worktrees/5/.git"
+t 2 "root: and snap, the worktree's own .git a link" hk "$tmp/f8/p/.worktrees/5" snap
+rm -rf "$tmp/f8"
 git worktree add -q --detach .worktrees/84
 # A worktree git moved out of .worktrees/<id>/ was not made.
 wire snap w; git worktree move .worktrees/84 "$wo" >/dev/null 2>&1

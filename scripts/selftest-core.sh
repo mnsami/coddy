@@ -702,17 +702,238 @@ t 0 "get.sh: a trailing / on CODDY_HOME is dropped" says "^cloned: $tmp/h9 at " 
 t 0 "get.sh: from the link too" test "$(readlink "$tmp/b9/coddy")" = "$tmp/h9/bin/coddy"
 t 0 "doctor: from stdin says why it cannot" says 'not stdin' sh -c "bash -s doctor < '$here/bin/coddy'"
 # doctor names the install it runs from: get.sh's through the PATH link, another from a checkout.
-doc() { HOME="$gh" CODDY_HOME="$cs" "$@" doctor; }
+# CODDY_ROOT names no project here ($tmp is no repository), so only the install prints.
+doc() { HOME="$gh" CODDY_HOME="$cs" CODDY_ROOT="$tmp" "$@" doctor; }
 t 0 "doctor: through the link, the real install dir" says "^install: $(cd "$cs" && pwd -P)\$" doc "$gh/bin/coddy"
 t 0 "doctor: via get.sh" says '^via: get.sh$' doc "$gh/bin/coddy"
 t 0 "doctor: the installed commit" says "^commit: $(sha)\$" doc "$gh/bin/coddy"
 t 0 "doctor: the version" says "^version: $(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$here/.claude-plugin/plugin.json")\$" doc "$gh/bin/coddy"
 t 0 "doctor: from this checkout, via other" says '^via: other$' doc "$here/bin/coddy"
 t 0 "doctor: naming this checkout" says "^install: $(cd "$here" && pwd -P)\$" doc "$here/bin/coddy"
-t 0 "doctor: with no HOME" says '^via: other$' env -u HOME -u CODDY_HOME "$here/bin/coddy" doctor
-t 1 "doctor: and no unbound variable" says 'unbound' env -u HOME -u CODDY_HOME "$here/bin/coddy" doctor
-t 0 "doctor: a CDPATH does not move it" sh -c "cd '$here' && CDPATH='$gh' HOME='$gh' bash bin/coddy doctor | grep -qx 'install: $(cd "$here" && pwd -P)'"
+t 0 "doctor: with no HOME" says '^via: other$' env -u HOME -u CODDY_HOME CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
+t 1 "doctor: and no unbound variable" says 'unbound' env -u HOME -u CODDY_HOME CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
+t 0 "doctor: a CDPATH does not move it" sh -c "cd '$here' && CDPATH='$gh' HOME='$gh' CODDY_ROOT='$tmp' bash bin/coddy doctor | grep -qx 'install: $(cd "$here" && pwd -P)'"
 mkdir -p "$tmp/dl/real/bin" "$tmp/dl/x"; cp "$here/bin/coddy" "$tmp/dl/real/bin/"; ln -s ../real/bin "$tmp/dl/x/bin"
-t 0 "doctor: through a linked bin/, the real install dir" says "^install: $(cd "$tmp/dl/real" && pwd -P)\$" "$tmp/dl/x/bin/coddy" doctor
+t 0 "doctor: through a linked bin/, the real install dir" says "^install: $(cd "$tmp/dl/real" && pwd -P)\$" env CODDY_ROOT="$tmp" "$tmp/dl/x/bin/coddy" doctor
+t 0 "doctor: outside a project, the four install lines alone" test "$(CODDY_ROOT="$tmp" "$here/bin/coddy" doctor | wc -l)" -eq 4
+
+# doctor in a project: a line per check, ok or the problem with its fix; exit 1 on any; writes nothing.
+dp="$tmp/dp"; git init -q --bare "$tmp/dorigin.git"; git clone -q "$tmp/dorigin.git" "$dp" 2>/dev/null
+(cd "$dp" && git checkout -q -b main && echo hi > README.md && git add -A && git commit -q -m init && git push -q -u origin main)
+dd() { CODDY_ROOT="$dp" "$here/bin/coddy" "$@"; }
+dsaysat() { CODDY_ROOT="$1" "$here/bin/coddy" doctor 2>&1 | grep -q "$2"; }
+dsays() { dd doctor 2>&1 | grep -q "$1"; }
+t 0 "doctor: not onboarded" dsays '^config: none (fix: /coddy:onboard)$'
+t 1 "doctor: not onboarded exits 1" dd doctor
+printf 'version: 2\ntracker: github\nworktree: git\ndefault_branch: main\nverify: true\n' > "$dp/.coddy.yml"
+dd start 1 feat/1-x >/dev/null 2>&1
+mkdir -p "$dp/.github/workflows"; cp "$here/templates/coddy.yml" "$dp/.github/workflows/coddy.yml"
+awk '/^   <!-- coddy:begin -->$/,/^   <!-- coddy:end -->$/' "$here/skills/onboard/SKILL.md" | sed 's/^   //' > "$dp/AGENTS.md"
+t 0 "doctor: onboarded, started, PR check and AGENTS.md in place: all ok" dd doctor
+t 1 "doctor: and no check line that is not ok" sh -c "CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -E '^(config|worktree|default_branch|jq|git|jj|hooks|pr_check|agents_md): ' | grep -v ': ok'"
+before=$( (cd "$dp" && cat .git/config; git for-each-ref; find . -path ./.git -prune -o -path ./.worktrees -prune -o -type f -print | sort | xargs cksum) )
+dd doctor >/dev/null 2>&1
+t 0 "doctor: changes nothing" test "$before" = "$( (cd "$dp" && cat .git/config; git for-each-ref; find . -path ./.git -prune -o -path ./.worktrees -prune -o -type f -print | sort | xargs cksum) )"
+# prob <name> <line pattern> <break> <repair>: the break gives that line and exit 1, the repair restores all ok
+prob() { (cd "$dp" && eval "$3") >/dev/null 2>&1; t 0 "doctor: $1" dsays "$2"; t 1 "doctor: $1 exits 1" dd doctor; (cd "$dp" && eval "$4") >/dev/null 2>&1; t 0 "doctor: $1, repaired" dd doctor; }
+cp "$dp/.coddy.yml" "$tmp/dp.yml"
+prob "config behind" '^config: .*(fix: /coddy:migrate)' 'sed -i.bak "/^version:/d" .coddy.yml; rm .coddy.yml.bak' 'cp "$tmp/dp.yml" .coddy.yml'
+prob "unknown worktree" "^worktree: unknown value 'svn'" 'sed -i.bak "s/^worktree:.*/worktree: svn/" .coddy.yml; rm .coddy.yml.bak' 'cp "$tmp/dp.yml" .coddy.yml'
+prob "default_branch missing" '^default_branch: origin/main is missing' 'git update-ref -d refs/remotes/origin/main' 'git fetch -q origin'
+mkdir "$tmp/nojqd"; for x in bash sh sed awk cat grep git cmp ps head wc cut tr; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojqd/$x"; done
+t 0 "doctor: jq missing" says '^jq: missing (fix: install jq)' env PATH="$tmp/nojqd" CODDY_ROOT="$dp" "$BASH" "$here/bin/coddy" doctor
+sed -i.bak 's/^worktree:.*/worktree: jj/' "$dp/.coddy.yml"; rm "$dp/.coddy.yml.bak"
+ln -s "$(command -v jq)" "$tmp/nojqd/jq"
+t 0 "doctor: jj missing under worktree: jj" says '^jj: missing (fix: install jj' env PATH="$tmp/nojqd" CODDY_ROOT="$dp" "$BASH" "$here/bin/coddy" doctor
+cp "$tmp/dp.yml" "$dp/.coddy.yml"
+prob "core.hooksPath elsewhere" '^hooks: core.hooksPath is /elsewhere' 'git config core.hooksPath /elsewhere' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
+prob "a hook without coddy's header" '^hooks: pre-push is missing or not one coddy start wrote' 'cp .git/hooks/coddy/pre-push "$tmp/pp"; echo "#!/bin/sh" > .git/hooks/coddy/pre-push' 'cp "$tmp/pp" .git/hooks/coddy/pre-push'
+# written quoted as start writes it, and run under a PATH without coddy: the fallback to `command -v coddy` must not hide it
+(cd "$dp" && cp .git/hooks/coddy/pre-commit "$tmp/pc" && sed -i.bak "s#^c=.*#c='/nonexistent/coddy'#" .git/hooks/coddy/pre-commit && rm .git/hooks/coddy/pre-commit.bak)
+t 0 "doctor: the recorded coddy path gone" sh -c "PATH=/usr/bin:/bin CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -q '^hooks: pre-commit runs /nonexistent/coddy, which is gone'"
+t 1 "doctor: the recorded coddy path gone exits 1" env PATH=/usr/bin:/bin CODDY_ROOT="$dp" "$here/bin/coddy" doctor
+(cd "$dp" && cp "$tmp/pc" .git/hooks/coddy/pre-commit)
+prob "a hook git would skip" '^hooks: pre-push is not executable' 'chmod -x .git/hooks/coddy/pre-push' 'chmod +x .git/hooks/coddy/pre-push'
+prob "hooks not installed" '^hooks: core.hooksPath is not set.*(fix: /coddy:start <issue>)' 'git config --unset core.hooksPath' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
+prob "PR check missing" '^pr_check: .*is missing or not a plain file (fix: copy ' 'rm .github/workflows/coddy.yml' 'cp "$here/templates/coddy.yml" .github/workflows/coddy.yml'
+prob "PR check different" '^pr_check: .*differs from ' 'echo x >> .github/workflows/coddy.yml' 'cp "$here/templates/coddy.yml" .github/workflows/coddy.yml'
+prob "AGENTS.md missing" '^agents_md: AGENTS.md is missing' 'mv AGENTS.md "$tmp/am"' 'mv "$tmp/am" AGENTS.md'
+prob "AGENTS.md without the block" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; echo "# x" > AGENTS.md' 'cp "$tmp/am" AGENTS.md'
+prob "AGENTS.md with a lone marker" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; sed -i.bak "/coddy:end/d" AGENTS.md; rm AGENTS.md.bak' 'cp "$tmp/am" AGENTS.md'
+prob "AGENTS.md with reversed markers" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; sed -i.bak "s/coddy:begin/coddy:X/;s/coddy:end/coddy:begin/;s/coddy:X/coddy:end/" AGENTS.md; rm AGENTS.md.bak' 'cp "$tmp/am" AGENTS.md'
+# AGENTS.md as a link: to a file holding the block it reads ok, to a directory or nowhere it fails
+(cd "$dp" && mv AGENTS.md "$tmp/am" && ln -s "$tmp/am" AGENTS.md)
+t 0 "doctor: AGENTS.md linked to a file holding the block" dd doctor
+(cd "$dp" && rm AGENTS.md && ln -s "$tmp" AGENTS.md)
+t 0 "doctor: AGENTS.md linked to a directory" dsays '^agents_md: AGENTS.md is missing'
+(cd "$dp" && rm AGENTS.md && ln -s "$tmp/nonexistent-am" AGENTS.md)
+t 0 "doctor: AGENTS.md dangling" dsays '^agents_md: AGENTS.md is missing'
+t 1 "doctor: AGENTS.md dangling exits 1" dd doctor
+(cd "$dp" && rm AGENTS.md && mv "$tmp/am" AGENTS.md)
+# AGENTS.md over 1 MiB is not judged; a git-less jj root has no origin ref or hooks path to check
+cp "$dp/AGENTS.md" "$tmp/am"; head -c 1048576 /dev/zero | tr '\0' x >> "$dp/AGENTS.md"
+t 0 "doctor: AGENTS.md over 1 MiB, not read" dsays '^agents_md: AGENTS.md is over 1 MiB, not read'
+t 1 "doctor: AGENTS.md over 1 MiB exits 1" dd doctor
+cp "$tmp/am" "$dp/AGENTS.md"
+jr="$tmp/jjroot"; mkdir -p "$jr/.github/workflows"; cp "$dp/AGENTS.md" "$jr/"; cp "$here/templates/coddy.yml" "$jr/.github/workflows/"
+printf 'version: 2\ntracker: github\nworktree: git\ndefault_branch: main\nverify: true\n' > "$jr/.coddy.yml"
+t 0 "doctor: a git-less root, default_branch and hooks not applicable" dsaysat "$jr" '^hooks: ok (not applicable'
+t 0 "doctor: a git-less root, default_branch" dsaysat "$jr" '^default_branch: ok (not applicable'
+t 0 "doctor: a git-less root exits 0" env CODDY_ROOT="$jr" "$here/bin/coddy" doctor
+# a recorded coddy path holding a quote is read back as start wrote it
+qd="$tmp/q'd"; mkdir -p "$qd"; : > "$qd/coddy"; chmod +x "$qd/coddy"; qc="$tmp/q'\\''d/coddy"
+qset() { QC="$qc" awk '/^c=/ { print "c=\047" ENVIRON["QC"] "\047"; next } 1' "$tmp/pc" > .git/hooks/coddy/pre-commit; chmod +x .git/hooks/coddy/pre-commit; }
+(cd "$dp" && cp .git/hooks/coddy/pre-commit "$tmp/pc" && qset)
+t 0 "doctor: a recorded path with a quote reads as ok" sh -c "PATH=/usr/bin:/bin CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -qx 'hooks: ok'"
+rm "$qd/coddy"
+t 0 "doctor: and gone, when it is" sh -c "PATH=/usr/bin:/bin CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -q '^hooks: pre-commit runs .*q.d/coddy, which is gone'"
+(cd "$dp" && cp "$tmp/pc" .git/hooks/coddy/pre-commit)
+prob "a commondir in the git dir" '^git_dir: ' 'echo . > .git/commondir' 'rm .git/commondir'
+# a root reached from a .worktrees/<id> whose .git is garbage (git fails there): the root's own git dir is still held to the commondir test, running no planted program
+cp -R "$dp/.git" "$tmp/devil"; printf '#!/bin/sh\n: > "%s"\n' "$tmp/dfsm" > "$tmp/dfsm.sh"; chmod +x "$tmp/dfsm.sh"; git --git-dir="$tmp/devil" config core.fsmonitor "$tmp/dfsm.sh"
+mkdir -p "$dp/.worktrees/9"; echo garbage > "$dp/.worktrees/9/.git"; echo "$tmp/devil" > "$dp/.git/commondir"
+rm -f "$tmp/dfsm"
+t 0 "doctor: from a worktree with a garbage .git, a commondir in the root's git dir is git_dir" dsaysat "$dp/.worktrees/9" '^git_dir: '
+t 1 "doctor: and exits 1" env CODDY_ROOT="$dp/.worktrees/9" "$here/bin/coddy" doctor
+t 1 "doctor: and git ran none of its programs" test -e "$tmp/dfsm"
+rm -rf "$dp/.git/commondir" "$dp/.worktrees/9" "$tmp/devil"
+# an empty .git dir under a worktree is walked past as git does: the root's commondir is found
+printf '#!/bin/sh\n: > "%s"\n' "$tmp/dfsm" > "$tmp/dfsm.sh"; chmod +x "$tmp/dfsm.sh"
+cp -R "$dp/.git" "$tmp/devil"; git --git-dir="$tmp/devil" config core.fsmonitor "$tmp/dfsm.sh"
+mkdir -p "$dp/.worktrees/8/.git"; echo "$tmp/devil" > "$dp/.git/commondir"; rm -f "$tmp/dfsm"
+t 0 "doctor: from a worktree holding an empty .git dir, a commondir in the root's git dir is git_dir" dsaysat "$dp/.worktrees/8" '^git_dir: '
+t 1 "doctor: and git ran none of its programs" test -e "$tmp/dfsm"
+rm -rf "$dp/.git/commondir" "$dp/.worktrees/8"
+# a .git that is a link is git_dir too, in a subdirectory no matter what it names
+mkdir -p "$dp/lsub"; ln -s "$tmp/devil" "$dp/lsub/.git"; cp "$dp/.coddy.yml" "$dp/lsub/.coddy.yml"
+t 0 "doctor: a .git that is a link is git_dir" dsaysat "$dp/lsub" '^git_dir: '
+t 1 "doctor: and exits 1" env CODDY_ROOT="$dp/lsub" "$here/bin/coddy" doctor
+t 1 "doctor: and git ran none of its programs" test -e "$tmp/dfsm"
+rm -rf "$dp/lsub" "$tmp/devil"
+# a session started inside a bare repository nested two levels into the project: git's root, its parent, has no .git, so it is git_dir and says so; one level down roots at the project
+mkdir -p "$dp/bx/y"; git init -q --bare "$dp/bx/y/c.git"
+for st in bx/y/c.git bx/y/c.git/refs; do
+  t 0 "bare: from $st, doctor says the session started inside a bare repository" dsaysat "$dp/$st" '^git_dir: .*bare repository nested in the project'
+  t 1 "bare: and exits 1" env CODDY_ROOT="$dp/$st" "$here/bin/coddy" doctor
+  for v in config status detect; do t 0 "bare: and $v prints that line" sh -c "CODDY_ROOT='$dp/$st' '$here/bin/coddy' $v | grep -q '^git_dir: .*bare repository nested in the project'"; done
+done
+rm -rf "$dp/bx"; git init -q --bare "$dp/bc.git"
+t 0 "bare: one level down, doctor is not git_dir" sh -c "! CODDY_ROOT='$dp/bc.git' '$here/bin/coddy' doctor 2>&1 | grep -q '^git_dir: '"
+rm -rf "$dp/bc.git"
+# a bare repository in no project: no git_dir, doctor prints the install lines alone and the other verbs are as on a plain directory; nested in a project, the line names the bare repository itself
+mkdir -p "$tmp/sb"; git init -q --bare "$tmp/sb/foo.git"
+for st in foo.git foo.git/refs; do
+  t 0 "bare: standalone from $st, doctor exits 0" env CODDY_ROOT="$tmp/sb/$st" "$here/bin/coddy" doctor
+  t 0 "bare: and prints no git_dir" sh -c "! CODDY_ROOT='$tmp/sb/$st' '$here/bin/coddy' doctor 2>&1 | grep -q '^git_dir: '"
+  for v in config status detect; do t 0 "bare: and $v prints no git_dir" sh -c "! CODDY_ROOT='$tmp/sb/$st' '$here/bin/coddy' $v 2>&1 | grep -q '^git_dir: '"; done
+done
+# the same bare repository beside a config at its parent: the parent is the project, the exemption does not apply
+mkdir -p "$tmp/sbc"; git init -q --bare "$tmp/sbc/foo.git"; printf 'version: 2\ntracker: github\nworktree: git\ndefault_branch: main\nverify: true\n' > "$tmp/sbc/.coddy.yml"
+for st in foo.git foo.git/refs; do t 2 "bare: beside a config, from $st, guard is held" sh -c "echo '{}' | CODDY_ROOT='$tmp/sbc/$st' '$here/bin/coddy' guard"; done
+mkdir -p "$dp/bx/y"; git init -q --bare "$dp/bx/y/c.git"
+t 0 "bare: nested, the line names the bare repository, not a .git that does not exist" sh -c "CODDY_ROOT='$dp/bx/y/c.git' '$here/bin/coddy' status | grep -q \"^git_dir: $(cd "$dp" && pwd -P)/bx/y/c.git is a bare repository nested in the project\""
+rm -rf "$dp/bx"
+# a .git that is a huge sparse file, and a HEAD git rejects, stall and fool no hook
+mkdir -p "$tmp/sp"; git init -q "$tmp/sp"; cp "$dp/.coddy.yml" "$tmp/sp/"; mv "$tmp/sp/.git" "$tmp/sp/x"; truncate -s 4G "$tmp/sp/.git"
+t 2 "guard: a huge sparse .git at the root is refused within seconds" timeout 10 sh -c "printf '{\"session_id\":\"s\",\"tool_input\":{\"file_path\":\"$tmp/sp/f\"}}' | CODDY_ROOT='$tmp/sp' '$here/bin/coddy' guard"
+t 2 "snap: and so is a command" timeout 10 sh -c "printf '{\"session_id\":\"s\",\"cwd\":\"$tmp/sp\",\"tool_input\":{\"command\":\"true\"}}' | CODDY_ROOT='$tmp/sp' '$here/bin/coddy' snap"
+rm -rf "$tmp/sp"
+mkdir -p "$tmp/hA"; git init -q "$tmp/hA"; printf '#!/bin/sh\ntouch "%s/hMark"\n' "$tmp" > "$tmp/hfsm"; chmod +x "$tmp/hfsm"; git -C "$tmp/hA" config core.fsmonitor "$tmp/hfsm"
+for hd in ' refs/heads/main' $'\trefs/heads/main' $'\nrefs/heads/main'; do
+  P="$tmp/hA/proj"; rm -rf "$P"; mkdir -p "$P/.git/objects" "$P/.git/refs" "$P/src/deep"; cp "$dp/.coddy.yml" "$P/"
+  ln -s "$hd" "$P/.git/HEAD"; echo garbage > "$P/src/.git"
+  t 0 "snap: a symlink HEAD whose target starts with whitespace is no repository, so no git runs in the one above" sh -c "printf '{\"session_id\":\"s\",\"cwd\":\"$P/src/deep\",\"tool_input\":{\"command\":\"true\"}}' | CODDY_ROOT='$P/src/deep' '$here/bin/coddy' snap"
+  t 1 "snap: and A's core.fsmonitor never ran" test -e "$tmp/hMark"
+done
+P="$tmp/hA/proj"; rm -rf "$P"; mkdir -p "$P/.git/objects" "$P/.git/refs" "$P/src/deep"; cp "$dp/.coddy.yml" "$P/"
+printf 'ref:%300srefs/heads/main\n' ' ' > "$P/.git/HEAD"; echo garbage > "$P/src/.git"
+t 0 "snap: ref: and over 250 whitespace characters before refs/ is no repository" sh -c "printf '{\"session_id\":\"s\",\"cwd\":\"$P/src/deep\",\"tool_input\":{\"command\":\"true\"}}' | CODDY_ROOT='$P/src/deep' '$here/bin/coddy' snap"
+t 1 "snap: and A's core.fsmonitor never ran" test -e "$tmp/hMark"
+rm -rf "$tmp/hA" "$tmp/sb"
+# the same with no config in the subdirectory, and a commondir to nowhere
+mkdir -p "$dp/lsub"; ln -s /nowhere "$dp/lsub/.git"
+t 0 "doctor: a .git link in a subdirectory with no config is git_dir" dsaysat "$dp/lsub" '^git_dir: '
+rm -rf "$dp/lsub"; mkdir -p "$dp/lsub/.git"; echo /nowhere > "$dp/lsub/.git/commondir"
+t 0 "doctor: so is a commondir to nowhere" dsaysat "$dp/lsub" '^git_dir: '
+t 0 "doctor: and says to remove the file, not to open the session elsewhere" sh -c "echo 'gitdir: /nowhere' > '$dp/lsub/.git/commondir'; CODDY_ROOT='$dp/lsub' '$here/bin/coddy' doctor 2>&1 | grep -q 'is not the main checkout.s own git dir'"
+# a repository git rejects planted at .worktrees/.git (or in place of an issue worktree's .git) leaves the root the project: a main-checkout write is still refused
+plant() { mkdir -p "$1/objects" "$1/refs"; echo 'ref: refs/heads/main' > "$1/HEAD"; printf '[core]\n\trepositoryformatversion = 9\n' > "$1/config"; }
+gdir() { printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$dp/README.md" | CODDY_ROOT="$1" CODDY_PID=$$ "$here/bin/coddy" guard; }
+mkdir -p "$dp/.worktrees/5"; plant "$dp/.worktrees/.git"
+t 2 "guard: from a jj workspace under a planted .worktrees/.git, the main checkout is refused" gdir "$dp/.worktrees/5"
+rm -rf "$dp/.worktrees/.git"; plant "$dp/.worktrees/5/.git"
+t 2 "guard: from a worktree whose .git is a rejected repository, the main checkout is refused" gdir "$dp/.worktrees/5"
+rm -rf "$dp/.worktrees/5"
+rm -rf "$dp/lsub"; mkdir -p "$dp/lsub"; ln -s /etc/hosts "$dp/lsub/.git"
+t 0 "doctor: a .git link where git fails is git_dir" dsaysat "$dp/lsub" '^git_dir: .*lsub/.git'
+rm -rf "$dp/lsub"; mkdir -p "$dp/lsub/.git" "$tmp/lcd"; ln -s "$tmp/lcd" "$dp/lsub/.git/commondir"
+t 0 "doctor: a commondir link to a directory is git_dir" dsaysat "$dp/lsub" '^git_dir: '
+rm -rf "$dp/lsub" "$tmp/lcd"; mkdir -p "$dp/lsub"; ln -s "$dp/.git" "$dp/lsub/.git"
+t 0 "doctor: a .git link to a real repository is git_dir, the root above it" dsaysat "$dp/lsub" '^git_dir: .*lsub/.git is not'
+t 0 "doctor: and a link's fix is to remove it" dsaysat "$dp/lsub" 'fix: remove it by hand'
+rm -rf "$dp/lsub"
+# a .git that is a gitdir: file elsewhere (a submodule, a bare repository's worktree): git_dir says to open the session in the main checkout
+mkdir -p "$tmp/gl" "$tmp/glgit"; git init -q "$tmp/gl"; cp "$tmp/dp.yml" "$tmp/gl/.coddy.yml"; mv "$tmp/gl/.git" "$tmp/glgit/g"; echo "gitdir: $tmp/glgit/g" > "$tmp/gl/.git"
+t 0 "doctor: a .git that is a gitdir: file is git_dir, naming the file" dsaysat "$tmp/gl" "^git_dir: $tmp/gl/.git is a file naming a git dir elsewhere"
+t 0 "doctor: and the fix is to open the session in the main checkout" dsaysat "$tmp/gl" 'fix: open the session in the main checkout, or remove the file by hand'
+t 1 "doctor: and exits 1" env CODDY_ROOT="$tmp/gl" "$here/bin/coddy" doctor
+for v in config status detect; do
+  t 0 "$v: a .git that is a gitdir: file prints git_dir naming the file and the open-the-main-checkout fix" says "^git_dir: $tmp/gl/.git is a file naming a git dir elsewhere.*fix: open the session in the main checkout" env CODDY_ROOT="$tmp/gl" "$here/bin/coddy" $v
+done
+t 0 "verify: and a verb that refuses names the file and the main checkout" says "$tmp/gl/.git is a file naming.*open the session in the main checkout" env CODDY_ROOT="$tmp/gl" "$here/bin/coddy" verify 1
+t 2 "githook: and a commit there is refused" env CODDY_ROOT="$tmp/gl" "$here/bin/coddy" githook pre-commit
+rm -rf "$tmp/gl" "$tmp/glgit"
+# a start inside a bare repository nested in the project: git took no .git at its root, so the walk still reaches the project's own, whose commondir is refused
+mkdir -p "$dp/src"; git init -q --bare "$dp/src/b"; echo "$tmp/devil" > "$dp/.git/commondir"
+t 2 "guard: from a bare repository nested in the project, a commondir in the project's git dir is refused" gdir "$dp/src/b"
+t 2 "guard: and from its refs directory" gdir "$dp/src/b/refs"
+rm -f "$dp/.git/commondir"
+t 0 "guard: and from a bare repository nested in the project whose git dir is its own, the root stays the bare repository's parent, which holds no config, so the guard is inert, as it was" gdir "$dp/src/b"
+rm -rf "$dp/.git/commondir" "$dp/src"
+# the injected verbs and the rest, from a start whose git dir leads to another repository E (a commondir to E, a bare repository nested above a project .git holding one): none runs git there, so E's core.fsmonitor never runs, and none reports E as the root
+mkdir -p "$tmp/sE"; git init -q "$tmp/sE"; printf '#!/bin/sh\ntouch "%s/sMark"\n' "$tmp" > "$tmp/sfsm"; chmod +x "$tmp/sfsm"; git -C "$tmp/sE" config core.fsmonitor "$tmp/sfsm"
+mkdir -p "$tmp/sa/.git" "$tmp/sa/sub" "$tmp/sb/.git" "$tmp/sb/src"; echo "$tmp/sE/.git" > "$tmp/sa/.git/commondir"; echo "$tmp/sE/.git" > "$tmp/sb/.git/commondir"; git init -q --bare "$tmp/sb/src/b"
+echo 'ref: refs/heads/main' > "$tmp/sa/.git/HEAD"; echo 'ref: refs/heads/main' > "$tmp/sb/.git/HEAD"
+for sd in "$tmp/sa/sub" "$tmp/sb/src/b"; do
+  for v in sweep status config detect; do
+    t 0 "$v: from a start whose git dir leads to another repository (${sd#"$tmp"/}) exits 0 and runs none of its programs" sh -c "CODDY_ROOT='$sd' '$here/bin/coddy' $v >'$tmp/sout' 2>&1; e=\$?; [ \$e = 0 ] && [ ! -e '$tmp/sMark' ] && ! grep -q 'root: $tmp/sE' '$tmp/sout'"
+  done
+  t 2 "verify: and a verb that mutates refuses (${sd#"$tmp"/})" env CODDY_ROOT="$sd" "$here/bin/coddy" verify 1
+  t 2 "exclude: and so does exclude (${sd#"$tmp"/})" env CODDY_ROOT="$sd" "$here/bin/coddy" exclude config
+done
+rm -rf "$tmp/sE" "$tmp/sa" "$tmp/sb" "$tmp/sfsm" "$tmp/sMark" "$tmp/sout"
+# githook reads the root's .git/config and runs its hooks: from a bare repository nested in a project whose .git is a link to E's, it runs none of E's
+mkdir -p "$tmp/hE/hooks" "$tmp/hp/src"; git init -q "$tmp/hE/r"; printf '#!/bin/sh\ntouch "%s/hMark"\n' "$tmp" > "$tmp/hE/r/.git/hooks/pre-commit"; chmod +x "$tmp/hE/r/.git/hooks/pre-commit"
+cp "$tmp/dp.yml" "$tmp/hp/.coddy.yml"; ln -s "$tmp/hE/r/.git" "$tmp/hp/.git"; git init -q --bare "$tmp/hp/src/b"; git -C "$tmp/hp/src/b" config core.worktree "$tmp/hp/src"
+t 2 "githook: a commit from a bare repository nested in a project whose .git is a link is refused" env CODDY_ROOT="$tmp/hp/src/b" "$here/bin/coddy" githook pre-commit
+t 0 "githook: and runs none of the linked repository's hooks" test ! -e "$tmp/hMark"
+rm -rf "$tmp/hE" "$tmp/hp" "$tmp/hMark"
+# a session outside any project whose .git directory leads to an onboarded repository: the root is that repository, so the hooks refuse
+mkdir -p "$tmp/d2/sub/.git" "$tmp/d2/.git/objects" "$tmp/d2/.git/refs"; echo 'ref: refs/heads/main' > "$tmp/d2/.git/HEAD"; echo "$dp/.git" > "$tmp/d2/.git/commondir"
+t 2 "guard: a commondir to an onboarded repository above a rejected .git is refused" gdir "$tmp/d2/sub"
+rm -rf "$tmp/d2"
+# a session in an absorbed submodule of an onboarded project: doctor names the .git file, not a missing config
+mkdir -p "$tmp/smsub" "$tmp/smsup"; git init -q "$tmp/smsub"; git -C "$tmp/smsub" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+git init -q "$tmp/smsup"; cp "$tmp/dp.yml" "$tmp/smsup/.coddy.yml"; git -C "$tmp/smsup" -c protocol.file.allow=always submodule add -q "$tmp/smsub" sm
+t 0 "doctor: a session in an absorbed submodule is git_dir, naming its .git file" dsaysat "$tmp/smsup/sm" "^git_dir: $tmp/smsup/sm/.git is a file naming a git dir elsewhere"
+t 1 "doctor: and exits 1" env CODDY_ROOT="$tmp/smsup/sm" "$here/bin/coddy" doctor
+for v in config status detect; do
+  t 0 "$v: a session in an absorbed submodule prints git_dir naming its .git file and the open-the-main-checkout fix" says "^git_dir: $tmp/smsup/sm/.git is a file naming a git dir elsewhere.*fix: open the session in the main checkout" env CODDY_ROOT="$tmp/smsup/sm" "$here/bin/coddy" $v
+done
+t 0 "verify: and a verb that refuses names the same file" says "$tmp/smsup/sm/.git is a file naming.*open the session in the main checkout" env CODDY_ROOT="$tmp/smsup/sm" "$here/bin/coddy" verify 1
+rm -rf "$tmp/smsub" "$tmp/smsup"
+# a relative root naming no directory ends
+t 0 "root: a relative CODDY_ROOT naming no directory ends" timeout 10 env CODDY_ROOT=nosuchdir "$here/bin/coddy" status
+t 0 "root: and one with a slash" timeout 10 env CODDY_ROOT=no/such "$here/bin/coddy" status
+# proj in the environment makes nothing odd outside git
+mkdir -p "$tmp/pj"
+t 0 "doctor: outside any project, a proj in the environment changes nothing" env proj=1 CODDY_ROOT="$tmp/pj" "$here/bin/coddy" doctor
+# a root outside git holding a config is a project: the config line, not silence
+mkdir -p "$tmp/nogit"; cp "$tmp/dp.yml" "$tmp/nogit/.coddy.yml"
+t 0 "doctor: a root outside git with a config is checked" dsaysat "$tmp/nogit" '^config: ok'
+t 1 "doctor: and exits 1, git being absent" env CODDY_ROOT="$tmp/nogit" "$here/bin/coddy" doctor
+sed -i.bak 's/^tracker:.*/tracker: jira/' "$dp/.coddy.yml"; rm "$dp/.coddy.yml.bak"; rm "$dp/.github/workflows/coddy.yml"
+t 0 "doctor: the PR check is not checked under jira" dd doctor
+cp "$tmp/dp.yml" "$dp/.coddy.yml"
 
 exit $fail

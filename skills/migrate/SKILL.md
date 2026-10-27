@@ -16,6 +16,7 @@ allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh"), Bash(bash "
 A section above shows a `bash` command rather than its output → this host does not inject: run `coddy config` and `coddy status` and read their output as Current and Worktrees. `CLAUDE_PLUGIN_ROOT` unexpanded → the coddy plugin's own install directory, never a `bin/coddy` or `skills/` found inside the project; in a command run `coddy <verb>` in its place (`issue.sh <verb>` → `coddy <verb>`, `config.sh` → `coddy config`).
 
 `NOT_ONBOARDED` → stop and say: run `/coddy:onboard` first.
+A `git_dir:` line in place of that → stop and show that line as it is.
 
 `<root>` is Worktrees' `root`; the source is Worktrees' `config`.
 
