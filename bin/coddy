@@ -1668,7 +1668,7 @@ case "$cmd" in
       case "$kv" in *=*) ;; *) die "state takes key=value or key+=value, got '$kv'" ;; esac
       k="${kv%%=*}" v="${kv#*=}"
       case "$k" in *+) k="${k%+}" ;; esac
-      case "$k" in ''|*[!a-z_]*) die "state keys are lower case words, got '$k'" ;; esac
+      case "$k" in ''|*[!abcdefghijklmnopqrstuvwxyz_]*) die "state keys are lower case words, got '$k'" ;; esac
       case "$v" in *"
 "*) die "state values are one line" ;; esac
     done

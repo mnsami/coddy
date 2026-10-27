@@ -15,7 +15,7 @@
 # cd, so held to it a cd out of the project would drop the root.
 for v in "${!GIT_@}"; do case $v in GIT_AUTHOR_*|GIT_COMMITTER_*|GIT_SSH*|GIT_ASKPASS|GIT_TERMINAL_PROMPT) ;; *) unset "$v" ;; esac; done
 case "${1-}" in guard|snap|trip) ;; *)
-  real=$(case "${CLAUDE_PROJECT_DIR-}" in /*) cd "$CLAUDE_PROJECT_DIR" 2>/dev/null && pwd -P ;; esac)
+  real=$(case "${CLAUDE_PROJECT_DIR-}" in (/*) cd "$CLAUDE_PROJECT_DIR" 2>/dev/null && pwd -P ;; esac)
   case "$(pwd -P)/" in "${real:-//}"/*) ;; *) CLAUDE_PROJECT_DIR=$PWD ;; esac
   unset real ;;
 esac
