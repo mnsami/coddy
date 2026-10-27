@@ -2,7 +2,7 @@
 # Claude Code adapter for the detect verb: facts about the current project
 # that /coddy:onboard uses to pre-fill the config.
 for v in "${!GIT_@}"; do case $v in GIT_AUTHOR_*|GIT_COMMITTER_*|GIT_SSH*|GIT_ASKPASS|GIT_TERMINAL_PROMPT) ;; *) unset "$v" ;; esac; done
-real=$(case "${CLAUDE_PROJECT_DIR-}" in /*) cd "$CLAUDE_PROJECT_DIR" 2>/dev/null && pwd -P ;; esac)
+real=$(case "${CLAUDE_PROJECT_DIR-}" in (/*) cd "$CLAUDE_PROJECT_DIR" 2>/dev/null && pwd -P ;; esac)
 case "$(pwd -P)/" in "${real:-//}"/*) ;; *) CLAUDE_PROJECT_DIR=$PWD ;; esac
 unset real
 CODDY_ROOT="${CLAUDE_PROJECT_DIR-}" CODDY_SESSION="${CLAUDE_CODE_SESSION_ID-}" CODDY_PID="${CLAUDE_PID-}" CODDY_AGENT_DIR=.claude
