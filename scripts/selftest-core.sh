@@ -770,6 +770,16 @@ t 0 "doctor: AGENTS.md linked to a directory" dsays '^agents_md: AGENTS.md is mi
 t 0 "doctor: AGENTS.md dangling" dsays '^agents_md: AGENTS.md is missing'
 t 1 "doctor: AGENTS.md dangling exits 1" dd doctor
 (cd "$dp" && rm AGENTS.md && mv "$tmp/am" AGENTS.md)
+# AGENTS.md over 1 MiB is not judged; a git-less jj root has no origin ref or hooks path to check
+cp "$dp/AGENTS.md" "$tmp/am"; head -c 1048576 /dev/zero | tr '\0' x >> "$dp/AGENTS.md"
+t 0 "doctor: AGENTS.md over 1 MiB, not read" dsays '^agents_md: AGENTS.md is over 1 MiB, not read'
+t 1 "doctor: AGENTS.md over 1 MiB exits 1" dd doctor
+cp "$tmp/am" "$dp/AGENTS.md"
+jr="$tmp/jjroot"; mkdir -p "$jr/.github/workflows"; cp "$dp/AGENTS.md" "$jr/"; cp "$here/templates/coddy.yml" "$jr/.github/workflows/"
+printf 'version: 2\ntracker: github\nworktree: git\ndefault_branch: main\nverify: true\n' > "$jr/.coddy.yml"
+t 0 "doctor: a git-less root, default_branch and hooks not applicable" dsaysat "$jr" '^hooks: ok (not applicable'
+t 0 "doctor: a git-less root, default_branch" dsaysat "$jr" '^default_branch: ok (not applicable'
+t 0 "doctor: a git-less root exits 0" env CODDY_ROOT="$jr" "$here/bin/coddy" doctor
 # a recorded coddy path holding a quote is read back as start wrote it
 qd="$tmp/q'd"; mkdir -p "$qd"; : > "$qd/coddy"; chmod +x "$qd/coddy"; qc="$tmp/q'\\''d/coddy"
 qset() { QC="$qc" awk '/^c=/ { print "c=\047" ENVIRON["QC"] "\047"; next } 1' "$tmp/pc" > .git/hooks/coddy/pre-commit; chmod +x .git/hooks/coddy/pre-commit; }
@@ -817,6 +827,9 @@ for st in foo.git foo.git/refs; do
   t 0 "bare: and prints no git_dir" sh -c "! CODDY_ROOT='$tmp/sb/$st' '$here/bin/coddy' doctor 2>&1 | grep -q '^git_dir: '"
   for v in config status detect; do t 0 "bare: and $v prints no git_dir" sh -c "! CODDY_ROOT='$tmp/sb/$st' '$here/bin/coddy' $v 2>&1 | grep -q '^git_dir: '"; done
 done
+# the same bare repository beside a config at its parent: the parent is the project, the exemption does not apply
+mkdir -p "$tmp/sbc"; git init -q --bare "$tmp/sbc/foo.git"; printf 'version: 2\ntracker: github\nworktree: git\ndefault_branch: main\nverify: true\n' > "$tmp/sbc/.coddy.yml"
+for st in foo.git foo.git/refs; do t 2 "bare: beside a config, from $st, guard is held" sh -c "echo '{}' | CODDY_ROOT='$tmp/sbc/$st' '$here/bin/coddy' guard"; done
 mkdir -p "$dp/bx/y"; git init -q --bare "$dp/bx/y/c.git"
 t 0 "bare: nested, the line names the bare repository, not a .git that does not exist" sh -c "CODDY_ROOT='$dp/bx/y/c.git' '$here/bin/coddy' status | grep -q \"^git_dir: $(cd "$dp" && pwd -P)/bx/y/c.git is a bare repository nested in the project\""
 rm -rf "$dp/bx"

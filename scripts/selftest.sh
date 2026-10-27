@@ -629,6 +629,9 @@ t 0 "push: a git dir that is no repository passes with a message" noted 'could n
 # whose objects and refs come through its commondir.
 bare="$tmp/bare"; mkdir -p "$bare/objects" "$bare/refs"; printf 'ref: refs/heads/main\n' > "$bare/HEAD"
 t 2 "push: refused, HEAD read from a bare repository" shell "git -C '$bare' push origin HEAD" "$tmp"
+# a HEAD git accepts with whitespace after ref: is read whole, not cut at 255 characters
+for n in 237 240 246; do printf 'ref:%*srefs/heads/main\n' "$n" '' > "$bare/HEAD"; t 2 "push: refused, HEAD padded with $n blanks" shell "git -C '$bare' push origin HEAD" "$tmp"; t 2 "push: and by --git-dir, $n blanks" shell "git --git-dir='$bare' push origin HEAD" "$tmp"; done
+printf 'ref: refs/heads/main\n' > "$bare/HEAD"
 cm="$tmp/cm"; mkdir -p "$cm/.git/objects" "$cm/.git/refs" "$cm/sub/.git"; printf 'ref: refs/heads/feat\n' > "$cm/.git/HEAD"
 printf 'ref: refs/heads/main\n' > "$cm/sub/.git/HEAD"; printf '../../.git\r\n' > "$cm/sub/.git/commondir"
 t 0 "push: the enclosing repository's branch passes, saying nothing" silent 'git push origin HEAD' "$cm"

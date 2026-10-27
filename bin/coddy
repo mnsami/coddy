@@ -80,8 +80,7 @@ fi
 isgit() {
   local c=$1 m=""
   l=""; if [ -L "$1/HEAD" ]; then l=$(readlink "$1/HEAD"); case "$l" in refs/*) l="ref: $l" ;; *) l="" ;; esac; elif [ -f "$1/HEAD" ]; then { IFS= read -r -d '' -n 1024 l < "$1/HEAD"; } 2>/dev/null; fi
-  l=${l:0:255}
-  [[ $l =~ ^(ref:[$' \t\n\r']*refs/|[0-9a-fA-F]{40}) ]] || return 1
+  [[ ${l:0:255} =~ ^(ref:[$' \t\n\r']*refs/|[0-9a-fA-F]{40}) ]] || return 1
   if [ -e "$1/commondir" ]; then
     [ -f "$1/commondir" ] && { IFS= read -r -d '' -n 1024 m < "$1/commondir"; } 2>/dev/null
     m=${m%"${m##*[!$'\n\r']}"}; [ -n "$m" ] || return 1
@@ -198,7 +197,7 @@ fi
 # found: git failing in a worktree whose .git is garbage lands on the second
 # branch, with the root's .git untouched. No .git there is a plain jj root.
 [ -n "$odd" ] || if [ -e "$root/.git" ] || [ -L "$root/.git" ] || [ -n "$proj" ]; then
-  if [ ! -e "$root/.git" ] && [ ! -L "$root/.git" ] && [ -n "$proj" ] && { [ -z "$back" ] || { [ ! -e "$back/.git" ] && [ ! -L "$back/.git" ]; }; }; then
+  if [ ! -e "$root/.git" ] && [ ! -L "$root/.git" ] && [ -n "$proj" ] && [ ! -f "$root/.coddy.yml" ] && [ ! -f "$root/$legacy" ] && { [ -z "$back" ] || { [ ! -e "$back/.git" ] && [ ! -L "$back/.git" ]; }; }; then
     # a bare repository in no project (git's root, its parent, has no .git and nothing above holds one)
     proj=""
   elif [ -L "$root/.git" ] || [ ! -d "$root/.git" ]; then
@@ -1324,7 +1323,9 @@ if [ "$cmd" = doctor ]; then
     if printf '%s\n' "$mig" | grep -q '^changed:'; then say config "$cname is behind the schema (fix: /coddy:migrate)"; else say config "ok ($cname)"; fi
   else say config "$cname cannot be migrated: ${mig%%$'\n'*}"; fi
   case "$tool" in git|jj) say worktree "ok ($tool)" ;; *) say worktree "unknown value '$tool' (fix: set it to git or jj with /coddy:config)" ;; esac
-  if git rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null 2>&1; then say default_branch "ok (origin/$base)"; else say default_branch "origin/$base is missing here (fix: fetch origin, or set default_branch with /coddy:config)"; fi
+  # a root with no .git directory (jj alone) has no origin ref for git to see and no hooks path to set
+  if [ ! -d "$root/.git" ]; then say default_branch "ok (not applicable: no .git at the root)"
+  elif git rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null 2>&1; then say default_branch "ok (origin/$base)"; else say default_branch "origin/$base is missing here (fix: fetch origin, or set default_branch with /coddy:config)"; fi
   for x in jq git; do if command -v "$x" >/dev/null 2>&1; then say "$x" ok; else say "$x" "missing (fix: install $x)"; fi; done
   if [ "$tool" = jj ]; then if command -v jj >/dev/null 2>&1; then say jj ok; else say jj "missing (fix: install jj, or set worktree to git with /coddy:config)"; fi; fi
   hp=$(git config core.hooksPath) gd="$root/.git/hooks/coddy" e=""
@@ -1337,7 +1338,8 @@ if [ "$cmd" = doctor ]; then
     c=$(head -c 4096 "$f" | sed -n "s/^c='\(.*\)'\$/\1/p" | head -1); c=${c//"'\\''"/"'"}
     { [ -f "$c" ] && [ -x "$c" ]; } || command -v coddy >/dev/null 2>&1 || e="$h runs $c, which is gone, and coddy is not on PATH"
   done
-  if [ -n "$e" ]; then say hooks "$e (fix: /coddy:start <issue>)"; else say hooks ok; fi
+  if [ ! -d "$root/.git" ]; then say hooks "ok (not applicable: no .git at the root)"
+  elif [ -n "$e" ]; then say hooks "$e (fix: /coddy:start <issue>)"; else say hooks ok; fi
   if [ "$(cfg tracker)" = github ]; then
     w=.github/workflows/coddy.yml tpl="$inst/templates/coddy.yml"
     if [ -L .github ] || [ -L .github/workflows ] || [ -L "$w" ] || [ ! -f "$w" ]; then say pr_check "$w is missing or not a plain file (fix: copy $tpl to $w)"
@@ -1346,6 +1348,7 @@ if [ "$cmd" = doctor ]; then
     else say pr_check ok; fi
   fi
   if [ ! -f AGENTS.md ]; then say agents_md "AGENTS.md is missing or not a plain file (fix: add the block in step 6 of $inst/skills/onboard/SKILL.md)"
+  elif [ "$(wc -c < AGENTS.md)" -gt 1048576 ]; then say agents_md "AGENTS.md is over 1 MiB, not read (fix: check the coddy block by hand)"
   elif awk '/<!-- coddy:begin -->/ { b++; if (!bl) bl = NR } /<!-- coddy:end -->/ { e++; if (!el) el = NR } END { exit !(b == 1 && e == 1 && bl < el) }' <(head -c 1048576 AGENTS.md); then say agents_md ok
   else say agents_md "AGENTS.md needs exactly one coddy:begin marker before one coddy:end (fix: replace the block with the one in step 6 of $inst/skills/onboard/SKILL.md)"; fi
   exit "$bad"
