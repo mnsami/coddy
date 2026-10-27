@@ -75,10 +75,12 @@ fi
 # file, which git dies or hangs on, or is empty fails; objects and refs need
 # only be searchable, as git's access(X_OK) has it). Every file is read no
 # further than a NUL or 1024 characters, so a huge or sparse one stalls no
-# hook.
+# hook, and a HEAD only as far as git reads one (255 bytes; a link's target
+# must itself start with refs/).
 isgit() {
   local c=$1 m=""
-  l=""; if [ -L "$1/HEAD" ]; then l="ref: $(readlink "$1/HEAD")"; elif [ -f "$1/HEAD" ]; then { IFS= read -r -d '' -n 1024 l < "$1/HEAD"; } 2>/dev/null; fi
+  l=""; if [ -L "$1/HEAD" ]; then l=$(readlink "$1/HEAD"); case "$l" in refs/*) l="ref: $l" ;; *) l="" ;; esac; elif [ -f "$1/HEAD" ]; then { IFS= read -r -d '' -n 1024 l < "$1/HEAD"; } 2>/dev/null; fi
+  l=${l:0:255}
   [[ $l =~ ^(ref:[$' \t\n\r']*refs/|[0-9a-fA-F]{40}) ]] || return 1
   if [ -e "$1/commondir" ]; then
     [ -f "$1/commondir" ] && { IFS= read -r -d '' -n 1024 m < "$1/commondir"; } 2>/dev/null
@@ -196,7 +198,10 @@ fi
 # found: git failing in a worktree whose .git is garbage lands on the second
 # branch, with the root's .git untouched. No .git there is a plain jj root.
 [ -n "$odd" ] || if [ -e "$root/.git" ] || [ -L "$root/.git" ] || [ -n "$proj" ]; then
-  if [ -L "$root/.git" ] || [ ! -d "$root/.git" ]; then
+  if [ ! -e "$root/.git" ] && [ ! -L "$root/.git" ] && [ -n "$proj" ] && { [ -z "$back" ] || { [ ! -e "$back/.git" ] && [ ! -L "$back/.git" ]; }; }; then
+    # a bare repository in no project (git's root, its parent, has no .git and nothing above holds one)
+    proj=""
+  elif [ -L "$root/.git" ] || [ ! -d "$root/.git" ]; then
     odd="$root/.git"
     [ -f "$root/.coddy.yml" ] || [ -f "$root/$legacy" ] || [ -z "$back" ] || { [ ! -f "$back/.coddy.yml" ] && [ ! -f "$back/$legacy" ]; } || { [ -d "$back/.git" ] && [ ! -L "$back/.git" ]; } || root=$back
     [ -e "$odd" ] || [ -L "$odd" ] || odd="$root/.git"
@@ -212,16 +217,18 @@ if [ -z "$odd" ] || [ -n "$proj" ]; then :; else
   elif [ ! -f "$root/.coddy.yml" ] && [ ! -f "$root/$legacy" ]; then upcfg "$(cd "$root" 2>/dev/null && pwd -P || echo "$root")"; fi
 fi
 # A .git ($1, else odd) that is a gitdir: file (a submodule's, a bare repository's worktree's).
-gitlink() { local f=${1-$odd} l=""; case "$f" in */commondir) return 1 ;; esac; [ -L "$f" ] || [ ! -f "$f" ] || { IFS= read -r -n 1024 l < "$f"; } 2>/dev/null; [[ $l == gitdir:* ]]; }
+gitlink() { local f=${1-$odd} l=""; case "$f" in */commondir) return 1 ;; esac; [ -L "$f" ] || [ ! -f "$f" ] || { IFS= read -r -d '' -n 1024 l < "$f"; } 2>/dev/null; [[ $l == gitdir:* ]]; }
 glmsg="is a file naming a git dir elsewhere, and coddy does not run its hooks in a checkout whose .git points at a git dir elsewhere (a submodule or a bare repository's worktree included)"
 # An absorbed submodule's root is the git dir under the superproject's, which has no .git:
 # the .git that is odd is the checkout's own gitdir: file.
 absorbed=""
 if [ "$odd" = "$root/.git" ] && [ ! -e "$odd" ] && [ ! -L "$odd" ] && [ -n "$back" ] && gitlink "$back/.git"; then odd=$back/.git absorbed=1; fi
+# The bare repository a session started inside (git's common dir from the start, physical).
+bare() { (cd "$dir" && cd "$common" && pwd -P) || printf %s "$odd"; }
 # The git_dir: line config, status and detect print, and doctor, in place of their output.
 gdmsg() {
   if gitlink; then echo "git_dir: $(printf %s "$odd" | tr -d '[:cntrl:]') $glmsg (fix: open the session in the main checkout, or remove the file by hand if it was not put there on purpose)"
-  elif [ ! -e "$odd" ] && [ ! -L "$odd" ]; then echo "git_dir: $(printf %s "$odd" | tr -d '[:cntrl:]') does not exist: the session started inside a bare repository nested in the project (fix: open the session in the main checkout)"
+  elif [ ! -e "$odd" ] && [ ! -L "$odd" ]; then echo "git_dir: $(bare | tr -d '[:cntrl:]') is a bare repository nested in the project, so the session started inside it (fix: open the session in the main checkout)"
   else echo "git_dir: $(printf %s "$odd" | tr -d '[:cntrl:]') is not the main checkout's own git dir (fix: remove it$([ -L "$odd" ] || echo ", or put the .git directory back,") by hand)"; fi
 }
 # .coddy.yml when it exists, else the legacy file; trip asks again after it
@@ -335,7 +342,7 @@ oddly() {
     */commondir) die "${1-}$odd, which git never writes in a main checkout, points git there at another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you remove that file by hand." ;;
     *) [ ! -L "$odd" ] || die "${1-}$odd is a link, so git there reads another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you remove it by hand."
        ! gitlink || die "${1-}$odd $glmsg, so it refuses every edit and command until you open the session in the main checkout, or remove the file by hand if it was not put there on purpose."
-       [ -e "$odd" ] || die "${1-}$odd does not exist: the session started inside a bare repository nested in the project, where git reads another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you open the session in the main checkout."
+       [ -e "$odd" ] || die "${1-}$(bare) is a bare repository nested in the project, so $odd does not exist and the session started inside it, where git reads another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you open the session in the main checkout."
        die "${1-}$odd is not a directory, so git there reads another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you put the main checkout's .git directory back by hand." ;;
   esac
 }
@@ -1325,9 +1332,9 @@ if [ "$cmd" = doctor ]; then
   for h in pre-commit pre-push; do
     [ -z "$e" ] || break
     f="$gd/$h"
-    if ! { [ -f "$f" ] && [ ! -L "$f" ] && grep -q '^# Written by coddy start: ' "$f"; }; then e="$h is missing or not one coddy start wrote"; break; fi
+    if ! { [ -f "$f" ] && [ ! -L "$f" ] && head -c 4096 "$f" | grep -q '^# Written by coddy start: '; }; then e="$h is missing or not one coddy start wrote"; break; fi
     [ -x "$f" ] || { e="$h is not executable, so git skips it"; break; }
-    c=$(sed -n "s/^c='\(.*\)'\$/\1/p" "$f" | head -1); c=${c//"'\\''"/"'"}
+    c=$(head -c 4096 "$f" | sed -n "s/^c='\(.*\)'\$/\1/p" | head -1); c=${c//"'\\''"/"'"}
     { [ -f "$c" ] && [ -x "$c" ]; } || command -v coddy >/dev/null 2>&1 || e="$h runs $c, which is gone, and coddy is not on PATH"
   done
   if [ -n "$e" ]; then say hooks "$e (fix: /coddy:start <issue>)"; else say hooks ok; fi
@@ -1339,7 +1346,7 @@ if [ "$cmd" = doctor ]; then
     else say pr_check ok; fi
   fi
   if [ ! -f AGENTS.md ]; then say agents_md "AGENTS.md is missing or not a plain file (fix: add the block in step 6 of $inst/skills/onboard/SKILL.md)"
-  elif awk '/<!-- coddy:begin -->/ { b++; if (!bl) bl = NR } /<!-- coddy:end -->/ { e++; if (!el) el = NR } END { exit !(b == 1 && e == 1 && bl < el) }' AGENTS.md; then say agents_md ok
+  elif awk '/<!-- coddy:begin -->/ { b++; if (!bl) bl = NR } /<!-- coddy:end -->/ { e++; if (!el) el = NR } END { exit !(b == 1 && e == 1 && bl < el) }' <(head -c 1048576 AGENTS.md); then say agents_md ok
   else say agents_md "AGENTS.md needs exactly one coddy:begin marker before one coddy:end (fix: replace the block with the one in step 6 of $inst/skills/onboard/SKILL.md)"; fi
   exit "$bad"
 fi

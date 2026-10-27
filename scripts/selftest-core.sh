@@ -810,6 +810,33 @@ done
 rm -rf "$dp/bx"; git init -q --bare "$dp/bc.git"
 t 0 "bare: one level down, doctor is not git_dir" sh -c "! CODDY_ROOT='$dp/bc.git' '$here/bin/coddy' doctor 2>&1 | grep -q '^git_dir: '"
 rm -rf "$dp/bc.git"
+# a bare repository in no project: no git_dir, doctor prints the install lines alone and the other verbs are as on a plain directory; nested in a project, the line names the bare repository itself
+mkdir -p "$tmp/sb"; git init -q --bare "$tmp/sb/foo.git"
+for st in foo.git foo.git/refs; do
+  t 0 "bare: standalone from $st, doctor exits 0" env CODDY_ROOT="$tmp/sb/$st" "$here/bin/coddy" doctor
+  t 0 "bare: and prints no git_dir" sh -c "! CODDY_ROOT='$tmp/sb/$st' '$here/bin/coddy' doctor 2>&1 | grep -q '^git_dir: '"
+  for v in config status detect; do t 0 "bare: and $v prints no git_dir" sh -c "! CODDY_ROOT='$tmp/sb/$st' '$here/bin/coddy' $v 2>&1 | grep -q '^git_dir: '"; done
+done
+mkdir -p "$dp/bx/y"; git init -q --bare "$dp/bx/y/c.git"
+t 0 "bare: nested, the line names the bare repository, not a .git that does not exist" sh -c "CODDY_ROOT='$dp/bx/y/c.git' '$here/bin/coddy' status | grep -q \"^git_dir: $(cd "$dp" && pwd -P)/bx/y/c.git is a bare repository nested in the project\""
+rm -rf "$dp/bx"
+# a .git that is a huge sparse file, and a HEAD git rejects, stall and fool no hook
+mkdir -p "$tmp/sp"; git init -q "$tmp/sp"; cp "$dp/.coddy.yml" "$tmp/sp/"; mv "$tmp/sp/.git" "$tmp/sp/x"; truncate -s 4G "$tmp/sp/.git"
+t 2 "guard: a huge sparse .git at the root is refused within seconds" timeout 10 sh -c "printf '{\"session_id\":\"s\",\"tool_input\":{\"file_path\":\"$tmp/sp/f\"}}' | CODDY_ROOT='$tmp/sp' '$here/bin/coddy' guard"
+t 2 "snap: and so is a command" timeout 10 sh -c "printf '{\"session_id\":\"s\",\"cwd\":\"$tmp/sp\",\"tool_input\":{\"command\":\"true\"}}' | CODDY_ROOT='$tmp/sp' '$here/bin/coddy' snap"
+rm -rf "$tmp/sp"
+mkdir -p "$tmp/hA"; git init -q "$tmp/hA"; printf '#!/bin/sh\ntouch "%s/hMark"\n' "$tmp" > "$tmp/hfsm"; chmod +x "$tmp/hfsm"; git -C "$tmp/hA" config core.fsmonitor "$tmp/hfsm"
+for hd in ' refs/heads/main' $'\trefs/heads/main' $'\nrefs/heads/main'; do
+  P="$tmp/hA/proj"; rm -rf "$P"; mkdir -p "$P/.git/objects" "$P/.git/refs" "$P/src/deep"; cp "$dp/.coddy.yml" "$P/"
+  ln -s "$hd" "$P/.git/HEAD"; echo garbage > "$P/src/.git"
+  t 0 "snap: a symlink HEAD whose target starts with whitespace is no repository, so no git runs in the one above" sh -c "printf '{\"session_id\":\"s\",\"cwd\":\"$P/src/deep\",\"tool_input\":{\"command\":\"true\"}}' | CODDY_ROOT='$P/src/deep' '$here/bin/coddy' snap"
+  t 1 "snap: and A's core.fsmonitor never ran" test -e "$tmp/hMark"
+done
+P="$tmp/hA/proj"; rm -rf "$P"; mkdir -p "$P/.git/objects" "$P/.git/refs" "$P/src/deep"; cp "$dp/.coddy.yml" "$P/"
+printf 'ref:%300srefs/heads/main\n' ' ' > "$P/.git/HEAD"; echo garbage > "$P/src/.git"
+t 0 "snap: ref: and over 250 whitespace characters before refs/ is no repository" sh -c "printf '{\"session_id\":\"s\",\"cwd\":\"$P/src/deep\",\"tool_input\":{\"command\":\"true\"}}' | CODDY_ROOT='$P/src/deep' '$here/bin/coddy' snap"
+t 1 "snap: and A's core.fsmonitor never ran" test -e "$tmp/hMark"
+rm -rf "$tmp/hA" "$tmp/sb"
 # the same with no config in the subdirectory, and a commondir to nowhere
 mkdir -p "$dp/lsub"; ln -s /nowhere "$dp/lsub/.git"
 t 0 "doctor: a .git link in a subdirectory with no config is git_dir" dsaysat "$dp/lsub" '^git_dir: '
