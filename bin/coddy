@@ -211,6 +211,18 @@ if [ -z "$odd" ] || [ -n "$proj" ]; then :; else
   if [ -n "$top" ]; then root=$top
   elif [ ! -f "$root/.coddy.yml" ] && [ ! -f "$root/$legacy" ]; then upcfg "$(cd "$root" 2>/dev/null && pwd -P || echo "$root")"; fi
 fi
+# A .git ($1, else odd) that is a gitdir: file (a submodule's, a bare repository's worktree's).
+gitlink() { local f=${1-$odd} l=""; case "$f" in */commondir) return 1 ;; esac; [ -L "$f" ] || [ ! -f "$f" ] || { IFS= read -r -n 1024 l < "$f"; } 2>/dev/null; [[ $l == gitdir:* ]]; }
+glmsg="is a file naming a git dir elsewhere, and coddy does not run its hooks in a checkout whose .git points at a git dir elsewhere (a submodule or a bare repository's worktree included)"
+# An absorbed submodule's root is the git dir under the superproject's, which has no .git:
+# the .git that is odd is the checkout's own gitdir: file.
+absorbed=""
+if [ "$odd" = "$root/.git" ] && [ ! -e "$odd" ] && [ ! -L "$odd" ] && [ -n "$back" ] && gitlink "$back/.git"; then odd=$back/.git absorbed=1; fi
+# The git_dir: line config, status and detect print, and doctor, in place of their output.
+gdmsg() {
+  if gitlink; then echo "git_dir: $(printf %s "$odd" | tr -d '[:cntrl:]') $glmsg (fix: open the session in the main checkout, or remove the file by hand if it was not put there on purpose)"
+  else echo "git_dir: $(printf %s "$odd" | tr -d '[:cntrl:]') is not the main checkout's own git dir (fix: remove it$([ -L "$odd" ] || echo ", or put the .git directory back,") by hand)"; fi
+}
 # .coddy.yml when it exists, else the legacy file; trip asks again after it
 # has put the config back.
 confpath() { if [ -f "$root/.coddy.yml" ]; then conf="$root/.coddy.yml"; else conf="$root/$legacy"; fi; cname="${conf#"$root"/}"; }
@@ -222,7 +234,7 @@ code=1
 # repository's, so the verbs the prompts inject say so in one line, exit 0 and
 # read nothing from it; every other verb refuses (oddly) before its first git
 # call, and sweep, which is only ever injected, is silent.
-case "${1-}" in config|detect|status) [ -z "$odd" ] || { echo "git_dir: $(printf %s "$odd" | tr -d '[:cntrl:]') is not the main checkout's own git dir (fix: remove it$([ -L "$odd" ] || echo ", or put the .git directory back,") by hand)"; exit 0; } ;; esac
+case "${1-}" in config|detect|status) [ -z "$odd" ] || { gdmsg; exit 0; } ;; esac
 
 if [ "${1-}" = config ]; then
   if [ -f "$conf" ]; then cat "$conf"; else echo "NOT_ONBOARDED"; fi; exit 0
@@ -315,9 +327,6 @@ warnmode() { [ "$(cfg guard)" = warn ] || return 0; wm=$1; die() { note "coddy w
 # The hooks run git outside any sandbox: with the main checkout's git dir
 # not its own (odd) they run none and refuse every edit and command, in
 # either guard mode, after trip's report so far, $1.
-# A .git that is a gitdir: file (a submodule's, a bare repository's worktree's).
-gitlink() { local l=""; case "$odd" in */commondir) return 1 ;; esac; [ -L "$odd" ] || [ ! -f "$odd" ] || { IFS= read -r -n 1024 l < "$odd"; } 2>/dev/null; [[ $l == gitdir:* ]]; }
-glmsg="is a file naming a git dir elsewhere, and coddy does not run its hooks in a checkout whose .git points at a git dir elsewhere (a submodule or a bare repository's worktree included)"
 oddly() {
   [ -n "$odd" ] || return 0
   code=2
@@ -1199,6 +1208,7 @@ fi
 # top of its worktree, where the root is found.
 if [ "${1-}" = githook ]; then
   h="${2-}"; case "$h" in pre-commit|pre-push) shift 2 ;; *) die "usage: $self githook pre-commit|pre-push" ;; esac
+  [ -z "$odd" ] || oddly
   in=""; [ "$h" = pre-commit ] || { in=$(cat; echo x); in=${in%x}; }
   if [ -f "$conf" ]; then
     b=$(cfg default_branch); b="${b:-main}"
@@ -1229,16 +1239,10 @@ fi
 if [ "${1-}" = doctor ]; then
   # a root outside git (a jj workspace with no .git) is a project when it holds a config
   [ -n "${proj-}" ] || [ -f "$conf" ] || exit 0
-  # a session in an absorbed submodule: root is the git dir under the superproject's, which has no .git
-  if [ "$odd" = "$root/.git" ] && [ ! -e "$odd" ] && [ ! -L "$odd" ] && [ -n "$back" ]; then
-    o=$odd odd=$back/.git
-    ! gitlink || { echo "git_dir: $odd $glmsg (fix: open the session in the main checkout, or remove the file by hand if it was not put there on purpose)"; exit 1; }
-    odd=$o
-  fi
+  [ -z "$absorbed" ] || { gdmsg; exit 1; }
   [ -f "$conf" ] || { echo "config: none (fix: /coddy:onboard)"; exit 1; }
   # no git call below runs against a git dir that points at another repository
-  [ -z "$odd" ] || ! gitlink || { echo "git_dir: $odd $glmsg (fix: open the session in the main checkout, or remove the file by hand if it was not put there on purpose)"; exit 1; }
-  [ -z "$odd" ] || { echo "git_dir: $odd is not the main checkout's own git dir (fix: remove it$([ -L "$odd" ] || echo ", or put the .git directory back,") by hand)"; exit 1; }
+  [ -z "$odd" ] || { gdmsg; exit 1; }
 fi
 [ -z "$odd" ] || { [ "${1-}" = sweep ] && exit 0; oddly; }
 [ -f "$conf" ] || { [ "${1-}" = sweep ] && exit 0; die "NOT_ONBOARDED"; }

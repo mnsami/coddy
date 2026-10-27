@@ -827,17 +827,23 @@ mkdir -p "$tmp/gl" "$tmp/glgit"; git init -q "$tmp/gl"; cp "$tmp/dp.yml" "$tmp/g
 t 0 "doctor: a .git that is a gitdir: file is git_dir, naming the file" dsaysat "$tmp/gl" "^git_dir: $tmp/gl/.git is a file naming a git dir elsewhere"
 t 0 "doctor: and the fix is to open the session in the main checkout" dsaysat "$tmp/gl" 'fix: open the session in the main checkout, or remove the file by hand'
 t 1 "doctor: and exits 1" env CODDY_ROOT="$tmp/gl" "$here/bin/coddy" doctor
+for v in config status detect; do
+  t 0 "$v: a .git that is a gitdir: file prints git_dir naming the file and the open-the-main-checkout fix" says "^git_dir: $tmp/gl/.git is a file naming a git dir elsewhere.*fix: open the session in the main checkout" env CODDY_ROOT="$tmp/gl" "$here/bin/coddy" $v
+done
+t 0 "verify: and a verb that refuses names the file and the main checkout" says "$tmp/gl/.git is a file naming.*open the session in the main checkout" env CODDY_ROOT="$tmp/gl" "$here/bin/coddy" verify 1
+t 2 "githook: and a commit there is refused" env CODDY_ROOT="$tmp/gl" "$here/bin/coddy" githook pre-commit
 rm -rf "$tmp/gl" "$tmp/glgit"
 # a start inside a bare repository nested in the project: git took no .git at its root, so the walk still reaches the project's own, whose commondir is refused
 mkdir -p "$dp/src"; git init -q --bare "$dp/src/b"; echo "$tmp/devil" > "$dp/.git/commondir"
 t 2 "guard: from a bare repository nested in the project, a commondir in the project's git dir is refused" gdir "$dp/src/b"
 t 2 "guard: and from its refs directory" gdir "$dp/src/b/refs"
 rm -f "$dp/.git/commondir"
-t 0 "guard: and from a bare repository nested in the project whose git dir is its own, the walk goes back to the project and nothing is refused" gdir "$dp/src/b"
+t 0 "guard: and from a bare repository nested in the project whose git dir is its own, the root stays the bare repository's parent, which holds no config, so the guard is inert, as it was" gdir "$dp/src/b"
 rm -rf "$dp/.git/commondir" "$dp/src"
 # the injected verbs and the rest, from a start whose git dir leads to another repository E (a commondir to E, a bare repository nested above a project .git holding one): none runs git there, so E's core.fsmonitor never runs, and none reports E as the root
 mkdir -p "$tmp/sE"; git init -q "$tmp/sE"; printf '#!/bin/sh\ntouch "%s/sMark"\n' "$tmp" > "$tmp/sfsm"; chmod +x "$tmp/sfsm"; git -C "$tmp/sE" config core.fsmonitor "$tmp/sfsm"
 mkdir -p "$tmp/sa/.git" "$tmp/sa/sub" "$tmp/sb/.git" "$tmp/sb/src"; echo "$tmp/sE/.git" > "$tmp/sa/.git/commondir"; echo "$tmp/sE/.git" > "$tmp/sb/.git/commondir"; git init -q --bare "$tmp/sb/src/b"
+echo 'ref: refs/heads/main' > "$tmp/sa/.git/HEAD"; echo 'ref: refs/heads/main' > "$tmp/sb/.git/HEAD"
 for sd in "$tmp/sa/sub" "$tmp/sb/src/b"; do
   for v in sweep status config detect; do
     t 0 "$v: from a start whose git dir leads to another repository (${sd#"$tmp"/}) exits 0 and runs none of its programs" sh -c "CODDY_ROOT='$sd' '$here/bin/coddy' $v >'$tmp/sout' 2>&1; e=\$?; [ \$e = 0 ] && [ ! -e '$tmp/sMark' ] && ! grep -q 'root: $tmp/sE' '$tmp/sout'"
@@ -846,6 +852,12 @@ for sd in "$tmp/sa/sub" "$tmp/sb/src/b"; do
   t 2 "exclude: and so does exclude (${sd#"$tmp"/})" env CODDY_ROOT="$sd" "$here/bin/coddy" exclude config
 done
 rm -rf "$tmp/sE" "$tmp/sa" "$tmp/sb" "$tmp/sfsm" "$tmp/sMark" "$tmp/sout"
+# githook reads the root's .git/config and runs its hooks: from a bare repository nested in a project whose .git is a link to E's, it runs none of E's
+mkdir -p "$tmp/hE/hooks" "$tmp/hp/src"; git init -q "$tmp/hE/r"; printf '#!/bin/sh\ntouch "%s/hMark"\n' "$tmp" > "$tmp/hE/r/.git/hooks/pre-commit"; chmod +x "$tmp/hE/r/.git/hooks/pre-commit"
+cp "$tmp/dp.yml" "$tmp/hp/.coddy.yml"; ln -s "$tmp/hE/r/.git" "$tmp/hp/.git"; git init -q --bare "$tmp/hp/src/b"; git -C "$tmp/hp/src/b" config core.worktree "$tmp/hp/src"
+t 2 "githook: a commit from a bare repository nested in a project whose .git is a link is refused" env CODDY_ROOT="$tmp/hp/src/b" "$here/bin/coddy" githook pre-commit
+t 0 "githook: and runs none of the linked repository's hooks" test ! -e "$tmp/hMark"
+rm -rf "$tmp/hE" "$tmp/hp" "$tmp/hMark"
 # a session outside any project whose .git directory leads to an onboarded repository: the root is that repository, so the hooks refuse
 mkdir -p "$tmp/d2/sub/.git" "$tmp/d2/.git/objects" "$tmp/d2/.git/refs"; echo 'ref: refs/heads/main' > "$tmp/d2/.git/HEAD"; echo "$dp/.git" > "$tmp/d2/.git/commondir"
 t 2 "guard: a commondir to an onboarded repository above a rejected .git is refused" gdir "$tmp/d2/sub"
@@ -855,6 +867,10 @@ mkdir -p "$tmp/smsub" "$tmp/smsup"; git init -q "$tmp/smsub"; git -C "$tmp/smsub
 git init -q "$tmp/smsup"; cp "$tmp/dp.yml" "$tmp/smsup/.coddy.yml"; git -C "$tmp/smsup" -c protocol.file.allow=always submodule add -q "$tmp/smsub" sm
 t 0 "doctor: a session in an absorbed submodule is git_dir, naming its .git file" dsaysat "$tmp/smsup/sm" "^git_dir: $tmp/smsup/sm/.git is a file naming a git dir elsewhere"
 t 1 "doctor: and exits 1" env CODDY_ROOT="$tmp/smsup/sm" "$here/bin/coddy" doctor
+for v in config status detect; do
+  t 0 "$v: a session in an absorbed submodule prints git_dir naming its .git file and the open-the-main-checkout fix" says "^git_dir: $tmp/smsup/sm/.git is a file naming a git dir elsewhere.*fix: open the session in the main checkout" env CODDY_ROOT="$tmp/smsup/sm" "$here/bin/coddy" $v
+done
+t 0 "verify: and a verb that refuses names the same file" says "$tmp/smsup/sm/.git is a file naming.*open the session in the main checkout" env CODDY_ROOT="$tmp/smsup/sm" "$here/bin/coddy" verify 1
 rm -rf "$tmp/smsub" "$tmp/smsup"
 # a relative root naming no directory ends
 t 0 "root: a relative CODDY_ROOT naming no directory ends" timeout 10 env CODDY_ROOT=nosuchdir "$here/bin/coddy" status
