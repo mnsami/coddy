@@ -367,13 +367,16 @@ t 0 "warn: a push to the default branch is let through with the message" noted '
 t 0 "warn: a force push is let through with the message" noted 'force-push' 'git push -f origin feat'
 t 0 "warn: a branch delete is let through with the message" noted 'delete a remote branch' 'git push origin :feat'
 # A jq that fails, or a payload naming no path, leaves the path unread:
-# blocked, in warn mode too. raw <payload>: the edit hook with it as it is
+# blocked, in warn mode too. raw <payload>: the edit hook with it as it is;
+# saying <text> <command...>: the command's exit when its output holds the
+# text, else 1, so no other refusal passes for this one
 raw() { printf %s "$1" | run guard; }
+saying() { local out r; out=$("${@:2}" 2>&1); r=$?; case "$out" in *"$1"*) return "$r" ;; esac; return 1; }
 for v in block warn; do
   printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
-  PATH="$tmp/badjq:$PATH" t 2 "guard: $v blocks the main checkout with a jq that fails" guard "$repo/README.md"
-  for p in '{}' '' '{"tool_input":{"file_path":null}}' "{\"tool_input\":{\"path\":\"$repo/x\"}}"; do
-    t 2 "guard: $v blocks a payload naming no path: ${p:-empty}" raw "$p"
+  PATH="$tmp/badjq:$PATH" t 2 "guard: $v blocks the main checkout with a jq that fails" saying 'could not read the hook payload with jq' guard "$repo/README.md"
+  for p in '{}' '' 'null' '[]' '{"tool_input":"x"}' '{bad' '{"tool_input":{"file_path":null}}' "{\"tool_input\":{\"path\":\"$repo/x\"}}"; do
+    t 2 "guard: $v blocks a payload naming no path: ${p:-empty}" saying 'the edit guard could not read' raw "$p"
   done
 done
 for v in block wran; do

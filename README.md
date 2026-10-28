@@ -141,7 +141,8 @@ project; the fourth is a pair of git hooks that `/coddy:start` installs.
 `.worktrees/<issue>/`. Inside, it rejects edits until `/coddy:start` has
 claimed that issue. `.claude/` stays editable, except Claude Code's own
 worktrees under it. An edit of `.coddy.yml` asks you first. The hook needs
-`jq`, and blocks every edit without a working one.
+`jq`, and blocks every edit without a working one, or whose path it cannot
+read.
 
 A claim belongs to the session that made it. Only that session may edit or
 push the worktree. Another session starting the same issue is refused and
