@@ -56,6 +56,8 @@ chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log"
 mkdir "$tmp/nops"; printf '#!/bin/sh\nexit 127\n' > "$tmp/nops/ps"; chmod +x "$tmp/nops/ps"
 # A PATH with everything snap needs but jq.
 mkdir "$tmp/nojq"; for x in bash sed awk cat grep git cmp sort comm tr cut cksum mkdir cp rm head; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
+# A jq that fails whatever it is asked: on PATH first when a case asks.
+mkdir "$tmp/badjq"; printf '#!/bin/sh\nexit 1\n' > "$tmp/badjq/jq"; chmod +x "$tmp/badjq/jq"
 # kept <what>: sweep leaves worktree $p alone
 kept() { run sweep >/dev/null 2>&1; t 0 "$tool: sweep keeps $1" test -d ".worktrees/$p"; }
 
@@ -364,6 +366,16 @@ t 0 "warn: a git worktree add outside .worktrees/ is let through with the messag
 t 0 "warn: a push to the default branch is let through with the message" noted 'the default branch' 'git push origin main'
 t 0 "warn: a force push is let through with the message" noted 'force-push' 'git push -f origin feat'
 t 0 "warn: a branch delete is let through with the message" noted 'delete a remote branch' 'git push origin :feat'
+# A jq that fails, or a payload naming no path, leaves the path unread:
+# blocked, in warn mode too. raw <payload>: the edit hook with it as it is
+raw() { printf %s "$1" | run guard; }
+for v in block warn; do
+  printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
+  PATH="$tmp/badjq:$PATH" t 2 "guard: $v blocks the main checkout with a jq that fails" guard "$repo/README.md"
+  for p in '{}' '' '{"tool_input":{"file_path":null}}' "{\"tool_input\":{\"path\":\"$repo/x\"}}"; do
+    t 2 "guard: $v blocks a payload naming no path: ${p:-empty}" raw "$p"
+  done
+done
 for v in block wran; do
   printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
   t 2 "guard: $v blocks the main checkout" guard "$repo/README.md"
@@ -571,6 +583,9 @@ rm "$hd/.git/HEAD"; ln -s refs/heads/main "$hd/.git/HEAD"
 t 2 "push: refused, a HEAD that is a link to refs/heads/main" shell 'git push' "$hd/empty"
 t 0 "without jq: a push passes" nojq 'git push origin main'
 t 0 "without jq: and says so" says 'jq is missing' nojq 'git push origin main'
+badjq() { payload "$1" | PATH="$tmp/badjq:$PATH" run snap; }
+t 0 "with a jq that fails: a push passes" badjq 'git push origin main'
+t 0 "with a jq that fails: and says so" says 'jq is missing or failed' badjq 'git push origin main'
 # A push that pushes nothing (help, a dry run) passes, force and all; tag
 # names a tag.
 for c in 'git push --help' 'git push -h' 'git --help push' 'git --version push origin main' 'git -v push origin main' 'git -C . --version push' \

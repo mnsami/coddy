@@ -400,17 +400,21 @@ if [ "${1-}" = guard ]; then
   [ -f "$conf" ] || exit 0
   code=2 # exit 2 is what blocks the tool call
   oddly
-  # Without jq the path cannot be read, so every edit is blocked, in warn
-  # mode too: .coddy.yml must never go through unasked.
+  # Without jq, with one that fails or with a payload naming no path, the
+  # path cannot be read, so every edit is blocked, in warn mode too:
+  # .coddy.yml must never go through unasked. So the payload is read before
+  # warnmode, whose die lets the edit through.
   command -v jq >/dev/null || die "the edit guard needs jq"
-  warnmode edit
   # The hook's session_id is the editing session's CODDY_SESSION.
   # jq once per field, not read per line: a path may hold a newline.
   in=$(cat)
-  me=$(jq -r '.session_id // ""' <<<"$in")
-  f=$(jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' <<<"$in")
+  me=$(jq -r '.session_id // ""' <<<"$in") &&
+    f=$(jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' <<<"$in") &&
+    cwd=$(jq -r '.cwd // empty' <<<"$in") || die "the edit guard could not read the hook payload with jq"
+  [ -n "$f" ] || die "the edit guard could not read a path from the hook payload"
+  warnmode edit
   # A relative path is written against the hook's cwd, as the tool resolves it.
-  cwd=$(jq -r '.cwd // empty' <<<"$in"); case "$f" in ''|/*) ;; *) f="${cwd:-$PWD}/$f" ;; esac
+  case "$f" in ''|/*) ;; *) f="${cwd:-$PWD}/$f" ;; esac
   # The physical path a write to $1 lands on: symlinks followed in every
   # component (a dangling one creates its target), ./, // and .. collapsed.
   # Fails when its directory does not exist, and no such path is the root.
@@ -1095,8 +1099,8 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # trip finds it whatever happens here. A push is named in any case, or
     # as send-pack, or under help.autocorrect by a typo.
     case "$in" in *worktree*|*workspace*|*[Pp][Uu][Ss][Hh]*|*send-pack*|*[Aa][Uu][Tt][Oo][Cc][Oo][Rr][Rr][Ee][Cc][Tt]*) ;; *) exit 0 ;; esac
-    command -v jq >/dev/null || { printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"coddy could not read this command for a git worktree add, a jj workspace add or a push, since jq is missing, so it was let through: a worktree it makes outside .worktrees/<issue>/ is reported once it has run, a push is not."}}'; exit 0; }
-    cmd=$(jq -r '.tool_input.command // empty' <<<"$in") cwd=$(jq -r '.cwd // empty' <<<"$in")
+    command -v jq >/dev/null && cmd=$(jq -r '.tool_input.command // empty' <<<"$in") && cwd=$(jq -r '.cwd // empty' <<<"$in") ||
+      { printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"coddy could not read this command for a git worktree add, a jj workspace add or a push, since jq is missing or failed, so it was let through: a worktree it makes outside .worktrees/<issue>/ is reported once it has run, a push is not."}}'; exit 0; }
     code=2 unk="" pu=""
     pr="Issue work reaches $b through a pull request: /coddy:ship pushes the issue's branch and opens one."
     warnmode command
