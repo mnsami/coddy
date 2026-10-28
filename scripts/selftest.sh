@@ -601,6 +601,12 @@ unwarned() { out=$(unread) && printf %s "$out" | jq -e '.hookSpecificOutput | .h
 cp .claude/coddy.yml "$tmp/conf.yml"
 printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml
 t 2 "a payload jq cannot read: a push to the default branch is refused" saying 'could not read the hook payload with jq' unread
+# jq loads ~/.jq into every program; the hooks run it with HOME=/dev/null,
+# so a broken one leaves both hooks reading the payload as before.
+mkdir "$tmp/badhome"; printf 'def x: ;\n' > "$tmp/badhome/.jq"
+badhome() { payload "$1" | HOME="$tmp/badhome" run snap; }
+t 2 "a broken ~/.jq: a push to the default branch is still refused" saying '/coddy:ship' badhome 'git push origin main'
+HOME="$tmp/badhome" t 2 "a broken ~/.jq: guard still refuses the main checkout" saying 'not the main checkout' guard "$repo/README.md"
 printf 'tracker: github\ndefault_branch: main\nguard: warn\n' > .claude/coddy.yml
 t 0 "warn: a payload jq cannot read: a push is let through with the message" unwarned
 cp "$tmp/conf.yml" .claude/coddy.yml
