@@ -344,6 +344,14 @@ t 2 "guard rejects .. paths hidden behind a newline" guard "$repo/.claude/x\\n/.
 mkdir -p .git/coddy/66 && echo "sess-f " > .git/coddy/66/owner # a claim run without CLAUDE_PID
 t 0 "guard reads an owner without a pid as running, as claim does" says "(pid , running)" guard "$repo/.worktrees/66/a.txt" sess-b
 rm -r .git/coddy/66
+# hook <verb> <payload>: that verb's first entry in hooks/hooks.json, run as
+# Claude Code runs exec form (no shell, ${CLAUDE_PLUGIN_ROOT} substituted),
+# with the SHELLOPTS=noexec a .claude/settings.json env can put in its environment
+hook() { local p=$2; eval "set -- $(jq -r --arg v "$1" --arg r "$here" 'first(.hooks[][].hooks[] | select(.args[-1]? == $v)) | [.command] + .args | map(split("${CLAUDE_PLUGIN_ROOT}") | join($r)) | @sh' "$here/hooks/hooks.json")"; printf %s "$p" | env CLAUDE_PROJECT_DIR="$repo" SHELLOPTS=noexec "$@"; }
+t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS bash" jq -e '[.hooks[][].hooks[]] | all(.command == "/usr/bin/env" and .args[:5] == ["-u", "SHELLOPTS", "-u", "BASHOPTS", "bash"])' "$here/hooks/hooks.json"
+t 2 "hooks: SHELLOPTS=noexec leaves guard on" hook guard "{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/README.md\"}}"
+t 2 "hooks: and snap" hook snap "$(payload 'git worktree add ../x')"
+wire snap w; echo x > stray.txt; t 2 "hooks: and trip" hook trip '{"tool_use_id":"w"}'; rm stray.txt
 t 1 "create rejects a bad issue id" run create "../x" feat/x
 t 1 "claim needs a worktree first" run claim 99
 
