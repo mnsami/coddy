@@ -56,6 +56,8 @@ chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log"
 mkdir "$tmp/nops"; printf '#!/bin/sh\nexit 127\n' > "$tmp/nops/ps"; chmod +x "$tmp/nops/ps"
 # A PATH with everything snap needs but jq.
 mkdir "$tmp/nojq"; for x in bash sed awk cat grep git cmp sort comm tr cut cksum mkdir cp rm head; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
+# A jq that fails whatever it is asked: on PATH first when a case asks.
+mkdir "$tmp/badjq"; printf '#!/bin/sh\nexit 1\n' > "$tmp/badjq/jq"; chmod +x "$tmp/badjq/jq"
 # kept <what>: sweep leaves worktree $p alone
 kept() { run sweep >/dev/null 2>&1; t 0 "$tool: sweep keeps $1" test -d ".worktrees/$p"; }
 
@@ -364,6 +366,23 @@ t 0 "warn: a git worktree add outside .worktrees/ is let through with the messag
 t 0 "warn: a push to the default branch is let through with the message" noted 'the default branch' 'git push origin main'
 t 0 "warn: a force push is let through with the message" noted 'force-push' 'git push -f origin feat'
 t 0 "warn: a branch delete is let through with the message" noted 'delete a remote branch' 'git push origin :feat'
+# A jq that fails, or a payload naming no path, leaves the path unread:
+# blocked, in warn mode too. raw <payload>: the edit hook with it as it is;
+# saying <text> <command...>: the command's exit when its output holds the
+# text, else 1, so no other refusal passes for this one
+raw() { printf %s "$1" | run guard; }
+saying() { local out r; out=$("${@:2}" 2>&1); r=$?; case "$out" in *"$1"*) return "$r" ;; esac; return 1; }
+for v in block warn; do
+  printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
+  PATH="$tmp/badjq:$PATH" t 2 "guard: $v blocks the main checkout with a jq that fails" saying 'could not read the hook payload with jq' guard "$repo/README.md"
+  for p in '{}' '' 'null' '[]' '{"tool_input":"x"}' '{bad' '{"tool_input":{"file_path":null}}' "{\"tool_input\":{\"path\":\"$repo/x\"}}"; do
+    t 2 "guard: $v blocks a payload naming no path: ${p:-empty}" saying 'the edit guard could not read' raw "$p"
+  done
+  # A path still read where the payload names one: a NotebookEdit's, and a
+  # relative one against the payload's cwd. Allowed and silent, or refused.
+  t 0 "guard: $v reads a NotebookEdit's notebook_path" test -z "$(raw "{\"tool_input\":{\"notebook_path\":\"$repo/.claude/n.ipynb\"}}" 2>&1 || echo refused)"
+  t 0 "guard: $v reads a relative path against the payload's cwd" test -z "$(raw "{\"cwd\":\"$repo/.claude\",\"tool_input\":{\"file_path\":\"n.md\"}}" 2>&1 || echo refused)"
+done
 for v in block wran; do
   printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
   t 2 "guard: $v blocks the main checkout" guard "$repo/README.md"
@@ -571,6 +590,26 @@ rm "$hd/.git/HEAD"; ln -s refs/heads/main "$hd/.git/HEAD"
 t 2 "push: refused, a HEAD that is a link to refs/heads/main" shell 'git push' "$hd/empty"
 t 0 "without jq: a push passes" nojq 'git push origin main'
 t 0 "without jq: and says so" says 'jq is missing' nojq 'git push origin main'
+badjq() { payload "$1" | PATH="$tmp/badjq:$PATH" run snap; }
+t 0 "with a jq that fails: a push passes" badjq 'git push origin main'
+t 0 "with a jq that fails: and says so" says 'jq is missing or failed' badjq 'git push origin main'
+# A jq that runs but cannot read the payload is no missing jq: the agent
+# writes the payload, and a lone surrogate in any field (jq rejects one)
+# would let every push through. Refused, and warned of in warn mode.
+unread() { printf '{"tool_use_id":"sh","cwd":"%s","tool_input":{"command":"git push origin main","description":"x\\ud800"}}' "$repo" | run snap; }
+unwarned() { out=$(unread) && printf %s "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and (.additionalContext | contains("could not read the hook payload with jq"))'; }
+cp .claude/coddy.yml "$tmp/conf.yml"
+printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml
+t 2 "a payload jq cannot read: a push to the default branch is refused" saying 'could not read the hook payload with jq' unread
+# jq loads ~/.jq into every program; the hooks run it with HOME=/dev/null,
+# so a broken one leaves both hooks reading the payload as before.
+mkdir "$tmp/badhome"; printf 'def x: ;\n' > "$tmp/badhome/.jq"
+badhome() { payload "$1" | HOME="$tmp/badhome" run snap; }
+t 2 "a broken ~/.jq: a push to the default branch is still refused" saying '/coddy:ship' badhome 'git push origin main'
+HOME="$tmp/badhome" t 2 "a broken ~/.jq: guard still refuses the main checkout" saying 'not the main checkout' guard "$repo/README.md"
+printf 'tracker: github\ndefault_branch: main\nguard: warn\n' > .claude/coddy.yml
+t 0 "warn: a payload jq cannot read: a push is let through with the message" unwarned
+cp "$tmp/conf.yml" .claude/coddy.yml
 # A push that pushes nothing (help, a dry run) passes, force and all; tag
 # names a tag.
 for c in 'git push --help' 'git push -h' 'git --help push' 'git --version push origin main' 'git -v push origin main' 'git -C . --version push' \

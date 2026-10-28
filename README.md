@@ -61,7 +61,7 @@ The plugin keeps its own copy and does not use `~/.coddy`.
 
 You also need:
 
-- `jq`. The edit guard needs it and blocks every edit without it.
+- `jq`. The edit guard needs it and blocks every edit without a working one.
 - Optionally `jj` ([Jujutsu](https://jj-vcs.github.io)), for `worktree: jj`;
   `worktree: git`, the default, needs nothing more. `/coddy:onboard`
   installs either one that is missing (Homebrew, apt-get, dnf or winget)
@@ -141,7 +141,8 @@ project; the fourth is a pair of git hooks that `/coddy:start` installs.
 `.worktrees/<issue>/`. Inside, it rejects edits until `/coddy:start` has
 claimed that issue. `.claude/` stays editable, except Claude Code's own
 worktrees under it. An edit of `.coddy.yml` asks you first. The hook needs
-`jq`, and blocks every edit without it.
+`jq`, and blocks every edit without a working one, or whose path it cannot
+read.
 
 A claim belongs to the session that made it. Only that session may edit or
 push the worktree. Another session starting the same issue is refused and
@@ -177,9 +178,10 @@ Before a command runs, the hook reads its text for a `git worktree add` or
 `jj workspace add` that would put a worktree anywhere else, and refuses it,
 naming `/coddy:start <issue>`; `guard: warn` turns that into a notice. The
 reading follows quotes, `cd`, `git -C`, options and compound commands, but a
-path it cannot work out (`"$p"`, a backtick, a glob) or a missing `jq` lets
-the command through with a notice, and the check afterwards still catches
-the worktree, except from a command run in the background.
+path it cannot work out (`"$p"`, a backtick, a glob) or a missing or failing
+`jq` lets the command through with a notice, and the check afterwards still
+catches the worktree, except from a command run in the background. A payload
+a working `jq` cannot read is refused (a notice under `guard: warn`).
 
 The same reading refuses a `git push`, `git send-pack` or `jj git push` to
 the default branch, naming `/coddy:ship`, and leaves every force push and
