@@ -378,6 +378,10 @@ for v in block warn; do
   for p in '{}' '' 'null' '[]' '{"tool_input":"x"}' '{bad' '{"tool_input":{"file_path":null}}' "{\"tool_input\":{\"path\":\"$repo/x\"}}"; do
     t 2 "guard: $v blocks a payload naming no path: ${p:-empty}" saying 'the edit guard could not read' raw "$p"
   done
+  # A path still read where the payload names one: a NotebookEdit's, and a
+  # relative one against the payload's cwd. Allowed and silent, or refused.
+  t 0 "guard: $v reads a NotebookEdit's notebook_path" test -z "$(raw "{\"tool_input\":{\"notebook_path\":\"$repo/.claude/n.ipynb\"}}" 2>&1 || echo refused)"
+  t 0 "guard: $v reads a relative path against the payload's cwd" test -z "$(raw "{\"cwd\":\"$repo/.claude\",\"tool_input\":{\"file_path\":\"n.md\"}}" 2>&1 || echo refused)"
 done
 for v in block wran; do
   printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml

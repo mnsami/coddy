@@ -835,7 +835,7 @@ for st in foo.git foo.git/refs; do
 done
 # the same bare repository beside a config at its parent: the parent is the project, the exemption does not apply
 mkdir -p "$tmp/sbc"; git init -q --bare "$tmp/sbc/foo.git"; printf 'version: 2\ntracker: github\nworktree: git\ndefault_branch: main\nverify: true\n' > "$tmp/sbc/.coddy.yml"
-for st in foo.git foo.git/refs; do t 2 "bare: beside a config, from $st, guard is held" sh -c "echo '{}' | CODDY_ROOT='$tmp/sbc/$st' '$here/bin/coddy' guard"; done
+for st in foo.git foo.git/refs; do t 2 "bare: beside a config, from $st, guard is held" sh -c "echo '{\"tool_input\":{\"file_path\":\"/x\"}}' | CODDY_ROOT='$tmp/sbc/$st' '$here/bin/coddy' guard"; done
 mkdir -p "$dp/bx/y"; git init -q --bare "$dp/bx/y/c.git"
 t 0 "bare: nested, the line names the bare repository, not a .git that does not exist" sh -c "CODDY_ROOT='$dp/bx/y/c.git' '$here/bin/coddy' status | grep -q \"^git_dir: $(cd "$dp" && pwd -P)/bx/y/c.git is a bare repository nested in the project\""
 rm -rf "$dp/bx"
