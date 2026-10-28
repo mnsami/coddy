@@ -1099,11 +1099,17 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # trip finds it whatever happens here. A push is named in any case, or
     # as send-pack, or under help.autocorrect by a typo.
     case "$in" in *worktree*|*workspace*|*[Pp][Uu][Ss][Hh]*|*send-pack*|*[Aa][Uu][Tt][Oo][Cc][Oo][Rr][Rr][Ee][Cc][Tt]*) ;; *) exit 0 ;; esac
-    command -v jq >/dev/null && cmd=$(jq -r '.tool_input.command // empty' <<<"$in") && cwd=$(jq -r '.cwd // empty' <<<"$in") ||
+    # A jq that is missing or does not run lets the command through, saying
+    # so; one that runs and cannot read the payload is refused, since the
+    # agent writes the payload (a lone surrogate escape in any field fails
+    # jq) and could otherwise let any push through.
+    command -v jq >/dev/null && jq -n true >/dev/null 2>&1 ||
       { printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"coddy could not read this command for a git worktree add, a jj workspace add or a push, since jq is missing or failed, so it was let through: a worktree it makes outside .worktrees/<issue>/ is reported once it has run, a push is not."}}'; exit 0; }
     code=2 unk="" pu=""
     pr="Issue work reaches $b through a pull request: /coddy:ship pushes the issue's branch and opens one."
     warnmode command
+    cmd=$(jq -r '.tool_input.command // empty' <<<"$in") && cwd=$(jq -r '.cwd // empty' <<<"$in") ||
+      die "the shell hook could not read the hook payload with jq, so that command could not be checked for a git worktree add, a jj workspace add or a push."
     while IFS= read -r p; do
       case "$p" in
         \?*) unk="$unk ${p#\?}" ;;

@@ -593,6 +593,17 @@ t 0 "without jq: and says so" says 'jq is missing' nojq 'git push origin main'
 badjq() { payload "$1" | PATH="$tmp/badjq:$PATH" run snap; }
 t 0 "with a jq that fails: a push passes" badjq 'git push origin main'
 t 0 "with a jq that fails: and says so" says 'jq is missing or failed' badjq 'git push origin main'
+# A jq that runs but cannot read the payload is no missing jq: the agent
+# writes the payload, and a lone surrogate in any field (jq rejects one)
+# would let every push through. Refused, and warned of in warn mode.
+unread() { printf '{"tool_use_id":"sh","cwd":"%s","tool_input":{"command":"git push origin main","description":"x\\ud800"}}' "$repo" | run snap; }
+unwarned() { out=$(unread) && printf %s "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and (.additionalContext | contains("could not read the hook payload with jq"))'; }
+cp .claude/coddy.yml "$tmp/conf.yml"
+printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml
+t 2 "a payload jq cannot read: a push to the default branch is refused" saying 'could not read the hook payload with jq' unread
+printf 'tracker: github\ndefault_branch: main\nguard: warn\n' > .claude/coddy.yml
+t 0 "warn: a payload jq cannot read: a push is let through with the message" unwarned
+cp "$tmp/conf.yml" .claude/coddy.yml
 # A push that pushes nothing (help, a dry run) passes, force and all; tag
 # names a tag.
 for c in 'git push --help' 'git push -h' 'git --help push' 'git --version push origin main' 'git -v push origin main' 'git -C . --version push' \

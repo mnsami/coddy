@@ -180,7 +180,8 @@ naming `/coddy:start <issue>`; `guard: warn` turns that into a notice. The
 reading follows quotes, `cd`, `git -C`, options and compound commands, but a
 path it cannot work out (`"$p"`, a backtick, a glob) or a missing or failing
 `jq` lets the command through with a notice, and the check afterwards still
-catches the worktree, except from a command run in the background.
+catches the worktree, except from a command run in the background. A payload
+a working `jq` cannot read is refused (a notice under `guard: warn`).
 
 The same reading refuses a `git push`, `git send-pack` or `jj git push` to
 the default branch, naming `/coddy:ship`, and leaves every force push and
