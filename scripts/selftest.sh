@@ -351,9 +351,12 @@ rm -r .git/coddy/66
 hook() { local v=$1 p=$2; shift 2; eval "set -- \"\$@\" $(jq -r --arg v "$v" --arg r "$here" 'first(.hooks[][].hooks[] | select(.args[-1]? == $v)) | [.command] + .args | map(split("${CLAUDE_PLUGIN_ROOT}") | join($r)) | @sh' "$here/hooks/hooks.json")"; printf %s "$p" | env CLAUDE_PROJECT_DIR="$repo" "$@"; }
 t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u FUNCNEST -u POSIXLY_CORRECT bash" jq -e '[.hooks[][].hooks[]] | all(.command == "/usr/bin/env" and .args[:9] == ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash"])' "$here/hooks/hooks.json"
 # Each under the bash on PATH and under /bin/bash (3.2 on macOS) first on PATH.
+# GREP_OPTIONS and TMOUT are the core's to unset, not hooks.json's: they act
+# only once it runs a grep (BSD grep honours it) or a read (bash 5 takes a
+# fraction of a second, which times out reads from process substitutions).
 mkdir "$tmp/sysbash"; ln -s /bin/bash "$tmp/sysbash/bash"
 for b in "" "$tmp/sysbash:"; do
-  for e in SHELLOPTS=noexec FUNCNEST=1 POSIXLY_CORRECT=1; do
+  for e in SHELLOPTS=noexec BASHOPTS=failglob FUNCNEST=1 POSIXLY_CORRECT=1 GREP_OPTIONS=-V TMOUT=0.000001; do
     w="$e${b:+ under /bin/bash}"
     t 2 "hooks: $w leaves guard on" hook guard "{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/README.md\"}}" "$e" PATH="$b$PATH"
     t 2 "hooks: $w leaves snap on" hook snap "$(payload 'git worktree add ../x')" "$e" PATH="$b$PATH"
