@@ -240,6 +240,11 @@ for p in "$repo/./.coddy.yml" "$repo//.coddy.yml" "$repo/sub/../.coddy.yml" "$re
 # out of the project still lands on the root's .coddy.yml.
 mkdir -p "$tmp/out/deep" && ln -s "$tmp/out/deep" lnk
 t 0 "guard asks on .coddy.yml spelled through .. after a link out of the project" asks "$repo/lnk/../.coddy.yml"
+# And is compared with .coddy.yml spelled so: a .. after a link back into
+# the project lands outside it, where it is refused for its ..
+mkdir s2d && ln -s "$repo/s2d" "$tmp/s2"
+t 2 "guard reads .. by name, so one after a link back into the project is not .coddy.yml" guard "$tmp/s2/../.coddy.yml"
+rm -r s2d "$tmp/s2"
 t 2 "guard blocks the main checkout" guard "$repo/README.md"
 PATH="$tmp/nojq" t 2 "guard without jq fails closed" guard "$repo/.coddy.yml"
 echo 'guard: warn' >> .coddy.yml
@@ -312,6 +317,12 @@ rm .claude/cfg
 ln -s ../.coddy.yml .claude/c10; for i in 9 8 7 6 5 4 3 2 1; do ln -s "c$((i+1))" ".claude/c$i"; done
 CODDY_AGENT_DIR=.claude t 0 "guard asks through a dangling chain of ten links" asks "$repo/.claude/c1"
 rm .claude/c[0-9]*
+# A path the walk cannot follow is refused before warn mode: let through, a
+# write may land on a .coddy.yml not made yet, which nothing asked about.
+ln -s ../.coddy.yml .claude/c41; for i in $(seq 40 -1 1); do ln -s "c$((i+1))" ".claude/c$i"; done
+echo 'guard: warn' >> .claude/coddy.yml
+CODDY_AGENT_DIR=.claude t 2 "warn: guard refuses a chain of 41 links to .coddy.yml while the legacy file is live" guard "$repo/.claude/c1"
+cp "$tmp/conf.orig" .claude/coddy.yml; rm .claude/c[0-9]*
 tripped 2 "config: deleting the legacy file trips" 'rm .claude/coddy.yml'
 t 0 "config: the legacy file is restored" same .claude/coddy.yml
 # Once .coddy.yml is live the legacy file is ignored, so the lock lets it go.
@@ -525,6 +536,13 @@ deep=$(printf 'd/%.0s' $(seq 300)); mkdir -p ".worktrees/1/$deep"
 ln -s "$(printf '../d/%.0s' $(seq 200))" ".worktrees/1/${deep}B"
 t 2 "guard: refuses a walk that outlasts its time budget, promptly" timeout 15 "$here/bin/coddy" guard < <(printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$pr/.worktrees/1/$deep$(printf 'B/%.0s' $(seq 30))a.txt")
 rm -r .worktrees/1/d
+# Nor the tail a missing directory leaves, joined and read in time
+# quadratic in its length: 40 links, each putting 60 components after the
+# next, the last into a missing directory, leave one past 4096 bytes.
+x=$(printf '/x%.0s' $(seq 60))
+for i in $(seq 39); do ln -s "S$((i+1))$x" ".worktrees/1/S$i"; done; ln -s "nodir$x" .worktrees/1/S40
+t 2 "guard: refuses a tail past 4096 bytes after a missing directory, promptly" timeout 15 "$here/bin/coddy" guard < <(printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$pr/.worktrees/1/S1/a.txt")
+rm .worktrees/1/S[0-9]*
 # The Claude Code shims take their inputs from CLAUDE_* alone: an inherited
 # CODDY_* value, however hostile, is ignored.
 shim() { CLAUDE_PROJECT_DIR=$repo CODDY_ROOT=/ CODDY_AGENT_DIR=src CODDY_SESSION=sess-a CODDY_PID=$$ bash "$here/scripts/issue.sh" "$@"; }

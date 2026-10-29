@@ -444,7 +444,6 @@ if [ "${1-}" = guard ]; then
   # bounds the path's length; $budget bounds the walk's time.
   long() { local LC_ALL=C; [ "${#1}" -gt 4096 ]; }
   ! long "$f" && ! long "$cwd" || die "the edit guard refuses a path or cwd longer than 4096 bytes"
-  warnmode edit
   # A relative path is written against the hook's cwd, as the tool resolves it.
   case "$f" in ''|/*) ;; *) f="${cwd:-$PWD}/$f" ;; esac
   # The physical path a write to $1 lands on: symlinks followed in every
@@ -457,7 +456,9 @@ if [ "${1-}" = guard ]; then
   # a directory does not exist, or, with $2 new, collapses the rest from
   # there by name (abspath), as the tool makes it; and fails on any step
   # that does: a cd, a readlink, a 41st link (40, as far as a kernel follows),
-  # and once $budget seconds have passed (each cd costs time in the depth).
+  # once $budget seconds have passed (each cd costs time in the depth), and
+  # a joined tail past 4096 bytes, before abspath reads it (the join and
+  # abspath cost time quadratic in its length, and links repeat it).
   phys() (
     set -f; comps "$1"; a=("${b[@]}")
     case "$1" in /*) cd / 2>/dev/null || exit 1 ;; esac
@@ -475,7 +476,8 @@ if [ "${1-}" = guard ]; then
       case "$c" in ''|.) continue ;; esac
       if [ -d "./$c" ]; then cd -P "./$c" 2>/dev/null || exit 1
       elif [ "${2-}" = new ]; then
-        t=$(pwd -P && printf x) || exit 1; t=${t%?x}; for c in "${a[@]:k-1}"; do t="$t/$c"; done
+        t=$(pwd -P && printf x) || exit 1; t=${t%?x}
+        for c in "${a[@]:k-1}"; do t="$t/$c"; ! long "$t" && [ "$SECONDS" -lt "$budget" ] || exit 1; done
         t=$(abspath "$t" && printf x) && printf '%sx' "${t%?x}"; exit
       else exit 1; fi
     done
@@ -495,13 +497,19 @@ if [ "${1-}" = guard ]; then
   # symlink or hard link from a worktree or the agent dir (-ef: the same
   # file); any case of its name, as a case-folding disk reads it.
   # The Write tool collapses $f's own . and .. by name before it writes, so
-  # they are collapsed here first (abspath), and the links then followed.
+  # they are collapsed here first (abspath, $nm), and the links then followed;
+  # the hard-link test stats $nm too, never a link's .. the write does not
+  # take. A path the walk cannot follow is refused here, before warnmode, as
+  # the payload is: let through, a write could land on a .coddy.yml not made
+  # yet (the legacy file live) that nothing asked about.
   # The root's directory is compared by identity (-ef), not by name: macOS
   # reaches it through the /System/Volumes/Data firmlink too, which bash's
   # pwd -P keeps, as it would a bind mount.
-  at=$(a=$(abspath "$f" && printf x) && phys "${a%?x}") && at=${at%x} || at=$f
+  nf="the edit guard could not follow $f to where the edit lands (a cd or readlink failed, more than 40 links, a path past 4096 bytes, or more than $budget seconds)."
+  nm=$(abspath "$f" && printf x) && nm=${nm%?x} && at=$(phys "$nm" new) && at=${at%x} || die "$nf"
+  warnmode edit
   pr=$(cd "$root" && pwd -P) || pr=$root
-  if [ "$f" -ef "$root/.coddy.yml" ] || { [ "${at%/*}" -ef "$pr" ] && [ "$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')" = .coddy.yml ]; }; then
+  if [ "$nm" -ef "$root/.coddy.yml" ] || { [ "${at%/*}" -ef "$pr" ] && [ "$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')" = .coddy.yml ]; }; then
     jqh -cn --arg m "Editing .coddy.yml changes the coddy guardrails. Allow it only if you asked for this change (/coddy:config)." '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'
     exit 0
   fi
@@ -545,7 +553,9 @@ if [ "${1-}" = guard ]; then
   # $1 with its deepest ancestor that is the root directory itself (-ef)
   # spelled $pr: the root has names no link shows (the firmlink above, a
   # bind mount), which no match on $pr's spelling would read as the project.
-  inroot() { local a=$1; while [ "${a%/*}" != "$a" ]; do a=${a%/*}; [ "${a:-/}" -ef "$pr" ] && { printf '%sx' "$pr${1#"$a"}"; return; }; done; printf '%sx' "$1"; }
+  # Fails once $budget seconds have passed, as phys does: each step costs
+  # time in the path's length.
+  inroot() { local a=$1; while [ "${a%/*}" != "$a" ]; do [ "$SECONDS" -lt "$budget" ] || return 1; a=${a%/*}; [ "${a:-/}" -ef "$pr" ] && { printf '%sx' "$pr${1#"$a"}"; return; }; done; printf '%sx' "$1"; }
   # Claude Code hands the hooks the physical project dir, while a path may
   # reach the project through a link, or the root be one: the edit is held
   # as given against the root, then spelled physically (phys, new for a
@@ -554,9 +564,9 @@ if [ "${1-}" = guard ]; then
   # differs, since it would repeat the first. A path phys cannot follow is
   # refused: as given it may land anywhere.
   held "$f" "$root"; m=$move
-  # Not $at: abspath collapses a trailing /. or /.. by name, and $at is $f where a directory is missing.
-  g=$(phys "$f" new) || die "the edit guard could not follow $f to where the edit lands (a cd or readlink failed, more than 40 links, or more than $budget seconds)."
-  g=$(inroot "${g%x}"); g=${g%x}
+  # Not $at: abspath collapses a trailing /. or /.. by name.
+  g=$(phys "$f" new) && g=$(inroot "${g%x}") || die "$nf"
+  g=${g%x}
   [ "$g" = "$f" ] && [ "$pr" = "$root" ] || held "$g" "$pr"
   [ -z "$m" ] || myline > "$root/.git/coddy/$m/owner" 2>/dev/null
   [ -z "$move" ] || [ "$move" = "$m" ] || myline > "$root/.git/coddy/$move/owner" 2>/dev/null
