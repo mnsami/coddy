@@ -4,13 +4,13 @@
       {
         "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
-          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "guard"], "timeout": 30, "onFailure": "block" }
+          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "guard"] }
         ]
       },
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "snap"], "timeout": 30, "onFailure": "block" }
+          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "snap"] }
         ]
       }
     ],
