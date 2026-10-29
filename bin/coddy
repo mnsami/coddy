@@ -467,6 +467,16 @@ if [ "${1-}" = guard ]; then
   # bounds the path's length; $budget bounds the walk's time.
   long() { [ "${#1}" -gt 4096 ]; }
   ! long "$f" && ! long "$cwd" || die "the edit guard refuses a path or cwd longer than 4096 bytes"
+  # Where bash itself runs on native Windows ($OSTYPE msys or cygwin, a
+  # variable bash sets, so no process is started), no path can be compared
+  # with the root: /proj/x or ///proj/x reads as outside /c/proj or
+  # /cygdrive/c/proj while Windows writes C:\proj\x, and .coddy.yml with a
+  # trailing dot or space, or with ::$DATA, misses the ask below while
+  # Windows writes the config. So every edit is refused there, in warn mode
+  # too. bash takes OSTYPE from the environment when one is set there, so
+  # hooks.json unsets it. The shapes below still refuse a Windows payload
+  # handed to the core on macOS or Linux.
+  case "${OSTYPE-}" in msys*|cygwin*) die "the edit guard refuses every edit on native Windows (Git Bash, MSYS2, Cygwin), $f included: native Windows is not supported; coddy runs on macOS, Linux and WSL." ;; esac
   # Native Windows (Git Bash, MSYS2, Cygwin) hands the path and the cwd as
   # D:\proj\x, D:/proj/x, D:x or //server/share/x (//./D:/x, //?/D:/x),
   # none of which the code below reads as Windows does. A drive letter or a

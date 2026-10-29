@@ -62,7 +62,7 @@ The plugin keeps its own copy and does not use `~/.coddy`.
 coddy runs on macOS, Linux and WSL. Native Windows (Git Bash, MSYS2,
 Cygwin) is not supported: under Claude Code the hooks do not start there,
 so nothing is guarded, and where the edit guard does run (the core called
-another way) it refuses Windows paths. `/coddy:onboard` stops and
+another way) it refuses every edit. `/coddy:onboard` stops and
 `coddy doctor` exits 1.
 
 You also need:

@@ -354,7 +354,7 @@ rm -r .git/coddy/66
 # ${CLAUDE_PLUGIN_ROOT} substituted), with the variables a .claude/settings.json
 # env can put in its environment
 hook() { local v=$1 p=$2; shift 2; eval "set -- \"\$@\" $(jq -r --arg v "$v" --arg r "$here" 'first(.hooks[][].hooks[] | select(.args[-1]? == $v)) | [.command] + .args | map(split("${CLAUDE_PLUGIN_ROOT}") | join($r)) | @sh' "$here/hooks/hooks.json")"; printf %s "$p" | env CLAUDE_PROJECT_DIR="$repo" "$@"; }
-t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u FUNCNEST -u POSIXLY_CORRECT bash -p" jq -e '[.hooks[][].hooks[]] | all(.command == "/usr/bin/env" and .args[:10] == ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "-p"])' "$here/hooks/hooks.json"
+t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u FUNCNEST -u POSIXLY_CORRECT -u OSTYPE bash -p" jq -e '[.hooks[][].hooks[]] | all(.command == "/usr/bin/env" and .args[:12] == ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "OSTYPE", "bash", "-p"])' "$here/hooks/hooks.json"
 t 0 "hooks: no hook sets onFailure or timeout" jq -e '[.hooks[][].hooks[]] | all(has("onFailure") or has("timeout") | not)' "$here/hooks/hooks.json"
 # Each under the bash on PATH and under /bin/bash (3.2 on macOS) first on PATH.
 # GREP_OPTIONS and TMOUT are the core's to unset, not hooks.json's: they act
@@ -364,6 +364,8 @@ t 0 "hooks: no hook sets onFailure or timeout" jq -e '[.hooks[][].hooks[]] | all
 mkdir "$tmp/sysbash"; ln -s /bin/bash "$tmp/sysbash/bash"; echo 'exit 0' > "$tmp/exit0"
 for b in "" "$tmp/sysbash:"; do
   t 0 "hooks: guard${b:+ under /bin/bash} lets the agent dir through" hook guard "{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/.claude/x\"}}" PATH="$b$PATH"
+  # bash takes OSTYPE from the environment, so one an env sets would refuse every edit.
+  t 0 "hooks: OSTYPE=msys${b:+ under /bin/bash} leaves guard as it was" hook guard "{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/.claude/x\"}}" OSTYPE=msys PATH="$b$PATH"
   t 0 "hooks: snap${b:+ under /bin/bash} lets a command through" hook snap "$(payload true)" PATH="$b$PATH"
   for e in SHELLOPTS=noexec BASHOPTS=failglob FUNCNEST=1 POSIXLY_CORRECT=1 GREP_OPTIONS=-V TMOUT=0.000001 "BASH_ENV=$tmp/exit0" 'BASH_FUNC_jq%%=() { printf /tmp/elsewhere; }'; do
     w="$e${b:+ under /bin/bash}"
@@ -424,6 +426,15 @@ for v in block warn; do
     '{"tool_input":{"file_path":"//localhost/C$/proj/README.md"}}' '{"tool_input":{"file_path":"//./C:/proj/README.md"}}' '{"tool_input":{"file_path":"//?/C:/proj/README.md"}}' '{"tool_input":{"file_path":"README.md"},"cwd":"//./C:/proj"}' '{"tool_input":{"file_path":"C:README.md"}}'; do
     PATH="$tmp/cyg:$PATH" t 2 "guard: $v blocks a Windows path: $p" saying 'refuses a Windows path' raw "$p"
   done
+  # Where bash itself runs on native Windows ($OSTYPE msys or cygwin), every
+  # edit is refused, in warn mode too: a claimed worktree's own, which the
+  # guard allows elsewhere, included.
+  mkdir -p .git/coddy/88 && echo "sess-a $$" > .git/coddy/88/owner
+  t 0 "guard: $v allows a claimed worktree outside native Windows" test -z "$(guard "$repo/.worktrees/88/a.txt" 2>&1 || echo refused)"
+  for o in msys cygwin; do
+    OSTYPE=$o t 2 "guard: $v blocks every edit under OSTYPE=$o" saying 'refuses every edit on native Windows' guard "$repo/.worktrees/88/a.txt"
+  done
+  rm -r .git/coddy/88
   for p in '{"cwd":{"a":1},"tool_input":{"file_path":"x"}}' '{"cwd":["/x"],"tool_input":{"file_path":"x"}}' '{"cwd":"proj","tool_input":{"file_path":"x"}}'; do
     t 2 "guard: $v blocks a cwd that is not absolute: $p" saying 'refuses a cwd that is not an absolute path' raw "$p"
   done
