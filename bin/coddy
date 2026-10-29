@@ -53,6 +53,12 @@ set -u
 # rewrite every grep (BSD grep honours it), each leaving a hook to pass.
 unset CDPATH TMOUT GREP_OPTIONS
 
+# The target of link $1, an x after it. readlink -n prints it as it is; a
+# readlink without -n (BusyBox's, built without FEATURE_READLINK_FOLLOW)
+# adds a newline, dropped here, and fails on -n. macOS's adds none after a
+# target ending in one, so it is read without -n only when -n fails.
+rdl() { local t; t=$(readlink -n "$1" 2>/dev/null && printf x) || { t=$(readlink "$1" && printf x) && case "$t" in *$'\n'x) t=${t%?x}x ;; *) false ;; esac; } && printf %s "$t"; }
+
 # The install this runs from: its real directory, through a PATH link or a
 # shim that sources it; get.sh's when that is CODDY_HOME. Outside a project
 # that is all doctor prints; inside one, the checks after the config guard.
@@ -60,7 +66,7 @@ if [ "${1-}" = doctor ]; then
   p="${BASH_SOURCE[0]-}" i=0
   [ -n "$p" ] || { echo "coddy: doctor needs to run from its file, not stdin" >&2; exit 1; }
   case "$p" in */*) ;; *) p="./$p" ;; esac
-  while [ -L "$p" ] && [ "$i" -lt 40 ]; do t=$(readlink "$p"); case "$t" in /*) p=$t ;; *) p="${p%/*}/$t" ;; esac; i=$((i+1)); done
+  while [ -L "$p" ] && [ "$i" -lt 40 ]; do t=$(rdl "$p"); t=${t%x}; case "$t" in /*) p=$t ;; *) p="${p%/*}/$t" ;; esac; i=$((i+1)); done
   d=$(cd -P "${p%/*}/.." && pwd -P) || exit 1
   h=$(cd "${CODDY_HOME:-${HOME-}/.coddy}" 2>/dev/null && pwd -P)
   v=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$d/.claude-plugin/plugin.json" 2>/dev/null | head -1)
@@ -303,14 +309,16 @@ if [ "${1-}" = detect ]; then
   exit 0
 fi
 
-# When process $1 started, as ps prints it in the C locale with _ for spaces;
-# empty when ps cannot say (no ps, no such process). ps prints it in the
-# locale's language, and the guard runs in C: pinned, so every caller writes
-# and compares one format.
-started() { [ -n "$1" ] && LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | awk '{$1=$1; gsub(/ /,"_")} 1'; }
-# $1 is a start in started's format; one an earlier coddy wrote in another
-# locale (Do._29_Okt._…) cannot be compared, so it counts as unknown.
-cstart() { local LC_ALL=C re='^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)_(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)__?[0-9]{1,2}_[0-9]{2}:[0-9]{2}:[0-9]{2}_[0-9]{4}$'; [[ $1 =~ $re ]]; }
+# When process $1 started, as ps prints it in the C locale and UTC with _ for
+# spaces and _UTC after it; empty when ps cannot say (no ps, no such process).
+# ps prints it in the locale's language and the local time zone, and the
+# guard runs in C: both pinned, so every caller writes and compares one
+# format, whatever its LC_ALL or TZ.
+started() { [ -n "$1" ] && TZ=UTC0 LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}'; }
+# $1 is a start in started's format; one an earlier coddy wrote, in local
+# time with no _UTC or in another locale (Do._29_Okt._…), cannot be
+# compared, so it counts as unknown.
+cstart() { local LC_ALL=C re='^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)_(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)__?[0-9]{1,2}_[0-9]{2}:[0-9]{2}:[0-9]{2}_[0-9]{4}_UTC$'; [[ $1 =~ $re ]]; }
 # The process $1 runs, and is the one that started at $2 when that is given:
 # a reused pid with another start time is gone. kill -0 needs no ps and sees
 # this user's processes; /proc sees everyone's on Linux, where images without
@@ -451,7 +459,7 @@ if [ "${1-}" = guard ]; then
   # outlasts its timeout lets the edit through, so one longer than any path
   # a kernel opens (4096 bytes) is refused first, in warn mode too. That
   # bounds the path's length; $budget bounds the walk's time.
-  long() { local LC_ALL=C; [ "${#1}" -gt 4096 ]; }
+  long() { [ "${#1}" -gt 4096 ]; }
   ! long "$f" && ! long "$cwd" || die "the edit guard refuses a path or cwd longer than 4096 bytes"
   # A relative path is written against the hook's cwd, as the tool resolves it.
   case "$f" in ''|/*) ;; *) f="${cwd:-$PWD}/$f" ;; esac
@@ -462,12 +470,13 @@ if [ "${1-}" = guard ]; then
   # time, each tested from inside its parent and each link read there, its
   # target walked the same way: a directory and a target glued into one
   # path may pass PATH_MAX, which reads as no entry and no link. Fails when
-  # a directory does not exist, or, with $2 new, collapses the rest from
-  # there by name (abspath), as the tool makes it; and fails on any step
-  # that does: a cd, a readlink, a 41st link (40, as far as a kernel follows),
-  # once $budget seconds have passed (each cd costs time in the depth), and
-  # a joined tail past 4096 bytes, before abspath reads it (the join and
-  # abspath cost time quadratic in its length, and links repeat it).
+  # a directory does not exist, or, with $2 new, joins the rest to it by
+  # name, as the tool makes it, with no test on disk (nothing is there past
+  # a missing directory); and fails on any step that does: a cd, a readlink,
+  # a 41st link (40, as far as a kernel follows), once $budget seconds have
+  # passed (each cd costs time in the depth), a .. in that rest (nothing to
+  # climb from), and a joined tail past 4096 bytes (the join costs time
+  # quadratic in its length, and links repeat it).
   phys() (
     set -f; comps "$1"; a=("${b[@]}")
     case "$1" in /*) cd / 2>/dev/null || exit 1 ;; esac
@@ -486,8 +495,9 @@ if [ "${1-}" = guard ]; then
       if [ -d "./$c" ]; then cd -P "./$c" 2>/dev/null || exit 1
       elif [ "${2-}" = new ]; then
         t=$(pwd -P && printf x) || exit 1; t=${t%?x}
-        for c in "${a[@]:k-1}"; do t="$t/$c"; ! long "$t" && [ "$SECONDS" -lt "$budget" ] || exit 1; done
-        t=$(abspath "$t" && printf x) && printf '%sx' "${t%?x}"; exit
+        t=${t%/}
+        for c in "${a[@]:k-1}"; do case "$c" in ''|.) ;; ..) exit 1 ;; *) t="$t/$c"; ! long "$t" && [ "$SECONDS" -lt "$budget" ] || exit 1 ;; esac; done
+        printf '%sx' "$t"; exit
       else exit 1; fi
     done
     t=$(pwd -P && printf x) && printf '%s/%sx' "${t%?x}" "$c"
@@ -495,11 +505,6 @@ if [ "${1-}" = guard ]; then
   # $1's components into b, a trailing / as a last empty one. IFS is / for
   # the split alone: bash 3.2 joins a quoted "${a[@]:k}" under it.
   comps() { IFS=/; b=($1); IFS=$' \t\n'; case "$1" in */) b+=("") ;; esac; }
-  # The target of link $1, an x after it. readlink -n prints it as it is; a
-  # readlink without -n (BusyBox's, built without FEATURE_READLINK_FOLLOW)
-  # adds a newline, dropped here, and fails on -n. macOS's adds none after a
-  # target ending in one, so it is read without -n only when -n fails.
-  rdl() { local t; t=$(readlink -n "$1" 2>/dev/null && printf x) || { t=$(readlink "$1" && printf x) && case "$t" in *$'\n'x) t=${t%?x}x ;; *) false ;; esac; } && printf %s "$t"; }
   # The off switch for every hook here, and no sensitive-file prompt of the
   # agent's own: the user allows each edit of it, in both modes, by whatever
   # path the write reaches it: its own spelling or one with ./, // or ..; a
@@ -514,10 +519,10 @@ if [ "${1-}" = guard ]; then
   # The root's directory is compared by identity (-ef), not by name: macOS
   # reaches it through the /System/Volumes/Data firmlink too, which bash's
   # pwd -P keeps, as it would a bind mount.
-  nf="the edit guard could not follow $f to where the edit lands (a cd or readlink failed, more than 40 links, a path past 4096 bytes, or more than $budget seconds)."
+  nf="the edit guard could not follow $f to where the edit lands (a cd or readlink failed, more than 40 links, a path past 4096 bytes, a .. after a missing directory, or more than $budget seconds)."
   nm=$(abspath "$f" && printf x) && nm=${nm%?x} && at=$(phys "$nm" new) && at=${at%x} || die "$nf"
   warnmode edit
-  pr=$(cd "$root" && pwd -P) || pr=$root
+  pr=$(cd "$root" && pwd -P && printf x) && pr=${pr%?x} || pr=$root
   if [ "$nm" -ef "$root/.coddy.yml" ] || { [ "${at%/*}" -ef "$pr" ] && [ "$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')" = .coddy.yml ]; }; then
     jqh -cn --arg m "Editing .coddy.yml changes the coddy guardrails. Allow it only if you asked for this change (/coddy:config)." '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'
     exit 0
@@ -625,8 +630,8 @@ adds() {
   d=$(cd "$2" 2>/dev/null && pwd -P) || d=$2
   while IFS= read -r p; do
     case "$p" in
-      ":here "*) p=$(abspath "${p#:here }" "$d") && p=$(branchin "$p") || { echo ":? HEAD"; continue; }; [ -z "$p" ] || echo ":to $p" ;;
-      ":gd "*) p=$(abspath "${p#:gd }" "$d") && p=$(isgit "$p" && headref) || { echo ":? HEAD"; continue; }; [ -z "$p" ] || echo ":to $p" ;;
+      ":here "*) p=$(abspath "${p#:here }" "$d" && printf x) && p=${p%?x} && [[ $p != *$'\n'* ]] && p=$(branchin "$p") || { echo ":? HEAD"; continue; }; [ -z "$p" ] || echo ":to $p" ;;
+      ":gd "*) p=$(abspath "${p#:gd }" "$d" && printf x) && p=${p%?x} && [[ $p != *$'\n'* ]] && p=$(isgit "$p" && headref) || { echo ":? HEAD"; continue; }; [ -z "$p" ] || echo ":to $p" ;;
       \?*|:*) echo "$p" ;;
       # A directory name ending in a newline would split the path in two.
       *) q=$(abspath "$p" "$d" && printf x) && case "${q%?x}" in *$'\n'*) false ;; esac && echo "${q%?x}" || echo "?$p" ;;

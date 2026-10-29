@@ -513,6 +513,13 @@ mkdir "$tmp/rl1"; printf '#!/bin/sh\n[ $# = 1 ] || exit 1\ncase $1 in -*) exit 1
 PATH="$tmp/rl1:$PATH" t 2 "guard, one-argument readlink: blocks a link to the main checkout" guard "$repo/.worktrees/1/rd"
 PATH="$tmp/rl1:$PATH" t 2 "guard, one-argument readlink: blocks a dangling link to it" guard "$repo/.worktrees/1/L/a.txt"
 PATH="$tmp/rl1:$PATH" t 0 "guard, one-argument readlink: allows a dangling link to the owner's worktree" guard "$repo/.worktrees/1/M/a.txt"
+# A readlink that never works cannot follow a dangling chain to .coddy.yml:
+# refused before the mode is read, so under guard: warn too.
+mkdir "$tmp/rl0"; printf '#!/bin/sh\nexit 1\n' > "$tmp/rl0/readlink"; chmod +x "$tmp/rl0/readlink"
+cp .coddy.yml "$tmp/conf.yml"; { grep -v '^guard:' "$tmp/conf.yml"; echo "guard: warn"; } > .claude/coddy.yml; rm .coddy.yml
+ln -s C2 .worktrees/1/cfg; ln -s ../../.coddy.yml .worktrees/1/C2
+PATH="$tmp/rl0:$PATH" t 2 "guard: warn, a readlink that always fails: refuses a link chain to a .coddy.yml not made yet" guard "$repo/.worktrees/1/cfg"
+rm .worktrees/1/cfg .worktrees/1/C2 .claude/coddy.yml; mv "$tmp/conf.yml" .coddy.yml
 # snap reads one path per line: one whose directory ends in a newline is
 # marked unresolved, not split into two.
 t 0 "snap: a worktree add through a link to a name ending in a newline passes, unresolved" says 'could not tell where' run snap < <(jq -cn --arg d "$repo" '{tool_use_id: "nl", cwd: $d, tool_input: {command: "git worktree add .worktrees/1/nl/x"}}')
@@ -544,10 +551,17 @@ if [ -n "$de" ]; then
   printf 'sess-a %s %s\n' $$ "$(LC_ALL=$de ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_")} 1')" > .git/coddy/1/owner
   LC_ALL=C t 0 "an owner line holding a start written under $de: status shows its live pid running" says '^owners: 1=sess-a (running)' as sess-b 1 status
   LC_ALL=C t 0 "and guard allows the owner's process under a new session id (/clear)" newsid
+  LC_ALL=C t 0 "and rewrites the owner line in the C format" grep -qx "sess-c $$ $(TZ=UTC0 LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}')" .git/coddy/1/owner
   rm -r .git/coddy/1; run claim 1 >/dev/null 2>&1
 else
   echo "skip a claim under another locale: de_DE.UTF-8 not installed"
 fi
+# ps prints a start in local time: read in UTC, so a claim and a check
+# under different time zones compare one time.
+rm -r .git/coddy/1; TZ=UTC run claim 1 >/dev/null 2>&1
+TZ=Asia/Tokyo t 1 "claimed under TZ=UTC: another session's claim from TZ=Asia/Tokyo is refused while the owner runs" as sess-b 1 claim 1
+TZ=Asia/Tokyo t 0 "and status from there shows the owner running" says '^owners: 1=sess-a (running)' as sess-b 1 status
+rm -r .git/coddy/1; run claim 1 >/dev/null 2>&1
 # A path or cwd over 4096 bytes is refused before any work on it, in both
 # modes: reading one takes time quadratic in its length, and a hook that
 # outlasts its timeout lets the edit through.

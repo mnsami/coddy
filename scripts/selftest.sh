@@ -617,6 +617,10 @@ printf 'ref: refs/heads/.invalid\n' > "$hd/.git/HEAD"
 t 0 "push: a reftable repository's HEAD stub passes with a message" noted 'could not tell which branch' "cd '$hd' && git push"
 rm "$hd/.git/HEAD"; ln -s refs/heads/main "$hd/.git/HEAD"
 t 2 "push: refused, a HEAD that is a link to refs/heads/main" shell 'git push' "$hd/empty"
+# A directory reached through a link to a name ending in a newline keeps it,
+# so the sibling without it is never read: unresolved, never another's HEAD.
+nw="$tmp/nlw"; for b in main feat; do r="$nw/r"; [ $b = feat ] || r="$r"$'\n'; mkdir -p "$r/objects" "$r/refs"; echo "ref: refs/heads/$b" > "$r/HEAD"; done; ln -s r$'\n' "$nw/l"
+for c in "cd '$nw/l' && git push origin HEAD" "git --git-dir='$nw/l' push origin HEAD"; do t 0 "push: through a link to a repository named with a trailing newline, passes with a message: $c" noted 'could not tell which branch' "$c"; done
 t 0 "without jq: a push passes" nojq 'git push origin main'
 t 0 "without jq: and says so" says 'jq is missing' nojq 'git push origin main'
 badjq() { payload "$1" | PATH="$tmp/badjq:$PATH" run snap; }
@@ -1120,10 +1124,10 @@ PATH="$tmp/nops:$PATH" t 0 "issue.sh status owners: a running process is running
 echo "sess-f " > .git/coddy/other/owner
 t 0 "issue.sh status owners: another session without a pid is running, as claim reads it" owns "other=sess-f (running)"
 # A pid is the owner's only while it is the process that started then.
-started=$(LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_")} 1')
+started=$(TZ=UTC0 LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}')
 echo "sess-e $$ $started" > .git/coddy/other/owner
 t 0 "issue.sh status owners: a running pid with the recorded start time is running" owns "other=sess-e (running)" sess-z 1
-echo "sess-e $$ Thu_Jan_1_00:00:00_1970" > .git/coddy/other/owner
+echo "sess-e $$ Thu_Jan_1_00:00:00_1970_UTC" > .git/coddy/other/owner
 t 0 "issue.sh status owners: a running pid with another start time is gone" owns "other=sess-e (gone)"
 t 1 "issue.sh status owners: and it is not me by that pid" owns "other=me" sess-z
 PATH="$tmp/nops:$PATH" t 0 "issue.sh status owners: a start time ps cannot read counts as a match" owns "other=sess-e (running)" sess-z 1
