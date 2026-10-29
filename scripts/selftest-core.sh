@@ -92,11 +92,15 @@ case "$(uname -s)" in Darwin) os=macos ;; Linux) os=linux ;; *) os=unknown ;; es
 t 0 "detect: os names the platform" says "^os: $os$" run detect
 PATH="$tmp/nojq" t 0 "detect: os is unknown without uname" says '^os: unknown$' run detect
 # Native Windows, which coddy does not run on: detect names it for onboard to
-# stop on, and doctor says so and exits 1, here outside a project.
-mkdir "$tmp/mingw"; printf '#!/bin/sh\necho MINGW64_NT-10.0\n' > "$tmp/mingw/uname"; chmod +x "$tmp/mingw/uname"
-PATH="$tmp/mingw:$PATH" t 0 "detect: os is windows under MINGW" says '^os: windows$' run detect
-PATH="$tmp/mingw:$PATH" t 0 "doctor: names an unsupported platform under MINGW" says '^platform: windows (MINGW64_NT-10.0) is not supported: coddy runs on macOS, Linux and WSL$' env CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
-PATH="$tmp/mingw:$PATH" t 1 "doctor: and exits 1 outside a project" env CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
+# stop on, and doctor says so and exits 1, here outside a project, for each
+# name uname -s gives there. MINGW's stub, last, stays for doctor in a project.
+mkdir "$tmp/mingw"
+for u in CYGWIN_NT-10.0 MSYS_NT-10.0 Windows_NT MINGW64_NT-10.0; do
+  printf '#!/bin/sh\necho %s\n' "$u" > "$tmp/mingw/uname"; chmod +x "$tmp/mingw/uname"
+  PATH="$tmp/mingw:$PATH" t 0 "detect: os is windows under $u" says '^os: windows$' run detect
+  PATH="$tmp/mingw:$PATH" t 0 "doctor: names an unsupported platform under $u" says "^platform: windows ($u) is not supported: coddy runs on macOS, Linux and WSL\$" env CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
+  PATH="$tmp/mingw:$PATH" t 1 "doctor: and exits 1 outside a project under $u" env CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
+done
 t 1 "doctor: no platform line on a supported one" says '^platform:' env CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
 t 0 "detect: pkg names one package manager or none" says '^pkg: [a-z-]*$' run detect
 PATH="$tmp/nojq" t 0 "detect: pkg is none with no package manager on PATH" says '^pkg: none$' run detect

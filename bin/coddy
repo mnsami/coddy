@@ -15,7 +15,7 @@
 #   coddy exclude answers | config  put the agent's coddy/ directory, or .coddy.yml, into git's info/exclude unless git ignores it already
 #   coddy forget answers            remove the agent's coddy/onboard-answers.json once the config is written
 #   coddy migrate                   the config brought up to the current schema version, for /coddy:migrate to write
-#   coddy doctor                    the install this runs from (its directory, how it got there, version and commit) and, in a project, what is missing or off, one line per check
+#   coddy doctor                    the install this runs from (its directory, how it got there, version and commit), a platform: line on native Windows, which coddy does not run on, and, in a project, what is missing or off, one line per check; exit 1 on either
 #   coddy guard                     PreToolUse hook on Edit/Write (hooks/hooks.json)
 #   coddy snap | trip               Pre/PostToolUse hooks on Bash
 #   coddy githook pre-commit|pre-push   the git hooks start installs under .git/hooks/coddy
@@ -468,12 +468,17 @@ if [ "${1-}" = guard ]; then
   long() { [ "${#1}" -gt 4096 ]; }
   ! long "$f" && ! long "$cwd" || die "the edit guard refuses a path or cwd longer than 4096 bytes"
   # Native Windows (Git Bash, MSYS2, Cygwin) hands the path and the cwd as
-  # D:\proj\x or D:/proj/x, which nothing below reads as absolute: joined to
-  # the cwd or $PWD it lands outside the project, where every edit passes.
-  # coddy runs on macOS, Linux and WSL, so a drive letter or a backslash in
-  # either is refused, in warn mode too, and so is a cwd neither empty ($PWD
-  # then) nor absolute, an object or array jq prints as JSON text included.
-  for x in "$f" "$cwd"; do case "$x" in [A-Za-z]:[\\/]*|*\\*) die "the edit guard refuses a Windows path (a drive letter or a backslash) in $f or its cwd ${cwd:-none}: coddy runs on macOS, Linux and WSL, not on native Windows." ;; esac; done
+  # D:\proj\x, D:/proj/x, D:x or //server/share/x (//./D:/x, //?/D:/x),
+  # none of which the code below reads as Windows does. A drive letter or a
+  # backslash reads as relative: joined to an absolute cwd, or to $PWD for
+  # an empty one, the edit was held as a path under that directory, and
+  # passed when that was outside the project, in the agent dir or in a
+  # claimed worktree, while the tool wrote the Windows path itself; a
+  # leading // reads as a path outside the project. coddy runs on macOS,
+  # Linux and WSL, so each is refused, in warn mode too, and so is a cwd
+  # neither empty nor absolute, an object or array jq prints as JSON text
+  # included, which abspath's unset $2 under set -u refused only by accident.
+  for x in "$f" "$cwd"; do case "$x" in [A-Za-z]:*|//[!/]*|*\\*) die "the edit guard refuses a Windows path (a drive letter, a backslash or a leading //) in $f or its cwd ${cwd:-none}: coddy runs on macOS, Linux and WSL, not on native Windows." ;; esac; done
   case "$cwd" in ''|/*) ;; *) die "the edit guard refuses a cwd that is not an absolute path: $cwd" ;; esac
   # A relative path is written against the hook's cwd, as the tool resolves it.
   case "$f" in ''|/*) ;; *) f="${cwd:-$PWD}/$f" ;; esac

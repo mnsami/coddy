@@ -416,9 +416,12 @@ for v in block warn; do
   # relative one against the payload's cwd. Allowed and silent, or refused.
   t 0 "guard: $v reads a NotebookEdit's notebook_path" test -z "$(raw "{\"tool_input\":{\"notebook_path\":\"$repo/.claude/n.ipynb\"}}" 2>&1 || echo refused)"
   t 0 "guard: $v reads a relative path against the payload's cwd" test -z "$(raw "{\"cwd\":\"$repo/.claude\",\"tool_input\":{\"file_path\":\"n.md\"}}" 2>&1 || echo refused)"
-  # Native Windows paths, which nothing reads as absolute, and a cwd that is
-  # not absolute, a non-string one included: refused, in warn mode too.
-  for p in '{"tool_input":{"file_path":"D:\\proj\\README.md"},"cwd":"D:\\proj"}' '{"tool_input":{"file_path":"README.md"},"cwd":"D:\\proj"}' '{"tool_input":{"file_path":"D:/proj/README.md"}}' '{"tool_input":{"file_path":"README.md"},"cwd":"D:/proj"}' '{"tool_input":{"file_path":"\\\\server\\share\\README.md"}}' "{\"tool_input\":{\"file_path\":\".claude\\\\n.md\"},\"cwd\":\"$repo\"}"; do
+  # Native Windows paths, which nothing reads as Windows does (a drive
+  # letter, a drive-relative C:x, a backslash, a UNC or device path written
+  # with forward slashes), and a cwd that is not absolute, a non-string one
+  # included: refused, in warn mode too.
+  for p in '{"tool_input":{"file_path":"D:\\proj\\README.md"},"cwd":"D:\\proj"}' '{"tool_input":{"file_path":"README.md"},"cwd":"D:\\proj"}' '{"tool_input":{"file_path":"D:/proj/README.md"}}' '{"tool_input":{"file_path":"README.md"},"cwd":"D:/proj"}' '{"tool_input":{"file_path":"\\\\server\\share\\README.md"}}' "{\"tool_input\":{\"file_path\":\".claude\\\\n.md\"},\"cwd\":\"$repo\"}" \
+    '{"tool_input":{"file_path":"//localhost/C$/proj/README.md"}}' '{"tool_input":{"file_path":"//./C:/proj/README.md"}}' '{"tool_input":{"file_path":"//?/C:/proj/README.md"}}' '{"tool_input":{"file_path":"README.md"},"cwd":"//./C:/proj"}' '{"tool_input":{"file_path":"C:README.md"}}'; do
     PATH="$tmp/cyg:$PATH" t 2 "guard: $v blocks a Windows path: $p" saying 'refuses a Windows path' raw "$p"
   done
   for p in '{"cwd":{"a":1},"tool_input":{"file_path":"x"}}' '{"cwd":["/x"],"tool_input":{"file_path":"x"}}' '{"cwd":"proj","tool_input":{"file_path":"x"}}'; do
