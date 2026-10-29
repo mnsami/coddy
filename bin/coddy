@@ -403,6 +403,18 @@ if [ "${1-}" = status ]; then
   exit 0
 fi
 
+# $1 made absolute against $2, . and .. collapsed by name as cd does, and its
+# longest existing directory spelled physically, as git and jj record it.
+abspath() {
+  local p=$1 o="" c t=""
+  case "$p" in /*) ;; *) p="$2/$p" ;; esac
+  while [ -n "$p" ]; do p=${p#/}; c=${p%%/*}; p=${p#"$c"}; case "$c" in ''|.) ;; ..) o=${o%/*} ;; *) o="$o/$c" ;; esac; done
+  p=${o:-/}
+  while [ ! -d "$p" ]; do t="/${p##*/}$t"; p=${p%/*}; p=${p:-/}; done
+  p=$(cd "$p" 2>/dev/null && pwd -P) || return 1
+  p="${p%/}$t"; echo "${p:-/}"
+}
+
 if [ "${1-}" = guard ]; then
   [ -f "$conf" ] || exit 0
   code=2 # exit 2 is what blocks the tool call
@@ -423,67 +435,67 @@ if [ "${1-}" = guard ]; then
   # A relative path is written against the hook's cwd, as the tool resolves it.
   case "$f" in ''|/*) ;; *) f="${cwd:-$PWD}/$f" ;; esac
   # The physical path a write to $1 lands on: symlinks followed in every
-  # component (a dangling one creates its target), ./, // and .. collapsed.
+  # component (a dangling one creates its target), ./, // and .. resolved as
+  # the kernel does (cd -P: a .. after a link climbs from its target).
   # Fails when its directory does not exist, and no such path is the root.
   # 40 links deep, as far as a kernel follows, so no chain a write can
   # reach the file through is cut short here.
-  phys() { local p=$1 t i=0; while [ -L "$p" ] && [ "$i" -lt 40 ]; do t=$(readlink "$p"); case "$t" in /*) p=$t ;; *) p="${p%/*}/$t" ;; esac; i=$((i+1)); done; t="${p%/*}"; t=$(cd "${t:-/}" 2>/dev/null && pwd -P) && printf '%s/%s' "$t" "${p##*/}"; }
+  phys() { local p=$1 t i=0; while [ -L "$p" ] && [ "$i" -lt 40 ]; do t=$(readlink "$p"); case "$t" in /*) p=$t ;; *) p="${p%/*}/$t" ;; esac; i=$((i+1)); done; t="${p%/*}"; t=$(cd -P "${t:-/}" 2>/dev/null && pwd -P) && printf '%s/%s' "$t" "${p##*/}"; }
   # The off switch for every hook here, and no sensitive-file prompt of the
   # agent's own: the user allows each edit of it, in both modes, by whatever
   # path the write reaches it: its own spelling or one with ./, // or ..; a
   # symlink or hard link from a worktree or the agent dir (-ef: the same
   # file); any case of its name, as a case-folding disk reads it.
   at=$(phys "$f") || at=$f
-  if [ "$f" -ef "$root/.coddy.yml" ] || { [ "${at%/*}" = "$(cd "$root" && pwd -P)" ] && [ "$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')" = .coddy.yml ]; }; then
+  pr=$(cd "$root" && pwd -P) || pr=$root
+  if [ "$f" -ef "$root/.coddy.yml" ] || { [ "${at%/*}" = "$pr" ] && [ "$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')" = .coddy.yml ]; }; then
     jqh -cn --arg m "Editing .coddy.yml changes the coddy guardrails. Allow it only if you asked for this change (/coddy:config)." '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'
     exit 0
   fi
-  # ponytail: string-prefix match from here on, so a symlinked path into the
-  # project slips through; match on phys if that ever matters.
   case "$f" in */../*) die "refusing a path containing '..': $f" ;; esac
-  agent="${CODDY_AGENT_DIR-}" issue=""
-  case "$f" in
-    "$root"/.worktrees/*) issue="${f#"$root"/.worktrees/}" ;;
-    "$root"/*)
-      # The agent's own directory is free, except its worktrees/<name>/,
-      # held to <name>'s lock as .worktrees/<name>/ is, or an unclaimed edit
-      # could hide there.
-      [ -z "$agent" ] || case "${f#"$root"/}" in
-        "$agent"/worktrees/*) issue="${f#"$root/$agent"/worktrees/}" ;;
-        "$agent"/*) exit 0 ;;
-      esac
-      [ -n "$issue" ] || die "edits belong in an issue worktree, not the main checkout. Run /coddy:start <issue>, then edit under .worktrees/<issue>/." ;;
-  esac
-  [ -n "$issue" ] || exit 0 # outside the project
-  issue="${issue%%/*}"
-  [ -e "$root/.git/coddy/$issue" ] || die "issue $issue is not In Progress yet. Run /coddy:start $issue."
-  # A lock with no owner line is a claim in flight, or one that died between
-  # its mkdir and that line.
-  [ ! -d "$root/.git/coddy/$issue" ] || [ -s "$root/.git/coddy/$issue/owner" ] || die "issue $issue's claim is in flight or died halfway. Run /coddy:start $issue."
-  # The lock's owner, as claim wrote it; a plain-file marker has none. A
-  # claim run by hand, or a hook payload without session_id, names no
-  # session, and then the edit is not held to the owner.
-  owner "$issue"
-  [ -z "$sid" ] || [ -z "$me" ] || mine ||
-    die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" && echo running || echo "not running")). Run /coddy:start $issue to take it over, or work on your own issue."
-  # The owner's edit from a new session id (/clear) or process (--resume)
-  # moves the lock along, as its re-claim would: a pid left behind reads
-  # as a dead owner to every other session.
-  [ -z "$sid" ] || [ -z "$me" ] || [ "$own" = "$(myline)" ] || myline > "$root/.git/coddy/$issue/owner" 2>/dev/null
+  agent="${CODDY_AGENT_DIR-}"
+  # held <path> <root>: dies unless an edit of <path>, read against <root>,
+  # may go ahead.
+  held() {
+    local f=$1 root=$2 issue=""
+    case "$f" in
+      "$root"/.worktrees/*) issue="${f#"$root"/.worktrees/}" ;;
+      "$root"/*)
+        # The agent's own directory is free, except its worktrees/<name>/,
+        # held to <name>'s lock as .worktrees/<name>/ is, or an unclaimed edit
+        # could hide there.
+        [ -z "$agent" ] || case "${f#"$root"/}" in
+          "$agent"/worktrees/*) issue="${f#"$root/$agent"/worktrees/}" ;;
+          "$agent"/*) return 0 ;;
+        esac
+        [ -n "$issue" ] || die "edits belong in an issue worktree, not the main checkout. Run /coddy:start <issue>, then edit under .worktrees/<issue>/." ;;
+    esac
+    [ -n "$issue" ] || return 0 # outside the project
+    issue="${issue%%/*}"
+    [ -e "$root/.git/coddy/$issue" ] || die "issue $issue is not In Progress yet. Run /coddy:start $issue."
+    # A lock with no owner line is a claim in flight, or one that died between
+    # its mkdir and that line.
+    [ ! -d "$root/.git/coddy/$issue" ] || [ -s "$root/.git/coddy/$issue/owner" ] || die "issue $issue's claim is in flight or died halfway. Run /coddy:start $issue."
+    # The lock's owner, as claim wrote it; a plain-file marker has none. A
+    # claim run by hand, or a hook payload without session_id, names no
+    # session, and then the edit is not held to the owner.
+    owner "$issue"
+    [ -z "$sid" ] || [ -z "$me" ] || mine ||
+      die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" && echo running || echo "not running")). Run /coddy:start $issue to take it over, or work on your own issue."
+    # The owner's edit from a new session id (/clear) or process (--resume)
+    # moves the lock along, as its re-claim would: a pid left behind reads
+    # as a dead owner to every other session.
+    [ -z "$sid" ] || [ -z "$me" ] || [ "$own" = "$(myline)" ] || myline > "$root/.git/coddy/$issue/owner" 2>/dev/null
+  }
+  # Claude Code hands the hooks the physical project dir, while a path may
+  # reach the project through a link, or the root be one: the edit is held
+  # as given against the root, then spelled physically (phys, or for a
+  # directory not made yet its deepest existing one, abspath) against the
+  # physical root, and either may refuse it.
+  held "$f" "$root"
+  held "$(phys "$f" || abspath "$f" || printf %s "$f")" "$pr"
   exit 0
 fi
-
-# $1 made absolute against $2, . and .. collapsed by name as cd does, and its
-# longest existing directory spelled physically, as git and jj record it.
-abspath() {
-  local p=$1 o="" c t=""
-  case "$p" in /*) ;; *) p="$2/$p" ;; esac
-  while [ -n "$p" ]; do p=${p#/}; c=${p%%/*}; p=${p#"$c"}; case "$c" in ''|.) ;; ..) o=${o%/*} ;; *) o="$o/$c" ;; esac; done
-  p=${o:-/}
-  while [ ! -d "$p" ]; do t="/${p##*/}$t"; p=${p%/*}; p=${p:-/}; done
-  p=$(cd "$p" 2>/dev/null && pwd -P) || return 1
-  p="${p%/}$t"; echo "${p:-/}"
-}
 # Where shell command $1, run in directory $2, would make a worktree with git
 # worktree add or jj workspace add: one absolute path per line (abspath), or
 # ?<word> for one its text cannot fix. Read as the shell reads it, in awk for

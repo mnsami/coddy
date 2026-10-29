@@ -427,6 +427,26 @@ t 0 "guard asks on .coddy.yml through a symlink in the owner's worktree" asks "$
 t 0 "guard asks on .coddy.yml through a hard link in the owner's worktree" asks "$repo/.worktrees/1/hard"
 rm .worktrees/1/cfg .worktrees/1/hard
 t 2 "guard blocks another session's edit" guard "$repo/.worktrees/1/a.txt" sess-b
+# Claude Code hands the hooks the physical project dir, and a path may reach
+# the project through a link: the guard reads a path as given and spelled
+# physically against the physical root, the stricter winning, so neither
+# spelling of the root or the path lets an edit through.
+pr=$(cd "$repo" && pwd -P); ln -s "$repo" "$tmp/via"
+ln -s ../../README.md .worktrees/1/rd; ln -s ../../sub .worktrees/1/d; ln -s d/../README.md .worktrees/1/dd
+# spelled <root> <path prefix> <label>
+spelled() {
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks the main checkout" guard "$2/README.md"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks a new nested file in the main checkout" guard "$2/newdir/deep/a.txt"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks an unclaimed worktree" guard "$2/.worktrees/7/a.txt"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks another session's worktree" guard "$2/.worktrees/1/a.txt" sess-b
+  CODDY_ROOT=$1 t 0 "guard, $3: allows the owner's worktree" guard "$2/.worktrees/1/a.txt"
+  CODDY_ROOT=$1 CODDY_AGENT_DIR=.claude t 0 "guard, $3: allows the agent dir" guard "$2/.claude/x"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks a link in the owner's worktree to the main checkout" guard "$2/.worktrees/1/rd"
+  CODDY_ROOT=$1 t 2 "guard, $3: and one whose .. follows a link there" guard "$2/.worktrees/1/dd"
+}
+spelled "$pr" "$tmp/via" "physical root, path through a link"
+spelled "$tmp/via" "$pr" "root through a link, physical path"
+rm .worktrees/1/rd .worktrees/1/d .worktrees/1/dd
 # The Claude Code shims take their inputs from CLAUDE_* alone: an inherited
 # CODDY_* value, however hostile, is ignored.
 shim() { CLAUDE_PROJECT_DIR=$repo CODDY_ROOT=/ CODDY_AGENT_DIR=src CODDY_SESSION=sess-a CODDY_PID=$$ bash "$here/scripts/issue.sh" "$@"; }

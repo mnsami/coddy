@@ -339,6 +339,9 @@ t 2 "guard blocks the main checkout" guard "$repo/README.md"
 t 0 "guard allows .claude/" guard "$repo/.claude/coddy.yml"
 t 2 "guard blocks a Claude Code worktree under .claude/ without a claim" guard "$repo/.claude/worktrees/55/a.txt"
 t 0 "guard ignores paths outside the project" guard "$tmp/elsewhere.txt"
+# Claude Code hands the hooks the physical project dir; a path through a link to it is the project's.
+ln -s "$repo" "$tmp/alias"
+t 2 "guard blocks the main checkout through a link to the project" sh -c "printf '{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"%s\"}}' '$tmp/alias/README.md' | CLAUDE_PROJECT_DIR='$(cd "$repo" && pwd -P)' bash '$here/scripts/issue.sh' guard"
 t 2 "guard rejects .. paths" guard "$repo/.worktrees/../README.md"
 t 2 "guard rejects .. paths hidden behind a newline" guard "$repo/.claude/x\\n/../../README.md"
 mkdir -p .git/coddy/66 && echo "sess-f " > .git/coddy/66/owner # a claim run without CLAUDE_PID
