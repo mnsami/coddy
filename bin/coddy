@@ -416,6 +416,10 @@ abspath() {
 }
 
 if [ "${1-}" = guard ]; then
+  # Seconds the walk below (phys) may take, from here, well inside any hook
+  # timeout: a cancelled hook lets the edit through. Reset, not read, as an
+  # environment can set SECONDS.
+  budget=5 SECONDS=0
   [ -f "$conf" ] || exit 0
   code=2 # exit 2 is what blocks the tool call
   oddly
@@ -436,7 +440,8 @@ if [ "${1-}" = guard ]; then
   [ -n "$f" ] || die "the edit guard could not read a path from the hook payload"
   # Reading a path below takes time quadratic in its length, and a hook that
   # outlasts its timeout lets the edit through, so one longer than any path
-  # a kernel opens (4096 bytes) is refused first, in warn mode too.
+  # a kernel opens (4096 bytes) is refused first, in warn mode too. That
+  # bounds the path's length; $budget bounds the walk's time.
   long() { local LC_ALL=C; [ "${#1}" -gt 4096 ]; }
   ! long "$f" && ! long "$cwd" || die "the edit guard refuses a path or cwd longer than 4096 bytes"
   warnmode edit
@@ -451,12 +456,14 @@ if [ "${1-}" = guard ]; then
   # path may pass PATH_MAX, which reads as no entry and no link. Fails when
   # a directory does not exist, or, with $2 new, collapses the rest from
   # there by name (abspath), as the tool makes it; and fails on any step
-  # that does: a cd, a readlink, a 41st link (40, as far as a kernel follows).
+  # that does: a cd, a readlink, a 41st link (40, as far as a kernel follows),
+  # and once $budget seconds have passed (each cd costs time in the depth).
   phys() (
     set -f; comps "$1"; a=("${b[@]}")
     case "$1" in /*) cd / 2>/dev/null || exit 1 ;; esac
     k=0 i=0 c=""
     while [ "$k" -lt "${#a[@]}" ]; do
+      [ "$SECONDS" -lt "$budget" ] || exit 1
       c=${a[k]}; k=$((k+1))
       if [ -n "$c" ] && [ -L "./$c" ]; then
         [ "$i" -lt 40 ] || exit 1; i=$((i+1))
@@ -548,7 +555,7 @@ if [ "${1-}" = guard ]; then
   # refused: as given it may land anywhere.
   held "$f" "$root"; m=$move
   # Not $at: abspath collapses a trailing /. or /.. by name, and $at is $f where a directory is missing.
-  g=$(phys "$f" new) || die "the edit guard could not follow $f to where the edit lands (a cd or readlink failed, or more than 40 links), so it refuses the edit."
+  g=$(phys "$f" new) || die "the edit guard could not follow $f to where the edit lands (a cd or readlink failed, more than 40 links, or more than $budget seconds)."
   g=$(inroot "${g%x}"); g=${g%x}
   [ "$g" = "$f" ] && [ "$pr" = "$root" ] || held "$g" "$pr"
   [ -z "$m" ] || myline > "$root/.git/coddy/$m/owner" 2>/dev/null

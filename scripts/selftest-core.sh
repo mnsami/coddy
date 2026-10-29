@@ -517,6 +517,14 @@ for v in block warn; do
   t 0 "guard: $v allows a path of 4096 bytes in the owner's worktree" guard "$under"
 done
 cp "$tmp/conf.yml" .coddy.yml
+# That cap bounds the path's length, not the walk's time: each cd costs time
+# in the depth, and links repeat steps there. 30 links in the owner's
+# worktree, each 400 steps at depth 300 (most of a minute on macOS), are refused
+# once the walk's 5 seconds have passed, not let through after it.
+deep=$(printf 'd/%.0s' $(seq 300)); mkdir -p ".worktrees/1/$deep"
+ln -s "$(printf '../d/%.0s' $(seq 200))" ".worktrees/1/${deep}B"
+t 2 "guard: refuses a walk that outlasts its time budget, promptly" timeout 15 "$here/bin/coddy" guard < <(printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$pr/.worktrees/1/$deep$(printf 'B/%.0s' $(seq 30))a.txt")
+rm -r .worktrees/1/d
 # The Claude Code shims take their inputs from CLAUDE_* alone: an inherited
 # CODDY_* value, however hostile, is ignored.
 shim() { CLAUDE_PROJECT_DIR=$repo CODDY_ROOT=/ CODDY_AGENT_DIR=src CODDY_SESSION=sess-a CODDY_PID=$$ bash "$here/scripts/issue.sh" "$@"; }
