@@ -440,6 +440,13 @@ t 2 "guard blocks another session's edit" guard "$repo/.worktrees/1/a.txt" sess-
 pr=$(cd "$repo" && pwd -P); ln -s "$repo" "$tmp/via"
 ln -s ../../README.md .worktrees/1/rd; ln -s ../../sub .worktrees/1/d; ln -s d/../README.md .worktrees/1/dd
 ln -s ../../newdir .worktrees/1/L; ln -s sub2 .worktrees/1/M; mkdir $'.worktrees/1\n'; ln -s $'../1\n' .worktrees/1/nl
+# A link target under PATH_MAX that, glued to its directory as text, is
+# over it: each link is read from inside its own directory, so none reads
+# as no entry and no link. Issue 2 is another session's, 7 unclaimed.
+pad=$(printf './%.0s' $(seq $(( ($(getconf PATH_MAX / 2>/dev/null || echo 1024) - 40) / 2 ))))
+ln -s "$pad../../sub" .worktrees/1/E; ln -s "$pad../2" .worktrees/1/E2; ln -s "$pad../7" .worktrees/1/E7
+ln -s "$pad../../README.md" .worktrees/1/lng; ln -s "${pad}L2" .worktrees/1/la; ln -s ../../README.md .worktrees/1/L2
+mkdir .git/coddy/2 .worktrees/2 .worktrees/7; echo "sess-b 1" > .git/coddy/2/owner
 # spelled <root> <path prefix> <label>
 spelled() {
   CODDY_ROOT=$1 t 2 "guard, $3: blocks the main checkout" guard "$2/README.md"
@@ -455,6 +462,11 @@ spelled() {
   CODDY_ROOT=$1 t 2 "guard, $3: blocks a directory named the owner's id and a newline" guard "$2/.worktrees/1\\n/x"
   CODDY_ROOT=$1 t 2 "guard, $3: and that name itself" guard "$2/.worktrees/1\\n"
   CODDY_ROOT=$1 t 2 "guard, $3: and a link in the owner's worktree to it" guard "$2/.worktrees/1/nl"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks a new file through a long link to the main checkout" guard "$2/.worktrees/1/E/n1/n2.txt"
+  CODDY_ROOT=$1 t 2 "guard, $3: and one to another session's worktree" guard "$2/.worktrees/1/E2/n1/n2.txt"
+  CODDY_ROOT=$1 t 2 "guard, $3: and one to an unclaimed worktree" guard "$2/.worktrees/1/E7/n1/n2.txt"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks a long link to a main-checkout file" guard "$2/.worktrees/1/lng"
+  CODDY_ROOT=$1 t 2 "guard, $3: and a long link to a link there" guard "$2/.worktrees/1/la"
 }
 spelled "$pr" "$pr" "physical root and path"
 spelled "$pr" "$tmp/via" "physical root, path through a link"
@@ -469,6 +481,20 @@ if [ -d "$fl" ] && [ "$fl" -ef "$repo" ]; then
   t 0 "guard asks on a .coddy.yml not made yet, spelled through the firmlink" asks "$fl/.coddy.yml"
   mv .claude/coddy.yml .coddy.yml
 fi
+mkdir -p .claude && mv .coddy.yml .claude/coddy.yml
+ln -s "${pad}C2" .worktrees/1/cfg; ln -s ../../.coddy.yml .worktrees/1/C2
+t 0 "guard asks on a .coddy.yml not made yet, through a long link in the owner's worktree" asks "$repo/.worktrees/1/cfg"
+rm .worktrees/1/cfg .worktrees/1/C2; mv .claude/coddy.yml .coddy.yml
+# A readlink that takes one argument and no -n (BusyBox without
+# FEATURE_READLINK_FOLLOW) still reads each link, its newline dropped.
+mkdir "$tmp/rl1"; printf '#!/bin/sh\n[ $# = 1 ] || exit 1\ncase $1 in -*) exit 1 ;; esac\nt=$(%s -n "$1" && printf x) || exit 1\nprintf "%%s\\n" "${t%%x}"\n' "$(command -v readlink)" > "$tmp/rl1/readlink"; chmod +x "$tmp/rl1/readlink"
+PATH="$tmp/rl1:$PATH" t 2 "guard, one-argument readlink: blocks a link to the main checkout" guard "$repo/.worktrees/1/rd"
+PATH="$tmp/rl1:$PATH" t 2 "guard, one-argument readlink: blocks a dangling link to it" guard "$repo/.worktrees/1/L/a.txt"
+PATH="$tmp/rl1:$PATH" t 0 "guard, one-argument readlink: allows a dangling link to the owner's worktree" guard "$repo/.worktrees/1/M/a.txt"
+# snap reads one path per line: one whose directory ends in a newline is
+# marked unresolved, not split into two.
+t 0 "snap: a worktree add through a link to a name ending in a newline passes, unresolved" says 'could not tell where' run snap < <(jq -cn --arg d "$repo" '{tool_use_id: "nl", cwd: $d, tool_input: {command: "git worktree add .worktrees/1/nl/x"}}')
+rm -f "${snapfile%w}nl" "${snapfile%w}nl".*
 # The owner's edit moves the owner line only once both readings allow it.
 printf 'sess-old %s\n' $$ > "$tmp/own"; cp "$tmp/own" .git/coddy/1/owner
 t 2 "guard: the owner's process under a new id is refused a link to the main checkout" guard "$repo/.worktrees/1/rd"
@@ -477,6 +503,7 @@ t 0 "guard: an edit it is allowed" guard "$repo/.worktrees/1/a.txt"
 t 0 "guard: moves the owner line to it" holds "sess-a $$" .git/coddy/1/owner
 t 2 "guard: blocks a relative path against a cwd named the owner's id and a newline" run guard < <(printf '{"session_id":"sess-a","cwd":"%s","tool_input":{"file_path":"x"}}' "$repo/.worktrees/1\\n")
 rm .worktrees/1/rd .worktrees/1/d .worktrees/1/dd .worktrees/1/L .worktrees/1/M .worktrees/1/nl; rmdir $'.worktrees/1\n'
+rm .worktrees/1/E .worktrees/1/E2 .worktrees/1/E7 .worktrees/1/lng .worktrees/1/la .worktrees/1/L2; rm -r .git/coddy/2; rmdir .worktrees/2 .worktrees/7
 # A path or cwd over 4096 bytes is refused before any work on it, in both
 # modes: reading one takes time quadratic in its length, and a hook that
 # outlasts its timeout lets the edit through.
