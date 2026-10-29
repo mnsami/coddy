@@ -91,6 +91,13 @@ git remote set-url origin "$tmp/origin.git"
 case "$(uname -s)" in Darwin) os=macos ;; Linux) os=linux ;; *) os=unknown ;; esac
 t 0 "detect: os names the platform" says "^os: $os$" run detect
 PATH="$tmp/nojq" t 0 "detect: os is unknown without uname" says '^os: unknown$' run detect
+# Native Windows, which coddy does not run on: detect names it for onboard to
+# stop on, and doctor says so and exits 1, here outside a project.
+mkdir "$tmp/mingw"; printf '#!/bin/sh\necho MINGW64_NT-10.0\n' > "$tmp/mingw/uname"; chmod +x "$tmp/mingw/uname"
+PATH="$tmp/mingw:$PATH" t 0 "detect: os is windows under MINGW" says '^os: windows$' run detect
+PATH="$tmp/mingw:$PATH" t 0 "doctor: names an unsupported platform under MINGW" says '^platform: windows (MINGW64_NT-10.0) is not supported: coddy runs on macOS, Linux and WSL$' env CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
+PATH="$tmp/mingw:$PATH" t 1 "doctor: and exits 1 outside a project" env CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
+t 1 "doctor: no platform line on a supported one" says '^platform:' env CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
 t 0 "detect: pkg names one package manager or none" says '^pkg: [a-z-]*$' run detect
 PATH="$tmp/nojq" t 0 "detect: pkg is none with no package manager on PATH" says '^pkg: none$' run detect
 # detect's output is the prompt, so a value read from the repository holds
@@ -905,6 +912,7 @@ dd start 1 feat/1-x >/dev/null 2>&1
 mkdir -p "$dp/.github/workflows"; cp "$here/templates/coddy.yml" "$dp/.github/workflows/coddy.yml"
 awk '/^   <!-- coddy:begin -->$/,/^   <!-- coddy:end -->$/' "$here/skills/onboard/SKILL.md" | sed 's/^   //' > "$dp/AGENTS.md"
 t 0 "doctor: onboarded, started, PR check and AGENTS.md in place: all ok" dd doctor
+PATH="$tmp/mingw:$PATH" t 1 "doctor: all ok under MINGW still exits 1" dd doctor
 t 1 "doctor: and no check line that is not ok" sh -c "CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -E '^(config|worktree|default_branch|jq|git|jj|hooks|pr_check|agents_md): ' | grep -v ': ok'"
 before=$( (cd "$dp" && cat .git/config; git for-each-ref; find . -path ./.git -prune -o -path ./.worktrees -prune -o -type f -print | sort | xargs cksum) )
 dd doctor >/dev/null 2>&1

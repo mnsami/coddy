@@ -59,6 +59,10 @@ the skills as Markdown from `~/.coddy/skills/`, starting with
 `onboard/SKILL.md`. `coddy doctor` says which install a `coddy` runs from and, inside a project, what is missing or off (config, tools, git hooks, PR check, `AGENTS.md`), each with its fix; it exits 1 on any problem and changes nothing.
 The plugin keeps its own copy and does not use `~/.coddy`.
 
+coddy runs on macOS, Linux and WSL. Native Windows (Git Bash, MSYS2,
+Cygwin) is not supported: the edit guard refuses its paths, `/coddy:onboard`
+stops and `coddy doctor` exits 1.
+
 You also need:
 
 - `jq`. The edit guard needs it and blocks every edit without a working one.
