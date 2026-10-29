@@ -463,6 +463,19 @@ if [ -d "$fl" ] && [ "$fl" -ef "$repo" ]; then
   mv .claude/coddy.yml .coddy.yml
 fi
 rm .worktrees/1/rd .worktrees/1/d .worktrees/1/dd
+# A path or cwd over 4096 bytes is refused before any work on it, in both
+# modes: reading one takes time quadratic in its length, and a hook that
+# outlasts its timeout lets the edit through.
+over="$repo/$(printf './%.0s' $(seq 2050))README.md"
+under="$repo/.worktrees/1/"; under="$under$(printf './%.0s' $(seq $(( (4096 - ${#under} - 5) / 2 ))))a.txt"
+cp .coddy.yml "$tmp/conf.yml"
+for v in block warn; do
+  { grep -v '^guard:' "$tmp/conf.yml"; echo "guard: $v"; } > .coddy.yml
+  t 2 "guard: $v refuses a path over 4096 bytes, promptly" timeout 1 "$here/bin/coddy" guard < <(printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$over")
+  t 2 "guard: $v refuses a cwd over 4096 bytes" timeout 1 "$here/bin/coddy" guard < <(printf '{"session_id":"sess-a","cwd":"%s","tool_input":{"file_path":"README.md"}}' "${over%/README.md}")
+  t 0 "guard: $v allows a path of 4096 bytes in the owner's worktree" guard "$under"
+done
+cp "$tmp/conf.yml" .coddy.yml
 # The Claude Code shims take their inputs from CLAUDE_* alone: an inherited
 # CODDY_* value, however hostile, is ignored.
 shim() { CLAUDE_PROJECT_DIR=$repo CODDY_ROOT=/ CODDY_AGENT_DIR=src CODDY_SESSION=sess-a CODDY_PID=$$ bash "$here/scripts/issue.sh" "$@"; }

@@ -431,6 +431,11 @@ if [ "${1-}" = guard ]; then
     f=$(jqh -r '.tool_input.file_path // .tool_input.notebook_path // empty' <<<"$in") &&
     cwd=$(jqh -r '.cwd // empty' <<<"$in") || die "the edit guard could not read the hook payload with jq"
   [ -n "$f" ] || die "the edit guard could not read a path from the hook payload"
+  # Reading a path below takes time quadratic in its length, and a hook that
+  # outlasts its timeout lets the edit through, so one longer than any path
+  # a kernel opens (4096 bytes) is refused first, in warn mode too.
+  long() { local LC_ALL=C; [ "${#1}" -gt 4096 ]; }
+  ! long "$f" && ! long "$cwd" || die "the edit guard refuses a path or cwd longer than 4096 bytes"
   warnmode edit
   # A relative path is written against the hook's cwd, as the tool resolves it.
   case "$f" in ''|/*) ;; *) f="${cwd:-$PWD}/$f" ;; esac
