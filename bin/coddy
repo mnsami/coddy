@@ -416,6 +416,10 @@ abspath() {
 }
 
 if [ "${1-}" = guard ]; then
+  # Byte-wise, before the payload is read: under Shift_JIS, GBK or GB18030
+  # (LC_ALL, LC_CTYPE or LANG, which an env can set) a path ending in a lead
+  # byte takes the x put after it below as a trail byte, and ${f%x} keeps it.
+  export LC_ALL=C
   # Seconds the walk below (phys) may take, from here, well inside any hook
   # timeout: a cancelled hook lets the edit through. Reset, not read, as an
   # environment can set SECONDS.
@@ -561,8 +565,10 @@ if [ "${1-}" = guard ]; then
   # as given against the root, then spelled physically (phys, new for a
   # directory not made yet) against the physical root, found by identity
   # (inroot), and either may refuse it; the second only when either spelling
-  # differs, since it would repeat the first. A path phys cannot follow is
-  # refused: as given it may land anywhere.
+  # differs, since it would repeat the first. A path phys cannot follow here
+  # is refused, as given it may land anywhere, and under guard: warn is
+  # advice like any other hold (only the .coddy.yml walk above is refused in
+  # both modes).
   held "$f" "$root"; m=$move
   # Not $at: abspath collapses a trailing /. or /.. by name.
   g=$(phys "$f" new) && g=$(inroot "${g%x}") || die "$nf"
@@ -608,6 +614,8 @@ fi
 # :? <word> for a target its text cannot fix; nothing for a dry run, -h or
 # a git -v before the subcommand.
 adds() {
+  # Byte-wise, as the guard reads: the x after each abspath is stripped below.
+  local -x LC_ALL=C
   local p d q
   d=$(cd "$2" 2>/dev/null && pwd -P) || d=$2
   while IFS= read -r p; do

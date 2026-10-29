@@ -443,6 +443,17 @@ ln -s ../../.coddy.yml .worktrees/1/cfg; ln .coddy.yml .worktrees/1/hard
 t 0 "guard asks on .coddy.yml through a symlink in the owner's worktree" asks "$repo/.worktrees/1/cfg"
 t 0 "guard asks on .coddy.yml through a hard link in the owner's worktree" asks "$repo/.worktrees/1/hard"
 rm .worktrees/1/cfg .worktrees/1/hard
+# Shift_JIS, GBK and GB18030 take 0x78 as a trail byte, so a path ending in
+# a lead byte reads with the x the guard puts after it as one character: the
+# guard reads byte-wise. ぁ, in UTF-8 as the payload carries it, ends in 0x81.
+h=$(printf '\343\201\201') mb=""
+ln -s ../../.coddy.yml ".worktrees/1/cfg$h"; ln -s ../../README.md ".worktrees/1/rd$h"
+for mb in $(locale -a 2>/dev/null | grep -ix -e ja_JP.SJIS -e zh_CN.GB18030 -e zh_CN.GBK); do
+  LC_ALL=$mb t 0 "guard under $mb asks on .coddy.yml through a link named cfgぁ in the owner's worktree" asks "$repo/.worktrees/1/cfg$h"
+  LC_ALL=$mb t 2 "guard under $mb blocks a link named rdぁ there to the main checkout" guard "$repo/.worktrees/1/rd$h"
+done
+[ -n "$mb" ] || echo "skip guard under a double-byte locale: none of ja_JP.SJIS, zh_CN.GB18030, zh_CN.GBK installed"
+rm ".worktrees/1/cfg$h" ".worktrees/1/rd$h"
 t 2 "guard blocks another session's edit" guard "$repo/.worktrees/1/a.txt" sess-b
 # Claude Code hands the hooks the physical project dir, and a path may reach
 # the project through a link: the guard reads a path as given and spelled

@@ -367,6 +367,9 @@ for b in "" "$tmp/sysbash:"; do
     w="$e${b:+ under /bin/bash}"
     t 2 "hooks: $w leaves guard on" hook guard "{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/README.md\"}}" "$e" PATH="$b$PATH"
     t 2 "hooks: $w leaves snap on" hook snap "$(payload 'git worktree add ../x')" "$e" PATH="$b$PATH"
+    # trip exits 2 under an imported jq with -p or without: the snapshot id
+    # it reads changes, so it reports the snapshot lost.
+    case $e in BASH_FUNC_*) continue ;; esac
     wire snap w; echo x > stray.txt; t 2 "hooks: $w leaves trip on" hook trip '{"tool_use_id":"w"}' "$e" PATH="$b$PATH"; rm stray.txt
   done
 done
