@@ -1120,7 +1120,7 @@ PATH="$tmp/nops:$PATH" t 0 "issue.sh status owners: a running process is running
 echo "sess-f " > .git/coddy/other/owner
 t 0 "issue.sh status owners: another session without a pid is running, as claim reads it" owns "other=sess-f (running)"
 # A pid is the owner's only while it is the process that started then.
-started=$(ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_")} 1')
+started=$(LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_")} 1')
 echo "sess-e $$ $started" > .git/coddy/other/owner
 t 0 "issue.sh status owners: a running pid with the recorded start time is running" owns "other=sess-e (running)" sess-z 1
 echo "sess-e $$ Thu_Jan_1_00:00:00_1970" > .git/coddy/other/owner

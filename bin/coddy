@@ -303,19 +303,24 @@ if [ "${1-}" = detect ]; then
   exit 0
 fi
 
-# When process $1 started, as ps prints it with _ for spaces; empty when ps
-# cannot say (no ps, no such process).
-started() { [ -n "$1" ] && ps -o lstart= -p "$1" 2>/dev/null | awk '{$1=$1; gsub(/ /,"_")} 1'; }
+# When process $1 started, as ps prints it in the C locale with _ for spaces;
+# empty when ps cannot say (no ps, no such process). ps prints it in the
+# locale's language, and the guard runs in C: pinned, so every caller writes
+# and compares one format.
+started() { [ -n "$1" ] && LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | awk '{$1=$1; gsub(/ /,"_")} 1'; }
+# $1 is a start in started's format; one an earlier coddy wrote in another
+# locale (Do._29_Okt._…) cannot be compared, so it counts as unknown.
+cstart() { local LC_ALL=C re='^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)_(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)__?[0-9]{1,2}_[0-9]{2}:[0-9]{2}:[0-9]{2}_[0-9]{4}$'; [[ $1 =~ $re ]]; }
 # The process $1 runs, and is the one that started at $2 when that is given:
 # a reused pid with another start time is gone. kill -0 needs no ps and sees
 # this user's processes; /proc sees everyone's on Linux, where images without
 # ps live; ps comes last, so a missing ps never reads as a dead owner, and a
-# start time ps cannot read counts as a match. No pid counts as running, as
-# claim reads it.
+# start time ps cannot read, or one not in started's format, counts as a
+# match. No pid counts as running, as claim reads it.
 alive() {
   [ -z "$1" ] && return 0
   kill -0 "$1" 2>/dev/null || [ -d "/proc/$1" ] || ps -p "$1" >/dev/null 2>&1 || return 1
-  now=$(started "$1"); [ -z "${2-}" ] || [ -z "$now" ] || [ "$now" = "$2" ]
+  now=$(started "$1"); [ -z "${2-}" ] || [ -z "$now" ] || ! cstart "$2" || [ "$now" = "$2" ]
 }
 die() { echo "coddy: $*" >&2; exit "$code"; }
 cfg() { sed -n "s/^$1:[[:space:]]*//p" "${2:-$conf}" | sed -e $'s/\r$//' -e "s/[[:space:]]*#.*$//; s/[[:space:]]*$//; s/^[\"']//; s/[\"']$//" | head -1; } # key $1, from the config or file $2, a CRLF line's \r and trailing blanks dropped

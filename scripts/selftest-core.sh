@@ -526,6 +526,28 @@ t 0 "guard: moves the owner line to it" holds "sess-a $$" .git/coddy/1/owner
 t 2 "guard: blocks a relative path against a cwd named the owner's id and a newline" run guard < <(printf '{"session_id":"sess-a","cwd":"%s","tool_input":{"file_path":"x"}}' "$repo/.worktrees/1\\n")
 rm .worktrees/1/rd .worktrees/1/d .worktrees/1/dd .worktrees/1/L .worktrees/1/M .worktrees/1/nl; rmdir $'.worktrees/1\n'
 rm .worktrees/1/E .worktrees/1/E2 .worktrees/1/E7 .worktrees/1/lng .worktrees/1/la .worktrees/1/L2; rm -r .git/coddy/2; rmdir .worktrees/2 .worktrees/7
+# ps prints a start time in the locale's language, and the guard runs in C:
+# the start is read in C, so a claim, an edit, a status and another claim
+# under another locale compare one format, and an owner line an earlier
+# coddy wrote in another locale counts by its pid alone.
+de=$(locale -a 2>/dev/null | grep -ix -m1 -e de_DE.UTF-8 -e de_DE.utf8)
+if [ -n "$de" ]; then
+  fresh() { rm -r .git/coddy/1; LC_ALL=$de run claim 1 >/dev/null 2>&1; cp .git/coddy/1/owner "$tmp/own"; }
+  newsid() { run guard < <(printf '{"session_id":"sess-c","tool_input":{"file_path":"%s"}}' "$repo/.worktrees/1/a.txt"); }
+  fresh
+  LC_ALL=$de t 0 "under $de: guard allows the owner's edit" guard "$repo/.worktrees/1/a.txt"
+  t 0 "under $de: and leaves the owner line as claim wrote it" cmp -s "$tmp/own" .git/coddy/1/owner
+  LC_ALL=$de t 0 "under $de: status from another session shows the owner running" says '^owners: 1=sess-a (running)' as sess-b 1 status
+  LC_ALL=$de t 1 "under $de: another session's claim is refused" as sess-b 1 claim 1
+  fresh
+  LC_ALL=$de t 0 "under $de: guard allows the owner's process under a new session id (/clear)" newsid
+  printf 'sess-a %s %s\n' $$ "$(LC_ALL=$de ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_")} 1')" > .git/coddy/1/owner
+  LC_ALL=C t 0 "an owner line holding a start written under $de: status shows its live pid running" says '^owners: 1=sess-a (running)' as sess-b 1 status
+  LC_ALL=C t 0 "and guard allows the owner's process under a new session id (/clear)" newsid
+  rm -r .git/coddy/1; run claim 1 >/dev/null 2>&1
+else
+  echo "skip a claim under another locale: de_DE.UTF-8 not installed"
+fi
 # A path or cwd over 4096 bytes is refused before any work on it, in both
 # modes: reading one takes time quadratic in its length, and a hook that
 # outlasts its timeout lets the edit through.
