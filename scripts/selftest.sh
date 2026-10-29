@@ -344,6 +344,25 @@ t 2 "guard rejects .. paths hidden behind a newline" guard "$repo/.claude/x\\n/.
 mkdir -p .git/coddy/66 && echo "sess-f " > .git/coddy/66/owner # a claim run without CLAUDE_PID
 t 0 "guard reads an owner without a pid as running, as claim does" says "(pid , running)" guard "$repo/.worktrees/66/a.txt" sess-b
 rm -r .git/coddy/66
+# hook <verb> <payload> <NAME=value...>: that verb's first entry in
+# hooks/hooks.json, run as Claude Code runs exec form (no shell,
+# ${CLAUDE_PLUGIN_ROOT} substituted), with the variables a .claude/settings.json
+# env can put in its environment
+hook() { local v=$1 p=$2; shift 2; eval "set -- \"\$@\" $(jq -r --arg v "$v" --arg r "$here" 'first(.hooks[][].hooks[] | select(.args[-1]? == $v)) | [.command] + .args | map(split("${CLAUDE_PLUGIN_ROOT}") | join($r)) | @sh' "$here/hooks/hooks.json")"; printf %s "$p" | env CLAUDE_PROJECT_DIR="$repo" "$@"; }
+t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u FUNCNEST -u POSIXLY_CORRECT bash" jq -e '[.hooks[][].hooks[]] | all(.command == "/usr/bin/env" and .args[:9] == ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash"])' "$here/hooks/hooks.json"
+# Each under the bash on PATH and under /bin/bash (3.2 on macOS) first on PATH.
+# GREP_OPTIONS and TMOUT are the core's to unset, not hooks.json's: they act
+# only once it runs a grep (BSD grep honours it) or a read (bash 5 takes a
+# fraction of a second, which times out reads from process substitutions).
+mkdir "$tmp/sysbash"; ln -s /bin/bash "$tmp/sysbash/bash"
+for b in "" "$tmp/sysbash:"; do
+  for e in SHELLOPTS=noexec BASHOPTS=failglob FUNCNEST=1 POSIXLY_CORRECT=1 GREP_OPTIONS=-V TMOUT=0.000001; do
+    w="$e${b:+ under /bin/bash}"
+    t 2 "hooks: $w leaves guard on" hook guard "{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/README.md\"}}" "$e" PATH="$b$PATH"
+    t 2 "hooks: $w leaves snap on" hook snap "$(payload 'git worktree add ../x')" "$e" PATH="$b$PATH"
+    wire snap w; echo x > stray.txt; t 2 "hooks: $w leaves trip on" hook trip '{"tool_use_id":"w"}' "$e" PATH="$b$PATH"; rm stray.txt
+  done
+done
 t 1 "create rejects a bad issue id" run create "../x" feat/x
 t 1 "claim needs a worktree first" run claim 99
 

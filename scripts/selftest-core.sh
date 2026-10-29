@@ -46,6 +46,12 @@ t 1 "the core reads no CLAUDE_ variable" grep -q CLAUDE_ "$here/bin/coddy"
 t 0 "root: from CODDY_ROOT" rooted /
 t 0 "root: from the working directory without CODDY_ROOT" rooted "$repo" -u CODDY_ROOT
 t 0 "root: from a subdirectory without CODDY_ROOT" rooted "$repo/sub" -u CODDY_ROOT
+# A CDPATH would send the root's cd .git/.. elsewhere and print there: status
+# from the main checkout reads as it does without one.
+cdpath() { rooted "$repo" -u CODDY_ROOT CDPATH="$1" && (cd "$repo" && [ "$(env -u CODDY_ROOT CDPATH="$1" "$here/bin/coddy" status)" = "$(env -u CODDY_ROOT "$here/bin/coddy" status)" ]); }
+git init -q "$tmp/other"
+t 0 "root: a CDPATH of . prints no second line" cdpath .
+t 0 "root: a CDPATH holding another repository does not move it" cdpath "$tmp/other"
 # onboard writes every path under the root, so detect prints it as status does:
 # a session opened in a subdirectory would otherwise write there.
 verb=detect t 0 "detect: root, as status prints it" rooted /
