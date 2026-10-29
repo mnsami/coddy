@@ -439,6 +439,7 @@ t 2 "guard blocks another session's edit" guard "$repo/.worktrees/1/a.txt" sess-
 # spelling of the root or the path lets an edit through.
 pr=$(cd "$repo" && pwd -P); ln -s "$repo" "$tmp/via"
 ln -s ../../README.md .worktrees/1/rd; ln -s ../../sub .worktrees/1/d; ln -s d/../README.md .worktrees/1/dd
+ln -s ../../newdir .worktrees/1/L; ln -s sub2 .worktrees/1/M; mkdir $'.worktrees/1\n'; ln -s $'../1\n' .worktrees/1/nl
 # spelled <root> <path prefix> <label>
 spelled() {
   CODDY_ROOT=$1 t 2 "guard, $3: blocks the main checkout" guard "$2/README.md"
@@ -449,7 +450,13 @@ spelled() {
   CODDY_ROOT=$1 CODDY_AGENT_DIR=.claude t 0 "guard, $3: allows the agent dir" guard "$2/.claude/x"
   CODDY_ROOT=$1 t 2 "guard, $3: blocks a link in the owner's worktree to the main checkout" guard "$2/.worktrees/1/rd"
   CODDY_ROOT=$1 t 2 "guard, $3: and one whose .. follows a link there" guard "$2/.worktrees/1/dd"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks a dangling link in the owner's worktree to the main checkout" guard "$2/.worktrees/1/L/a.txt"
+  CODDY_ROOT=$1 t 0 "guard, $3: allows a dangling link in the owner's worktree to it" guard "$2/.worktrees/1/M/a.txt"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks a directory named the owner's id and a newline" guard "$2/.worktrees/1\\n/x"
+  CODDY_ROOT=$1 t 2 "guard, $3: and that name itself" guard "$2/.worktrees/1\\n"
+  CODDY_ROOT=$1 t 2 "guard, $3: and a link in the owner's worktree to it" guard "$2/.worktrees/1/nl"
 }
+spelled "$pr" "$pr" "physical root and path"
 spelled "$pr" "$tmp/via" "physical root, path through a link"
 spelled "$tmp/via" "$pr" "root through a link, physical path"
 # macOS reaches its data volume through the /System/Volumes/Data firmlink
@@ -462,7 +469,14 @@ if [ -d "$fl" ] && [ "$fl" -ef "$repo" ]; then
   t 0 "guard asks on a .coddy.yml not made yet, spelled through the firmlink" asks "$fl/.coddy.yml"
   mv .claude/coddy.yml .coddy.yml
 fi
-rm .worktrees/1/rd .worktrees/1/d .worktrees/1/dd
+# The owner's edit moves the owner line only once both readings allow it.
+printf 'sess-old %s\n' $$ > "$tmp/own"; cp "$tmp/own" .git/coddy/1/owner
+t 2 "guard: the owner's process under a new id is refused a link to the main checkout" guard "$repo/.worktrees/1/rd"
+t 0 "guard: and the owner line is left as it was" cmp -s "$tmp/own" .git/coddy/1/owner
+t 0 "guard: an edit it is allowed" guard "$repo/.worktrees/1/a.txt"
+t 0 "guard: moves the owner line to it" holds "sess-a $$" .git/coddy/1/owner
+t 2 "guard: blocks a relative path against a cwd named the owner's id and a newline" run guard < <(printf '{"session_id":"sess-a","cwd":"%s","tool_input":{"file_path":"x"}}' "$repo/.worktrees/1\\n")
+rm .worktrees/1/rd .worktrees/1/d .worktrees/1/dd .worktrees/1/L .worktrees/1/M .worktrees/1/nl; rmdir $'.worktrees/1\n'
 # A path or cwd over 4096 bytes is refused before any work on it, in both
 # modes: reading one takes time quadratic in its length, and a hook that
 # outlasts its timeout lets the edit through.

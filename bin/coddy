@@ -411,7 +411,7 @@ abspath() {
   while [ -n "$p" ]; do p=${p#/}; c=${p%%/*}; p=${p#"$c"}; case "$c" in ''|.) ;; ..) o=${o%/*} ;; *) o="$o/$c" ;; esac; done
   p=${o:-/}
   while [ ! -d "$p" ]; do t="/${p##*/}$t"; p=${p%/*}; p=${p:-/}; done
-  p=$(cd "$p" 2>/dev/null && pwd -P) || return 1
+  p=$(cd "$p" 2>/dev/null && pwd -P && printf x) || return 1; p=${p%?x}
   p="${p%/}$t"; echo "${p:-/}"
 }
 
@@ -425,11 +425,14 @@ if [ "${1-}" = guard ]; then
   # warnmode, whose die lets the edit through.
   command -v jq >/dev/null || die "the edit guard needs jq"
   # The hook's session_id is the editing session's CODDY_SESSION.
-  # jq once per field, not read per line: a path may hold a newline.
+  # jq once per field, not read per line: a path may hold a newline. $(...)
+  # strips trailing ones, so a path ends in an x it then drops, here and from
+  # phys, physnew and inroot below (abspath's own line ends in a newline).
   in=$(cat)
   me=$(jqh -r '.session_id // ""' <<<"$in") &&
-    f=$(jqh -r '.tool_input.file_path // .tool_input.notebook_path // empty' <<<"$in") &&
-    cwd=$(jqh -r '.cwd // empty' <<<"$in") || die "the edit guard could not read the hook payload with jq"
+    f=$(jqh -j '.tool_input.file_path // .tool_input.notebook_path // empty' <<<"$in" && printf x) &&
+    cwd=$(jqh -j '.cwd // empty' <<<"$in" && printf x) || die "the edit guard could not read the hook payload with jq"
+  f=${f%x} cwd=${cwd%x}
   [ -n "$f" ] || die "the edit guard could not read a path from the hook payload"
   # Reading a path below takes time quadratic in its length, and a hook that
   # outlasts its timeout lets the edit through, so one longer than any path
@@ -445,7 +448,21 @@ if [ "${1-}" = guard ]; then
   # Fails when its directory does not exist, and no such path is the root.
   # 40 links deep, as far as a kernel follows, so no chain a write can
   # reach the file through is cut short here.
-  phys() { local p=$1 t i=0; while [ -L "$p" ] && [ "$i" -lt 40 ]; do t=$(readlink "$p"); case "$t" in /*) p=$t ;; *) p="${p%/*}/$t" ;; esac; i=$((i+1)); done; t="${p%/*}"; t=$(cd -P "${t:-/}" 2>/dev/null && pwd -P) && printf '%s/%s' "$t" "${p##*/}"; }
+  phys() { local p=$1 t i=0; while [ -L "$p" ] && [ "$i" -lt 40 ]; do t=$(readlink -n "$p" && printf x); t=${t%x}; case "$t" in /*) p=$t ;; *) p="${p%/*}/$t" ;; esac; i=$((i+1)); done; t="${p%/*}"; t=$(cd -P "${t:-/}" 2>/dev/null && pwd -P && printf x) && printf '%s/%sx' "${t%?x}" "${p##*/}"; }
+  # phys for a path whose directory is not made yet: its deepest entry that
+  # exists or is a link, a dangling link followed to its target and that
+  # read the same way (40 links deep, as phys), spelled by phys, and the
+  # rest, with a . or .. phys leaves, collapsed by name (abspath).
+  physnew() {
+    local p=$1 t="" i=${2-0} r
+    while [ ! -e "$p" ] && [ ! -L "$p" ]; do case "$p" in */*) ;; *) return 1 ;; esac; t="/${p##*/}$t"; p=${p%/*}; p=${p:-/}; done
+    if [ -L "$p" ] && [ ! -e "$p" ] && [ "$i" -lt 40 ]; then
+      r=$(readlink -n "$p" && printf x) || return 1; r=${r%x}
+      case "$r" in /*) ;; *) r="${p%/*}/$r" ;; esac
+      physnew "$r$t" $((i+1)); return
+    fi
+    p=$(phys "$p") && p=$(abspath "${p%x}$t" && printf x) && printf '%sx' "${p%?x}"
+  }
   # The off switch for every hook here, and no sensitive-file prompt of the
   # agent's own: the user allows each edit of it, in both modes, by whatever
   # path the write reaches it: its own spelling or one with ./, // or ..; a
@@ -456,7 +473,7 @@ if [ "${1-}" = guard ]; then
   # The root's directory is compared by identity (-ef), not by name: macOS
   # reaches it through the /System/Volumes/Data firmlink too, which bash's
   # pwd -P keeps, as it would a bind mount.
-  at=$(a=$(abspath "$f") && phys "$a") || at=$f
+  at=$(a=$(abspath "$f" && printf x) && phys "${a%?x}") && at=${at%x} || at=$f
   pr=$(cd "$root" && pwd -P) || pr=$root
   if [ "$f" -ef "$root/.coddy.yml" ] || { [ "${at%/*}" -ef "$pr" ] && [ "$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')" = .coddy.yml ]; }; then
     jqh -cn --arg m "Editing .coddy.yml changes the coddy guardrails. Allow it only if you asked for this change (/coddy:config)." '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'
@@ -468,6 +485,7 @@ if [ "${1-}" = guard ]; then
   # may go ahead.
   held() {
     local f=$1 root=$2 issue=""
+    move=""
     case "$f" in
       "$root"/.worktrees/*) issue="${f#"$root"/.worktrees/}" ;;
       "$root"/*)
@@ -494,20 +512,26 @@ if [ "${1-}" = guard ]; then
       die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" && echo running || echo "not running")). Run /coddy:start $issue to take it over, or work on your own issue."
     # The owner's edit from a new session id (/clear) or process (--resume)
     # moves the lock along, as its re-claim would: a pid left behind reads
-    # as a dead owner to every other session.
-    [ -z "$sid" ] || [ -z "$me" ] || [ "$own" = "$(myline)" ] || myline > "$root/.git/coddy/$issue/owner" 2>/dev/null
+    # as a dead owner to every other session. Only once both readings below
+    # allow the edit, so $move names the issue whose owner line moves.
+    [ -z "$sid" ] || [ -z "$me" ] || [ "$own" = "$(myline)" ] || move=$issue
   }
   # $1 with its deepest ancestor that is the root directory itself (-ef)
   # spelled $pr: the root has names no link shows (the firmlink above, a
   # bind mount), which no match on $pr's spelling would read as the project.
-  inroot() { local a=$1; while [ "${a%/*}" != "$a" ]; do a=${a%/*}; [ "${a:-/}" -ef "$pr" ] && { printf %s "$pr${1#"$a"}"; return; }; done; printf %s "$1"; }
+  inroot() { local a=$1; while [ "${a%/*}" != "$a" ]; do a=${a%/*}; [ "${a:-/}" -ef "$pr" ] && { printf '%sx' "$pr${1#"$a"}"; return; }; done; printf '%sx' "$1"; }
   # Claude Code hands the hooks the physical project dir, while a path may
   # reach the project through a link, or the root be one: the edit is held
-  # as given against the root, then spelled physically (phys, or for a
-  # directory not made yet its deepest existing one, abspath) against the
-  # physical root, found by identity (inroot), and either may refuse it.
-  held "$f" "$root"
-  held "$(inroot "$(phys "$f" || abspath "$f" || printf %s "$f")")" "$pr"
+  # as given against the root, then spelled physically (phys, or physnew for
+  # a directory not made yet) against the physical root, found by identity
+  # (inroot), and either may refuse it; the second only when either spelling
+  # differs, since it would repeat the first.
+  held "$f" "$root"; m=$move
+  # Not $at: abspath collapses a trailing /. or /.. by name, and $at is $f where a directory is missing.
+  g=$(phys "$f" || physnew "$f" || printf '%sx' "$f"); g=$(inroot "${g%x}"); g=${g%x}
+  [ "$g" = "$f" ] && [ "$pr" = "$root" ] || held "$g" "$pr"
+  [ -z "$m" ] || myline > "$root/.git/coddy/$m/owner" 2>/dev/null
+  [ -z "$move" ] || [ "$move" = "$m" ] || myline > "$root/.git/coddy/$move/owner" 2>/dev/null
   exit 0
 fi
 # Where shell command $1, run in directory $2, would make a worktree with git
