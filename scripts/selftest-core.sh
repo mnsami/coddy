@@ -236,11 +236,17 @@ mv "$tmp/live.yml" .coddy.yml
 # jq the guard cannot tell which path is edited and fails closed.
 t 0 "guard asks on .coddy.yml" asks "$repo/.coddy.yml"
 for p in "$repo/./.coddy.yml" "$repo//.coddy.yml" "$repo/sub/../.coddy.yml" "$repo/.CODDY.YML" .coddy.yml; do t 0 "guard asks on .coddy.yml spelled $p" asks "$p"; done
+# The Write tool collapses .. by name before it writes, so a .. after a link
+# out of the project still lands on the root's .coddy.yml.
+mkdir -p "$tmp/out/deep" && ln -s "$tmp/out/deep" lnk
+t 0 "guard asks on .coddy.yml spelled through .. after a link out of the project" asks "$repo/lnk/../.coddy.yml"
 t 2 "guard blocks the main checkout" guard "$repo/README.md"
 PATH="$tmp/nojq" t 2 "guard without jq fails closed" guard "$repo/.coddy.yml"
 echo 'guard: warn' >> .coddy.yml
 t 0 "warn: guard still asks on .coddy.yml" asks "$repo/.coddy.yml"
 t 0 "warn: and spelled through .." asks "$repo/sub/../.coddy.yml"
+t 0 "warn: and through .. after a link out of the project" asks "$repo/lnk/../.coddy.yml"
+rm lnk
 t 0 "warn: guard lets the main checkout through" guard "$repo/README.md"
 PATH="$tmp/nojq" t 2 "warn: guard without jq fails closed" guard "$repo/.coddy.yml"
 sed -i.bak '/^guard:/d' .coddy.yml && rm .coddy.yml.bak
@@ -446,6 +452,16 @@ spelled() {
 }
 spelled "$pr" "$tmp/via" "physical root, path through a link"
 spelled "$tmp/via" "$pr" "root through a link, physical path"
+# macOS reaches its data volume through the /System/Volumes/Data firmlink
+# too, which bash's pwd -P keeps: the root is found by identity, not by name.
+fl="/System/Volumes/Data$pr"
+if [ -d "$fl" ] && [ "$fl" -ef "$repo" ]; then
+  spelled "$pr" "$fl" "physical root, path through the firmlink"
+  spelled "$fl" "$pr" "root through the firmlink, physical path"
+  mkdir -p .claude && mv .coddy.yml .claude/coddy.yml
+  t 0 "guard asks on a .coddy.yml not made yet, spelled through the firmlink" asks "$fl/.coddy.yml"
+  mv .claude/coddy.yml .coddy.yml
+fi
 rm .worktrees/1/rd .worktrees/1/d .worktrees/1/dd
 # The Claude Code shims take their inputs from CLAUDE_* alone: an inherited
 # CODDY_* value, however hostile, is ignored.
