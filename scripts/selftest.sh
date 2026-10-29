@@ -401,6 +401,9 @@ t 0 "warn: a branch delete is let through with the message" noted 'delete a remo
 # text, else 1, so no other refusal passes for this one
 raw() { printf %s "$1" | run guard; }
 saying() { local out r; out=$("${@:2}" 2>&1); r=$?; case "$out" in *"$1"*) return "$r" ;; esac; return 1; }
+# A cygpath that turns any path into one the guard allows: the Windows
+# refusal below never asks it, so it holds where Git Bash ships one.
+mkdir "$tmp/cyg"; printf '#!/bin/sh\necho "%s/.claude/n.md"\n' "$repo" > "$tmp/cyg/cygpath"; chmod +x "$tmp/cyg/cygpath"
 for v in block warn; do
   printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
   PATH="$tmp/badjq:$PATH" t 2 "guard: $v blocks the main checkout with a jq that fails" saying 'could not read the hook payload with jq' guard "$repo/README.md"
@@ -413,8 +416,8 @@ for v in block warn; do
   t 0 "guard: $v reads a relative path against the payload's cwd" test -z "$(raw "{\"cwd\":\"$repo/.claude\",\"tool_input\":{\"file_path\":\"n.md\"}}" 2>&1 || echo refused)"
   # Native Windows paths, which nothing reads as absolute, and a cwd that is
   # not absolute, a non-string one included: refused, in warn mode too.
-  for p in '{"tool_input":{"file_path":"D:\\proj\\README.md"},"cwd":"D:\\proj"}' '{"tool_input":{"file_path":"README.md"},"cwd":"D:\\proj"}' '{"tool_input":{"file_path":"D:/proj/README.md"}}'; do
-    t 2 "guard: $v blocks a Windows path: $p" saying 'refuses a Windows path' raw "$p"
+  for p in '{"tool_input":{"file_path":"D:\\proj\\README.md"},"cwd":"D:\\proj"}' '{"tool_input":{"file_path":"README.md"},"cwd":"D:\\proj"}' '{"tool_input":{"file_path":"D:/proj/README.md"}}' '{"tool_input":{"file_path":"README.md"},"cwd":"D:/proj"}' '{"tool_input":{"file_path":"\\\\server\\share\\README.md"}}' "{\"tool_input\":{\"file_path\":\".claude\\\\n.md\"},\"cwd\":\"$repo\"}"; do
+    PATH="$tmp/cyg:$PATH" t 2 "guard: $v blocks a Windows path: $p" saying 'refuses a Windows path' raw "$p"
   done
   for p in '{"cwd":{"a":1},"tool_input":{"file_path":"x"}}' '{"cwd":["/x"],"tool_input":{"file_path":"x"}}' '{"cwd":"proj","tool_input":{"file_path":"x"}}'; do
     t 2 "guard: $v blocks a cwd that is not absolute: $p" saying 'refuses a cwd that is not an absolute path' raw "$p"
