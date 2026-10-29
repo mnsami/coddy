@@ -4,13 +4,13 @@
       {
         "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
-          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "guard"] }
+          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "guard"] }
         ]
       },
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "snap"] }
+          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "snap"] }
         ]
       }
     ],
@@ -18,7 +18,7 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "trip"] }
+          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "trip"] }
         ]
       }
     ],
@@ -26,7 +26,7 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "trip"] }
+          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "trip"] }
         ]
       }
     ]

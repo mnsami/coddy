@@ -236,11 +236,22 @@ mv "$tmp/live.yml" .coddy.yml
 # jq the guard cannot tell which path is edited and fails closed.
 t 0 "guard asks on .coddy.yml" asks "$repo/.coddy.yml"
 for p in "$repo/./.coddy.yml" "$repo//.coddy.yml" "$repo/sub/../.coddy.yml" "$repo/.CODDY.YML" .coddy.yml; do t 0 "guard asks on .coddy.yml spelled $p" asks "$p"; done
+# The Write tool collapses .. by name before it writes, so a .. after a link
+# out of the project still lands on the root's .coddy.yml.
+mkdir -p "$tmp/out/deep" && ln -s "$tmp/out/deep" lnk
+t 0 "guard asks on .coddy.yml spelled through .. after a link out of the project" asks "$repo/lnk/../.coddy.yml"
+# And is compared with .coddy.yml spelled so: a .. after a link back into
+# the project lands outside it, where it is refused for its ..
+mkdir s2d && ln -s "$repo/s2d" "$tmp/s2"
+t 2 "guard reads .. by name, so one after a link back into the project is not .coddy.yml" guard "$tmp/s2/../.coddy.yml"
+rm -r s2d "$tmp/s2"
 t 2 "guard blocks the main checkout" guard "$repo/README.md"
 PATH="$tmp/nojq" t 2 "guard without jq fails closed" guard "$repo/.coddy.yml"
 echo 'guard: warn' >> .coddy.yml
 t 0 "warn: guard still asks on .coddy.yml" asks "$repo/.coddy.yml"
 t 0 "warn: and spelled through .." asks "$repo/sub/../.coddy.yml"
+t 0 "warn: and through .. after a link out of the project" asks "$repo/lnk/../.coddy.yml"
+rm lnk
 t 0 "warn: guard lets the main checkout through" guard "$repo/README.md"
 PATH="$tmp/nojq" t 2 "warn: guard without jq fails closed" guard "$repo/.coddy.yml"
 sed -i.bak '/^guard:/d' .coddy.yml && rm .coddy.yml.bak
@@ -306,6 +317,12 @@ rm .claude/cfg
 ln -s ../.coddy.yml .claude/c10; for i in 9 8 7 6 5 4 3 2 1; do ln -s "c$((i+1))" ".claude/c$i"; done
 CODDY_AGENT_DIR=.claude t 0 "guard asks through a dangling chain of ten links" asks "$repo/.claude/c1"
 rm .claude/c[0-9]*
+# A path the walk cannot follow is refused before warn mode: let through, a
+# write may land on a .coddy.yml not made yet, which nothing asked about.
+ln -s ../.coddy.yml .claude/c41; for i in $(seq 40 -1 1); do ln -s "c$((i+1))" ".claude/c$i"; done
+echo 'guard: warn' >> .claude/coddy.yml
+CODDY_AGENT_DIR=.claude t 2 "warn: guard refuses a chain of 41 links to .coddy.yml while the legacy file is live" guard "$repo/.claude/c1"
+cp "$tmp/conf.orig" .claude/coddy.yml; rm .claude/c[0-9]*
 tripped 2 "config: deleting the legacy file trips" 'rm .claude/coddy.yml'
 t 0 "config: the legacy file is restored" same .claude/coddy.yml
 # Once .coddy.yml is live the legacy file is ignored, so the lock lets it go.
@@ -426,7 +443,153 @@ ln -s ../../.coddy.yml .worktrees/1/cfg; ln .coddy.yml .worktrees/1/hard
 t 0 "guard asks on .coddy.yml through a symlink in the owner's worktree" asks "$repo/.worktrees/1/cfg"
 t 0 "guard asks on .coddy.yml through a hard link in the owner's worktree" asks "$repo/.worktrees/1/hard"
 rm .worktrees/1/cfg .worktrees/1/hard
+# Shift_JIS, GBK and GB18030 take 0x78 as a trail byte, so a path ending in
+# a lead byte reads with the x the guard puts after it as one character: the
+# guard reads byte-wise. ぁ, in UTF-8 as the payload carries it, ends in 0x81.
+h=$(printf '\343\201\201') mb=""
+ln -s ../../.coddy.yml ".worktrees/1/cfg$h"; ln -s ../../README.md ".worktrees/1/rd$h"
+for mb in $(locale -a 2>/dev/null | grep -ix -e ja_JP.SJIS -e zh_CN.GB18030 -e zh_CN.GBK); do
+  LC_ALL=$mb t 0 "guard under $mb asks on .coddy.yml through a link named cfgぁ in the owner's worktree" asks "$repo/.worktrees/1/cfg$h"
+  LC_ALL=$mb t 2 "guard under $mb blocks a link named rdぁ there to the main checkout" guard "$repo/.worktrees/1/rd$h"
+done
+[ -n "$mb" ] || echo "skip guard under a double-byte locale: none of ja_JP.SJIS, zh_CN.GB18030, zh_CN.GBK installed"
+rm ".worktrees/1/cfg$h" ".worktrees/1/rd$h"
 t 2 "guard blocks another session's edit" guard "$repo/.worktrees/1/a.txt" sess-b
+# Claude Code hands the hooks the physical project dir, and a path may reach
+# the project through a link: the guard reads a path as given and spelled
+# physically against the physical root, the stricter winning, so neither
+# spelling of the root or the path lets an edit through.
+pr=$(cd "$repo" && pwd -P); ln -s "$repo" "$tmp/via"
+ln -s ../../README.md .worktrees/1/rd; ln -s ../../sub .worktrees/1/d; ln -s d/../README.md .worktrees/1/dd
+ln -s ../../newdir .worktrees/1/L; ln -s sub2 .worktrees/1/M; mkdir $'.worktrees/1\n'; ln -s $'../1\n' .worktrees/1/nl
+# A link target under PATH_MAX that, glued to its directory as text, is
+# over it: each link is read from inside its own directory, so none reads
+# as no entry and no link. Issue 2 is another session's, 7 unclaimed.
+pad=$(printf './%.0s' $(seq $(( ($(getconf PATH_MAX / 2>/dev/null || echo 1024) - 40) / 2 ))))
+ln -s "$pad../../sub" .worktrees/1/E; ln -s "$pad../2" .worktrees/1/E2; ln -s "$pad../7" .worktrees/1/E7
+ln -s "$pad../../README.md" .worktrees/1/lng; ln -s "${pad}L2" .worktrees/1/la; ln -s ../../README.md .worktrees/1/L2
+mkdir .git/coddy/2 .worktrees/2 .worktrees/7; echo "sess-b 1" > .git/coddy/2/owner
+# spelled <root> <path prefix> <label>
+spelled() {
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks the main checkout" guard "$2/README.md"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks a new nested file in the main checkout" guard "$2/newdir/deep/a.txt"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks an unclaimed worktree" guard "$2/.worktrees/7/a.txt"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks another session's worktree" guard "$2/.worktrees/1/a.txt" sess-b
+  CODDY_ROOT=$1 t 0 "guard, $3: allows the owner's worktree" guard "$2/.worktrees/1/a.txt"
+  CODDY_ROOT=$1 CODDY_AGENT_DIR=.claude t 0 "guard, $3: allows the agent dir" guard "$2/.claude/x"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks a link in the owner's worktree to the main checkout" guard "$2/.worktrees/1/rd"
+  CODDY_ROOT=$1 t 2 "guard, $3: and one whose .. follows a link there" guard "$2/.worktrees/1/dd"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks a dangling link in the owner's worktree to the main checkout" guard "$2/.worktrees/1/L/a.txt"
+  CODDY_ROOT=$1 t 0 "guard, $3: allows a dangling link in the owner's worktree to it" guard "$2/.worktrees/1/M/a.txt"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks a directory named the owner's id and a newline" guard "$2/.worktrees/1\\n/x"
+  CODDY_ROOT=$1 t 2 "guard, $3: and that name itself" guard "$2/.worktrees/1\\n"
+  CODDY_ROOT=$1 t 2 "guard, $3: and a link in the owner's worktree to it" guard "$2/.worktrees/1/nl"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks a new file through a long link to the main checkout" guard "$2/.worktrees/1/E/n1/n2.txt"
+  CODDY_ROOT=$1 t 2 "guard, $3: and one to another session's worktree" guard "$2/.worktrees/1/E2/n1/n2.txt"
+  CODDY_ROOT=$1 t 2 "guard, $3: and one to an unclaimed worktree" guard "$2/.worktrees/1/E7/n1/n2.txt"
+  CODDY_ROOT=$1 t 2 "guard, $3: blocks a long link to a main-checkout file" guard "$2/.worktrees/1/lng"
+  CODDY_ROOT=$1 t 2 "guard, $3: and a long link to a link there" guard "$2/.worktrees/1/la"
+}
+spelled "$pr" "$pr" "physical root and path"
+spelled "$pr" "$tmp/via" "physical root, path through a link"
+spelled "$tmp/via" "$pr" "root through a link, physical path"
+# macOS reaches its data volume through the /System/Volumes/Data firmlink
+# too, which bash's pwd -P keeps: the root is found by identity, not by name.
+fl="/System/Volumes/Data$pr"
+if [ -d "$fl" ] && [ "$fl" -ef "$repo" ]; then
+  spelled "$pr" "$fl" "physical root, path through the firmlink"
+  spelled "$fl" "$pr" "root through the firmlink, physical path"
+  mkdir -p .claude && mv .coddy.yml .claude/coddy.yml
+  t 0 "guard asks on a .coddy.yml not made yet, spelled through the firmlink" asks "$fl/.coddy.yml"
+  mv .claude/coddy.yml .coddy.yml
+fi
+mkdir -p .claude && mv .coddy.yml .claude/coddy.yml
+ln -s "${pad}C2" .worktrees/1/cfg; ln -s ../../.coddy.yml .worktrees/1/C2
+t 0 "guard asks on a .coddy.yml not made yet, through a long link in the owner's worktree" asks "$repo/.worktrees/1/cfg"
+rm .worktrees/1/cfg .worktrees/1/C2; mv .claude/coddy.yml .coddy.yml
+# A readlink that takes one argument and no -n (BusyBox without
+# FEATURE_READLINK_FOLLOW) still reads each link, its newline dropped.
+mkdir "$tmp/rl1"; printf '#!/bin/sh\n[ $# = 1 ] || exit 1\ncase $1 in -*) exit 1 ;; esac\nt=$(%s -n "$1" && printf x) || exit 1\nprintf "%%s\\n" "${t%%x}"\n' "$(command -v readlink)" > "$tmp/rl1/readlink"; chmod +x "$tmp/rl1/readlink"
+PATH="$tmp/rl1:$PATH" t 2 "guard, one-argument readlink: blocks a link to the main checkout" guard "$repo/.worktrees/1/rd"
+PATH="$tmp/rl1:$PATH" t 2 "guard, one-argument readlink: blocks a dangling link to it" guard "$repo/.worktrees/1/L/a.txt"
+PATH="$tmp/rl1:$PATH" t 0 "guard, one-argument readlink: allows a dangling link to the owner's worktree" guard "$repo/.worktrees/1/M/a.txt"
+# A readlink that never works cannot follow a dangling chain to .coddy.yml:
+# refused before the mode is read, so under guard: warn too.
+mkdir "$tmp/rl0"; printf '#!/bin/sh\nexit 1\n' > "$tmp/rl0/readlink"; chmod +x "$tmp/rl0/readlink"
+cp .coddy.yml "$tmp/conf.yml"; { grep -v '^guard:' "$tmp/conf.yml"; echo "guard: warn"; } > .claude/coddy.yml; rm .coddy.yml
+ln -s C2 .worktrees/1/cfg; ln -s ../../.coddy.yml .worktrees/1/C2
+PATH="$tmp/rl0:$PATH" t 2 "guard: warn, a readlink that always fails: refuses a link chain to a .coddy.yml not made yet" guard "$repo/.worktrees/1/cfg"
+rm .worktrees/1/cfg .worktrees/1/C2 .claude/coddy.yml; mv "$tmp/conf.yml" .coddy.yml
+# snap reads one path per line: one whose directory ends in a newline is
+# marked unresolved, not split into two.
+t 0 "snap: a worktree add through a link to a name ending in a newline passes, unresolved" says 'could not tell where' run snap < <(jq -cn --arg d "$repo" '{tool_use_id: "nl", cwd: $d, tool_input: {command: "git worktree add .worktrees/1/nl/x"}}')
+rm -f "${snapfile%w}nl" "${snapfile%w}nl".*
+# The owner's edit moves the owner line only once both readings allow it.
+printf 'sess-old %s\n' $$ > "$tmp/own"; cp "$tmp/own" .git/coddy/1/owner
+t 2 "guard: the owner's process under a new id is refused a link to the main checkout" guard "$repo/.worktrees/1/rd"
+t 0 "guard: and the owner line is left as it was" cmp -s "$tmp/own" .git/coddy/1/owner
+t 0 "guard: an edit it is allowed" guard "$repo/.worktrees/1/a.txt"
+t 0 "guard: moves the owner line to it" holds "sess-a $$" .git/coddy/1/owner
+t 2 "guard: blocks a relative path against a cwd named the owner's id and a newline" run guard < <(printf '{"session_id":"sess-a","cwd":"%s","tool_input":{"file_path":"x"}}' "$repo/.worktrees/1\\n")
+rm .worktrees/1/rd .worktrees/1/d .worktrees/1/dd .worktrees/1/L .worktrees/1/M .worktrees/1/nl; rmdir $'.worktrees/1\n'
+rm .worktrees/1/E .worktrees/1/E2 .worktrees/1/E7 .worktrees/1/lng .worktrees/1/la .worktrees/1/L2; rm -r .git/coddy/2; rmdir .worktrees/2 .worktrees/7
+# ps prints a start time in the locale's language, and the guard runs in C:
+# the start is read in C, so a claim, an edit, a status and another claim
+# under another locale compare one format, and an owner line an earlier
+# coddy wrote in another locale counts by its pid alone.
+de=$(locale -a 2>/dev/null | grep -ix -m1 -e de_DE.UTF-8 -e de_DE.utf8)
+if [ -n "$de" ]; then
+  fresh() { rm -r .git/coddy/1; LC_ALL=$de run claim 1 >/dev/null 2>&1; cp .git/coddy/1/owner "$tmp/own"; }
+  newsid() { run guard < <(printf '{"session_id":"sess-c","tool_input":{"file_path":"%s"}}' "$repo/.worktrees/1/a.txt"); }
+  fresh
+  LC_ALL=$de t 0 "under $de: guard allows the owner's edit" guard "$repo/.worktrees/1/a.txt"
+  t 0 "under $de: and leaves the owner line as claim wrote it" cmp -s "$tmp/own" .git/coddy/1/owner
+  LC_ALL=$de t 0 "under $de: status from another session shows the owner running" says '^owners: 1=sess-a (running)' as sess-b 1 status
+  LC_ALL=$de t 1 "under $de: another session's claim is refused" as sess-b 1 claim 1
+  fresh
+  LC_ALL=$de t 0 "under $de: guard allows the owner's process under a new session id (/clear)" newsid
+  printf 'sess-a %s %s\n' $$ "$(LC_ALL=$de ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_")} 1')" > .git/coddy/1/owner
+  LC_ALL=C t 0 "an owner line holding a start written under $de: status shows its live pid running" says '^owners: 1=sess-a (running)' as sess-b 1 status
+  LC_ALL=C t 0 "and guard allows the owner's process under a new session id (/clear)" newsid
+  LC_ALL=C t 0 "and rewrites the owner line in the C format" grep -qx "sess-c $$ $(TZ=UTC0 LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}')" .git/coddy/1/owner
+  rm -r .git/coddy/1; run claim 1 >/dev/null 2>&1
+else
+  echo "skip a claim under another locale: de_DE.UTF-8 not installed"
+fi
+# ps prints a start in local time: read in UTC, so a claim and a check
+# under different time zones compare one time.
+rm -r .git/coddy/1; TZ=UTC run claim 1 >/dev/null 2>&1
+TZ=Asia/Tokyo t 1 "claimed under TZ=UTC: another session's claim from TZ=Asia/Tokyo is refused while the owner runs" as sess-b 1 claim 1
+TZ=Asia/Tokyo t 0 "and status from there shows the owner running" says '^owners: 1=sess-a (running)' as sess-b 1 status
+rm -r .git/coddy/1; run claim 1 >/dev/null 2>&1
+# A path or cwd over 4096 bytes is refused before any work on it, in both
+# modes: reading one takes time quadratic in its length, and a hook that
+# outlasts its timeout lets the edit through.
+over="$repo/$(printf './%.0s' $(seq 2050))README.md"
+under="$repo/.worktrees/1/"; under="$under$(printf './%.0s' $(seq $(( (4096 - ${#under} - 5) / 2 ))))a.txt"
+cp .coddy.yml "$tmp/conf.yml"
+for v in block warn; do
+  { grep -v '^guard:' "$tmp/conf.yml"; echo "guard: $v"; } > .coddy.yml
+  t 2 "guard: $v refuses a path over 4096 bytes, promptly" timeout 1 "$here/bin/coddy" guard < <(printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$over")
+  t 2 "guard: $v refuses a cwd over 4096 bytes" timeout 1 "$here/bin/coddy" guard < <(printf '{"session_id":"sess-a","cwd":"%s","tool_input":{"file_path":"README.md"}}' "${over%/README.md}")
+  t 0 "guard: $v allows a path of 4096 bytes in the owner's worktree" guard "$under"
+done
+cp "$tmp/conf.yml" .coddy.yml
+# That cap bounds the path's length, not the walk's time: each cd costs time
+# in the depth, and links repeat steps there. 30 links in the owner's
+# worktree, each 400 steps at depth 300 (most of a minute on macOS), are refused
+# once the walk's 5 seconds have passed, not let through after it.
+deep=$(printf 'd/%.0s' $(seq 300)); mkdir -p ".worktrees/1/$deep"
+ln -s "$(printf '../d/%.0s' $(seq 200))" ".worktrees/1/${deep}B"
+t 2 "guard: refuses a walk that outlasts its time budget, promptly" timeout 15 "$here/bin/coddy" guard < <(printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$pr/.worktrees/1/$deep$(printf 'B/%.0s' $(seq 30))a.txt")
+rm -r .worktrees/1/d
+# Nor the tail a missing directory leaves, joined and read in time
+# quadratic in its length: 40 links, each putting 60 components after the
+# next, the last into a missing directory, leave one past 4096 bytes.
+x=$(printf '/x%.0s' $(seq 60))
+for i in $(seq 39); do ln -s "S$((i+1))$x" ".worktrees/1/S$i"; done; ln -s "nodir$x" .worktrees/1/S40
+t 2 "guard: refuses a tail past 4096 bytes after a missing directory, promptly" timeout 15 "$here/bin/coddy" guard < <(printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$pr/.worktrees/1/S1/a.txt")
+rm .worktrees/1/S[0-9]*
 # The Claude Code shims take their inputs from CLAUDE_* alone: an inherited
 # CODDY_* value, however hostile, is ignored.
 shim() { CLAUDE_PROJECT_DIR=$repo CODDY_ROOT=/ CODDY_AGENT_DIR=src CODDY_SESSION=sess-a CODDY_PID=$$ bash "$here/scripts/issue.sh" "$@"; }

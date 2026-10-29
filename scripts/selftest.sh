@@ -339,6 +339,9 @@ t 2 "guard blocks the main checkout" guard "$repo/README.md"
 t 0 "guard allows .claude/" guard "$repo/.claude/coddy.yml"
 t 2 "guard blocks a Claude Code worktree under .claude/ without a claim" guard "$repo/.claude/worktrees/55/a.txt"
 t 0 "guard ignores paths outside the project" guard "$tmp/elsewhere.txt"
+# Claude Code hands the hooks the physical project dir; a path through a link to it is the project's.
+ln -s "$repo" "$tmp/alias"
+t 2 "guard blocks the main checkout through a link to the project" sh -c "printf '{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"%s\"}}' '$tmp/alias/README.md' | CLAUDE_PROJECT_DIR='$(cd "$repo" && pwd -P)' bash '$here/scripts/issue.sh' guard"
 t 2 "guard rejects .. paths" guard "$repo/.worktrees/../README.md"
 t 2 "guard rejects .. paths hidden behind a newline" guard "$repo/.claude/x\\n/../../README.md"
 mkdir -p .git/coddy/66 && echo "sess-f " > .git/coddy/66/owner # a claim run without CLAUDE_PID
@@ -349,17 +352,24 @@ rm -r .git/coddy/66
 # ${CLAUDE_PLUGIN_ROOT} substituted), with the variables a .claude/settings.json
 # env can put in its environment
 hook() { local v=$1 p=$2; shift 2; eval "set -- \"\$@\" $(jq -r --arg v "$v" --arg r "$here" 'first(.hooks[][].hooks[] | select(.args[-1]? == $v)) | [.command] + .args | map(split("${CLAUDE_PLUGIN_ROOT}") | join($r)) | @sh' "$here/hooks/hooks.json")"; printf %s "$p" | env CLAUDE_PROJECT_DIR="$repo" "$@"; }
-t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u FUNCNEST -u POSIXLY_CORRECT bash" jq -e '[.hooks[][].hooks[]] | all(.command == "/usr/bin/env" and .args[:9] == ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash"])' "$here/hooks/hooks.json"
+t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u FUNCNEST -u POSIXLY_CORRECT bash -p" jq -e '[.hooks[][].hooks[]] | all(.command == "/usr/bin/env" and .args[:10] == ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "-p"])' "$here/hooks/hooks.json"
+t 0 "hooks: no hook sets onFailure or timeout" jq -e '[.hooks[][].hooks[]] | all(has("onFailure") or has("timeout") | not)' "$here/hooks/hooks.json"
 # Each under the bash on PATH and under /bin/bash (3.2 on macOS) first on PATH.
 # GREP_OPTIONS and TMOUT are the core's to unset, not hooks.json's: they act
 # only once it runs a grep (BSD grep honours it) or a read (bash 5 takes a
 # fraction of a second, which times out reads from process substitutions).
-mkdir "$tmp/sysbash"; ln -s /bin/bash "$tmp/sysbash/bash"
+# A BASH_ENV file and a function in the environment are bash -p's to skip.
+mkdir "$tmp/sysbash"; ln -s /bin/bash "$tmp/sysbash/bash"; echo 'exit 0' > "$tmp/exit0"
 for b in "" "$tmp/sysbash:"; do
-  for e in SHELLOPTS=noexec BASHOPTS=failglob FUNCNEST=1 POSIXLY_CORRECT=1 GREP_OPTIONS=-V TMOUT=0.000001; do
+  t 0 "hooks: guard${b:+ under /bin/bash} lets the agent dir through" hook guard "{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/.claude/x\"}}" PATH="$b$PATH"
+  t 0 "hooks: snap${b:+ under /bin/bash} lets a command through" hook snap "$(payload true)" PATH="$b$PATH"
+  for e in SHELLOPTS=noexec BASHOPTS=failglob FUNCNEST=1 POSIXLY_CORRECT=1 GREP_OPTIONS=-V TMOUT=0.000001 "BASH_ENV=$tmp/exit0" 'BASH_FUNC_jq%%=() { printf /tmp/elsewhere; }'; do
     w="$e${b:+ under /bin/bash}"
     t 2 "hooks: $w leaves guard on" hook guard "{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/README.md\"}}" "$e" PATH="$b$PATH"
     t 2 "hooks: $w leaves snap on" hook snap "$(payload 'git worktree add ../x')" "$e" PATH="$b$PATH"
+    # trip exits 2 under an imported jq with -p or without: the snapshot id
+    # it reads changes, so it reports the snapshot lost.
+    case $e in BASH_FUNC_*) continue ;; esac
     wire snap w; echo x > stray.txt; t 2 "hooks: $w leaves trip on" hook trip '{"tool_use_id":"w"}' "$e" PATH="$b$PATH"; rm stray.txt
   done
 done
@@ -607,6 +617,10 @@ printf 'ref: refs/heads/.invalid\n' > "$hd/.git/HEAD"
 t 0 "push: a reftable repository's HEAD stub passes with a message" noted 'could not tell which branch' "cd '$hd' && git push"
 rm "$hd/.git/HEAD"; ln -s refs/heads/main "$hd/.git/HEAD"
 t 2 "push: refused, a HEAD that is a link to refs/heads/main" shell 'git push' "$hd/empty"
+# A directory reached through a link to a name ending in a newline keeps it,
+# so the sibling without it is never read: unresolved, never another's HEAD.
+nw="$tmp/nlw"; for b in main feat; do r="$nw/r"; [ $b = feat ] || r="$r"$'\n'; mkdir -p "$r/objects" "$r/refs"; echo "ref: refs/heads/$b" > "$r/HEAD"; done; ln -s r$'\n' "$nw/l"
+for c in "cd '$nw/l' && git push origin HEAD" "git --git-dir='$nw/l' push origin HEAD"; do t 0 "push: through a link to a repository named with a trailing newline, passes with a message: $c" noted 'could not tell which branch' "$c"; done
 t 0 "without jq: a push passes" nojq 'git push origin main'
 t 0 "without jq: and says so" says 'jq is missing' nojq 'git push origin main'
 badjq() { payload "$1" | PATH="$tmp/badjq:$PATH" run snap; }
@@ -1110,10 +1124,10 @@ PATH="$tmp/nops:$PATH" t 0 "issue.sh status owners: a running process is running
 echo "sess-f " > .git/coddy/other/owner
 t 0 "issue.sh status owners: another session without a pid is running, as claim reads it" owns "other=sess-f (running)"
 # A pid is the owner's only while it is the process that started then.
-started=$(ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_")} 1')
+started=$(TZ=UTC0 LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}')
 echo "sess-e $$ $started" > .git/coddy/other/owner
 t 0 "issue.sh status owners: a running pid with the recorded start time is running" owns "other=sess-e (running)" sess-z 1
-echo "sess-e $$ Thu_Jan_1_00:00:00_1970" > .git/coddy/other/owner
+echo "sess-e $$ Thu_Jan_1_00:00:00_1970_UTC" > .git/coddy/other/owner
 t 0 "issue.sh status owners: a running pid with another start time is gone" owns "other=sess-e (gone)"
 t 1 "issue.sh status owners: and it is not me by that pid" owns "other=me" sess-z
 PATH="$tmp/nops:$PATH" t 0 "issue.sh status owners: a start time ps cannot read counts as a match" owns "other=sess-e (running)" sess-z 1
