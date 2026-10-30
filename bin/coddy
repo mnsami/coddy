@@ -15,7 +15,7 @@
 #   coddy exclude answers | config  put the agent's coddy/ directory, or .coddy.yml, into git's info/exclude unless git ignores it already
 #   coddy forget answers            remove the agent's coddy/onboard-answers.json once the config is written
 #   coddy migrate                   the config brought up to the current schema version, for /coddy:migrate to write
-#   coddy doctor                    the install this runs from (its directory, how it got there, version and commit) and, in a project, what is missing or off, one line per check
+#   coddy doctor                    the install this runs from (its directory, how it got there, version and commit), a platform: line on native Windows, which coddy does not run on, and, in a project, what is missing or off, one line per check; exit 1 on either
 #   coddy guard                     PreToolUse hook on Edit/Write (hooks/hooks.json)
 #   coddy snap | trip               Pre/PostToolUse hooks on Bash
 #   coddy githook pre-commit|pre-push   the git hooks start installs under .git/hooks/coddy
@@ -59,9 +59,15 @@ unset CDPATH TMOUT GREP_OPTIONS
 # target ending in one, so it is read without -n only when -n fails.
 rdl() { local t; t=$(readlink -n "$1" 2>/dev/null && printf x) || { t=$(readlink "$1" && printf x) && case "$t" in *$'\n'x) t=${t%?x}x ;; *) false ;; esac; } && printf %s "$t"; }
 
+# The platform uname -s printed ($1) names: macos, linux, windows (Cygwin,
+# MSYS2, Git Bash; WSL is linux) or unknown.
+osname() { case "$1" in Darwin) echo macos ;; Linux) echo linux ;; CYGWIN*|MINGW*|MSYS*|Windows_NT) echo windows ;; *) echo unknown ;; esac; }
+
 # The install this runs from: its real directory, through a PATH link or a
 # shim that sources it; get.sh's when that is CODDY_HOME. Outside a project
-# that is all doctor prints; inside one, the checks after the config guard.
+# that is all doctor prints, with a platform: line after it on native
+# Windows, which coddy does not run on, and bad, doctor's exit, starting at 1
+# there; inside one, the checks after the config guard.
 if [ "${1-}" = doctor ]; then
   p="${BASH_SOURCE[0]-}" i=0
   [ -n "$p" ] || { echo "coddy: doctor needs to run from its file, not stdin" >&2; exit 1; }
@@ -75,7 +81,8 @@ if [ "${1-}" = doctor ]; then
   echo "via: $([ "$d" = "$h" ] && echo get.sh || echo other)"
   echo "version: ${v:-unknown}"
   echo "commit: ${c:-none}"
-  inst=$d
+  inst=$d bad=0 u=$(uname -s 2>/dev/null | tr -d '[:cntrl:]')
+  [ "$(osname "$u")" != windows ] || { echo "platform: windows ($u) is not supported: coddy runs on macOS, Linux and WSL"; bad=1; }
 fi
 
 # Whether git dir $1 is a repository as git tests one, its HEAD read into l:
@@ -277,8 +284,7 @@ if [ "${1-}" = detect ]; then
   echo "jq: $(command -v jq >/dev/null 2>&1 && echo installed || echo missing)"
   # Where this runs and the first package manager on PATH: onboard's install
   # command for a missing jq or jj is keyed on pkg.
-  case "$(uname -s 2>/dev/null)" in Darwin) o=macos ;; Linux) o=linux ;; CYGWIN*|MINGW*|MSYS*|Windows_NT) o=windows ;; *) o=unknown ;; esac
-  echo "os: $o"
+  echo "os: $(osname "$(uname -s 2>/dev/null)")"
   p=none; for x in brew apt-get dnf winget; do command -v "$x" >/dev/null 2>&1 && { p=$x; break; }; done
   echo "pkg: $p"
   b=$( (git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main) | sed 's#^origin/##')
@@ -461,6 +467,29 @@ if [ "${1-}" = guard ]; then
   # bounds the path's length; $budget bounds the walk's time.
   long() { [ "${#1}" -gt 4096 ]; }
   ! long "$f" && ! long "$cwd" || die "the edit guard refuses a path or cwd longer than 4096 bytes"
+  # Where bash itself runs on native Windows ($OSTYPE msys or cygwin, a
+  # variable bash sets, so no process is started), no path can be compared
+  # with the root: /proj/x or ///proj/x reads as outside /c/proj or
+  # /cygdrive/c/proj while Windows writes C:\proj\x, and .coddy.yml with a
+  # trailing dot or space, or with ::$DATA, misses the ask below while
+  # Windows writes the config. So every edit is refused there, in warn mode
+  # too. bash takes OSTYPE from the environment when one is set there, so
+  # hooks.json unsets it. The shapes below still refuse a Windows payload
+  # handed to the core on macOS or Linux.
+  case "${OSTYPE-}" in msys*|cygwin*) die "the edit guard refuses every edit on native Windows (Git Bash, MSYS2, Cygwin), $f included: native Windows is not supported; coddy runs on macOS, Linux and WSL." ;; esac
+  # Native Windows (Git Bash, MSYS2, Cygwin) hands the path and the cwd as
+  # D:\proj\x, D:/proj/x, D:x or //server/share/x (//./D:/x, //?/D:/x),
+  # none of which the code below reads as Windows does. A drive letter or a
+  # backslash reads as relative: joined to an absolute cwd, or to $PWD for
+  # an empty one, the edit was held as a path under that directory, and
+  # passed when that was outside the project, in the agent dir or in a
+  # claimed worktree, while the tool wrote the Windows path itself; a
+  # leading // reads as a path outside the project. coddy runs on macOS,
+  # Linux and WSL, so each is refused, in warn mode too, and so is a cwd
+  # neither empty nor absolute, an object or array jq prints as JSON text
+  # included, which abspath's unset $2 under set -u refused only by accident.
+  for x in "$f" "$cwd"; do case "$x" in [A-Za-z]:*|//[!/]*|*\\*) die "the edit guard refuses a Windows path (a drive letter, a backslash or a leading //) in $f or its cwd ${cwd:-none}: coddy runs on macOS, Linux and WSL, not on native Windows." ;; esac; done
+  case "$cwd" in ''|/*) ;; *) die "the edit guard refuses a cwd that is not an absolute path: $cwd" ;; esac
   # A relative path is written against the hook's cwd, as the tool resolves it.
   case "$f" in ''|/*) ;; *) f="${cwd:-$PWD}/$f" ;; esac
   # The physical path a write to $1 lands on: symlinks followed in every
@@ -1370,7 +1399,7 @@ fi
 
 if [ "${1-}" = doctor ]; then
   # a root outside git (a jj workspace with no .git) is a project when it holds a config
-  [ -n "${proj-}" ] || [ -f "$conf" ] || exit 0
+  [ -n "${proj-}" ] || [ -f "$conf" ] || exit "$bad"
   [ -z "$absorbed" ] || { gdmsg; exit 1; }
   # no git call below runs against a git dir that points at another repository
   [ -z "$odd" ] || { gdmsg; exit 1; }
@@ -1437,9 +1466,9 @@ if [ -z "$tool" ]; then v=$(cfg version | tr -d '[:space:]'); v=${v#"${v%%[!0]*}
 base=$(cfg default_branch); base="${base:-main}"
 
 # doctor in a project: one line per check, ok or the problem and a fix in plain
-# text, and exit 1 on any problem. Reads only: no write, no fetch, no hook run.
+# text, and exit 1 on any problem, native Windows included (bad, set with the
+# install lines). Reads only: no write, no fetch, no hook run.
 if [ "$cmd" = doctor ]; then
-  bad=0
   # config, git and the hook files are the project's to write: no control character reaches the terminal
   say() { echo "$1: $(printf %s "$2" | tr -d '[:cntrl:]')"; case "$2" in ok*) ;; *) bad=1 ;; esac; }
   # the same test migrate uses: a changed: line

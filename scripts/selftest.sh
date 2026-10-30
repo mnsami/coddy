@@ -106,13 +106,15 @@ t 1 "no skill carries the injection syntax inside a line, which Claude Code woul
 t 0 "onboard names the AGENTS.md begin marker" grep -qF '<!-- coddy:begin -->' "$here/skills/onboard/SKILL.md"
 t 0 "onboard names the AGENTS.md end marker" grep -qF '<!-- coddy:end -->' "$here/skills/onboard/SKILL.md"
 # onboard is a resumable wizard: the agenda in order, answers saved under the
-# agent dir, a stop on an existing config that names /coddy:config, and no
-# install command for gh (the PR check runs it inside GitHub Actions alone),
-# while each package manager detect can name gets one for jq.
+# agent dir, a stop on native Windows and on an existing config that names
+# /coddy:config, and no install command for gh (the PR check runs it inside
+# GitHub Actions alone), while each package manager detect can name gets one
+# for jq.
 t 0 "onboard names the seven wizard steps in order" grep -qF 'checks → tracker → branch → verify → tiers → AGENTS.md → review' "$here/skills/onboard/SKILL.md"
 t 0 "onboard saves its answers under the agent dir" grep -qF '.claude/coddy/onboard-answers.json' "$here/skills/onboard/SKILL.md"
 t 0 "onboard backs up what it replaces under the agent dir" grep -qF '.claude/coddy/backup/' "$here/skills/onboard/SKILL.md"
 t 0 "onboard stops on an existing config and names /coddy:config" sh -c "grep -F 'config: present' '$here/skills/onboard/SKILL.md' | grep -qF '/coddy:config'"
+t 0 "onboard stops on native Windows, writing nothing" grep -qF '`os: windows` → stop and write nothing' "$here/skills/onboard/SKILL.md"
 t 1 "onboard carries no install command for gh" grep -qiE 'install (-y )?(gh|github\.cli)( |$|`)' "$here/skills/onboard/SKILL.md"
 # No hook is live during onboard, so its pre-approved shell is the core's
 # verbs alone: a wildcard in a rule is where rm's flags and operands go, and
@@ -352,7 +354,7 @@ rm -r .git/coddy/66
 # ${CLAUDE_PLUGIN_ROOT} substituted), with the variables a .claude/settings.json
 # env can put in its environment
 hook() { local v=$1 p=$2; shift 2; eval "set -- \"\$@\" $(jq -r --arg v "$v" --arg r "$here" 'first(.hooks[][].hooks[] | select(.args[-1]? == $v)) | [.command] + .args | map(split("${CLAUDE_PLUGIN_ROOT}") | join($r)) | @sh' "$here/hooks/hooks.json")"; printf %s "$p" | env CLAUDE_PROJECT_DIR="$repo" "$@"; }
-t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u FUNCNEST -u POSIXLY_CORRECT bash -p" jq -e '[.hooks[][].hooks[]] | all(.command == "/usr/bin/env" and .args[:10] == ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "bash", "-p"])' "$here/hooks/hooks.json"
+t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u FUNCNEST -u POSIXLY_CORRECT -u OSTYPE bash -p" jq -e '[.hooks[][].hooks[]] | all(.command == "/usr/bin/env" and .args[:12] == ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "OSTYPE", "bash", "-p"])' "$here/hooks/hooks.json"
 t 0 "hooks: no hook sets onFailure or timeout" jq -e '[.hooks[][].hooks[]] | all(has("onFailure") or has("timeout") | not)' "$here/hooks/hooks.json"
 # Each under the bash on PATH and under /bin/bash (3.2 on macOS) first on PATH.
 # GREP_OPTIONS and TMOUT are the core's to unset, not hooks.json's: they act
@@ -362,6 +364,8 @@ t 0 "hooks: no hook sets onFailure or timeout" jq -e '[.hooks[][].hooks[]] | all
 mkdir "$tmp/sysbash"; ln -s /bin/bash "$tmp/sysbash/bash"; echo 'exit 0' > "$tmp/exit0"
 for b in "" "$tmp/sysbash:"; do
   t 0 "hooks: guard${b:+ under /bin/bash} lets the agent dir through" hook guard "{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/.claude/x\"}}" PATH="$b$PATH"
+  # bash takes OSTYPE from the environment, so one an env sets would refuse every edit.
+  t 0 "hooks: OSTYPE=msys${b:+ under /bin/bash} leaves guard as it was" hook guard "{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/.claude/x\"}}" OSTYPE=msys PATH="$b$PATH"
   t 0 "hooks: snap${b:+ under /bin/bash} lets a command through" hook snap "$(payload true)" PATH="$b$PATH"
   for e in SHELLOPTS=noexec BASHOPTS=failglob FUNCNEST=1 POSIXLY_CORRECT=1 GREP_OPTIONS=-V TMOUT=0.000001 "BASH_ENV=$tmp/exit0" 'BASH_FUNC_jq%%=() { printf /tmp/elsewhere; }'; do
     w="$e${b:+ under /bin/bash}"
@@ -401,6 +405,9 @@ t 0 "warn: a branch delete is let through with the message" noted 'delete a remo
 # text, else 1, so no other refusal passes for this one
 raw() { printf %s "$1" | run guard; }
 saying() { local out r; out=$("${@:2}" 2>&1); r=$?; case "$out" in *"$1"*) return "$r" ;; esac; return 1; }
+# A cygpath that turns any path into one the guard allows: the Windows
+# refusal below never asks it, so it holds where Git Bash ships one.
+mkdir "$tmp/cyg"; printf '#!/bin/sh\necho "%s/.claude/n.md"\n' "$repo" > "$tmp/cyg/cygpath"; chmod +x "$tmp/cyg/cygpath"
 for v in block warn; do
   printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
   PATH="$tmp/badjq:$PATH" t 2 "guard: $v blocks the main checkout with a jq that fails" saying 'could not read the hook payload with jq' guard "$repo/README.md"
@@ -411,6 +418,26 @@ for v in block warn; do
   # relative one against the payload's cwd. Allowed and silent, or refused.
   t 0 "guard: $v reads a NotebookEdit's notebook_path" test -z "$(raw "{\"tool_input\":{\"notebook_path\":\"$repo/.claude/n.ipynb\"}}" 2>&1 || echo refused)"
   t 0 "guard: $v reads a relative path against the payload's cwd" test -z "$(raw "{\"cwd\":\"$repo/.claude\",\"tool_input\":{\"file_path\":\"n.md\"}}" 2>&1 || echo refused)"
+  # Native Windows paths, which nothing reads as Windows does (a drive
+  # letter, a drive-relative C:x, a backslash, a UNC or device path written
+  # with forward slashes), and a cwd that is not absolute, a non-string one
+  # included: refused, in warn mode too.
+  for p in '{"tool_input":{"file_path":"D:\\proj\\README.md"},"cwd":"D:\\proj"}' '{"tool_input":{"file_path":"README.md"},"cwd":"D:\\proj"}' '{"tool_input":{"file_path":"D:/proj/README.md"}}' '{"tool_input":{"file_path":"README.md"},"cwd":"D:/proj"}' '{"tool_input":{"file_path":"\\\\server\\share\\README.md"}}' "{\"tool_input\":{\"file_path\":\".claude\\\\n.md\"},\"cwd\":\"$repo\"}" \
+    '{"tool_input":{"file_path":"//localhost/C$/proj/README.md"}}' '{"tool_input":{"file_path":"//./C:/proj/README.md"}}' '{"tool_input":{"file_path":"//?/C:/proj/README.md"}}' '{"tool_input":{"file_path":"README.md"},"cwd":"//./C:/proj"}' '{"tool_input":{"file_path":"C:README.md"}}'; do
+    PATH="$tmp/cyg:$PATH" t 2 "guard: $v blocks a Windows path: $p" saying 'refuses a Windows path' raw "$p"
+  done
+  # Where bash itself runs on native Windows ($OSTYPE msys or cygwin), every
+  # edit is refused, in warn mode too: a claimed worktree's own, which the
+  # guard allows elsewhere, included.
+  mkdir -p .git/coddy/88 && echo "sess-a $$" > .git/coddy/88/owner
+  t 0 "guard: $v allows a claimed worktree outside native Windows" test -z "$(guard "$repo/.worktrees/88/a.txt" 2>&1 || echo refused)"
+  for o in msys cygwin; do
+    OSTYPE=$o t 2 "guard: $v blocks every edit under OSTYPE=$o" saying 'refuses every edit on native Windows' guard "$repo/.worktrees/88/a.txt"
+  done
+  rm -r .git/coddy/88
+  for p in '{"cwd":{"a":1},"tool_input":{"file_path":"x"}}' '{"cwd":["/x"],"tool_input":{"file_path":"x"}}' '{"cwd":"proj","tool_input":{"file_path":"x"}}'; do
+    t 2 "guard: $v blocks a cwd that is not absolute: $p" saying 'refuses a cwd that is not an absolute path' raw "$p"
+  done
 done
 for v in block wran; do
   printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml

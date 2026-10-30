@@ -14,6 +14,8 @@ Detected shows a `bash` command rather than its output → this host does not in
 
 A `git_dir:` line in Detected → stop and show that line as it is; write nothing.
 
+`os: windows` → stop and write nothing: say coddy runs on macOS, Linux and WSL, not on native Windows (Git Bash, MSYS2, Cygwin).
+
 `config: present` or `legacy_config: present` → stop and write nothing: the project is onboarded already (`.coddy.yml`, or `.claude/coddy.yml` from an earlier version); run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" migrate` (read-only): a `changed:` line → it is behind: bring it up to date with `/coddy:migrate`; non-zero → say what it printed; else a setting changes with `/coddy:config`; starting over is deleting the config, and `.claude/coddy/onboard-answers.json` when it is there (left behind, it resumes every saved step as answered), by hand, then `/coddy:onboard` again.
 
 ## Config schema: `.coddy.yml`
