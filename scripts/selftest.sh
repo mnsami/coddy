@@ -457,7 +457,20 @@ for v in block warn; do
   for p in .claude/settings.json .worktrees/88/one .worktrees/88/sl .worktrees/88/.gitignore .worktrees/88/.github/x .worktrees/88/.jjconfig.toml; do
     t 0 "guard: $v allows $p" test -z "$(guard "$repo/$p" 2>&1 || echo refused)"
   done
-  rm -r .git/coddy/88 .worktrees .claude/up .claude/g
+  # Paths the kernel resolves and a walk a component at a time cannot:
+  # macOS's /.vol/<dev>/<inode> (a directory's, held by where the edit
+  # lands, or a file's, with no name to check) and Linux's /proc/self/root.
+  # Refused, in warn mode too.
+  mkdir -p src .worktrees/77; d=$(stat -f %d src 2>/dev/null)
+  if [ -d /.vol ] && [ "/.vol/$d/$(stat -f %i src)" -ef src ]; then
+    t 2 "guard: $v blocks a main-checkout file through /.vol" saying 'through /.vol' guard "/.vol/$d/$(stat -f %i src)/m.c"
+    t 2 "guard: $v blocks an unclaimed worktree's file through /.vol" saying 'through /.vol' guard "/.vol/$d/$(stat -f %i .worktrees/77)/a.txt"
+    for p in README.md .git/config; do t 2 "guard: $v blocks $p by its inode in /.vol" saying 'through /.vol' guard "/.vol/$d/$(stat -f %i $p)"; done
+  else echo "skip guard through /.vol: no /.vol here (macOS only)"; fi
+  if [ "/proc/self/root$repo" -ef "$repo" ]; then
+    t 2 "guard: $v blocks a main-checkout file through /proc/self/root" saying 'through /.vol, /proc' guard "/proc/self/root$repo/README.md"
+  else echo "skip guard through /proc/self/root: no /proc here (Linux only)"; fi
+  rm -r .git/coddy/88 .worktrees .claude/up .claude/g src
   for p in '{"cwd":{"a":1},"tool_input":{"file_path":"x"}}' '{"cwd":["/x"],"tool_input":{"file_path":"x"}}' '{"cwd":"proj","tool_input":{"file_path":"x"}}'; do
     t 2 "guard: $v blocks a cwd that is not absolute: $p" saying 'refuses a cwd that is not an absolute path' raw "$p"
   done

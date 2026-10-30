@@ -570,14 +570,24 @@ if [ "${1-}" = guard ]; then
   # project, is not the project's.
   vcs() { case "$1" in "$2"/*) case "/${1#"$2"/}/" in */.[Gg][Ii][Tt]/*|*/.[Jj][Jj]/*) return 0 ;; esac ;; esac; return 1; }
   p=$(inroot "$at") && p=${p%x} || die "$nf"
+  # Not $at: abspath collapses a trailing /. or /.. by name. A walk that
+  # fails here is refused below, after warnmode, like any other hold.
+  g=$(phys "$f" new) && g=$(inroot "${g%x}") && g=${g%x} || g=""
+  # Paths the walks read in this hook, not in the tool that writes: macOS's
+  # /.vol names a file by its inode, with no name the checks here can read
+  # (a .git's config included), and Linux's /proc/self, /proc/thread-self and
+  # /dev/fd name what the process opening them has (its cwd, its fds), as
+  # macOS's /dev/fd does. Refused in either mode, by any reading: a link to
+  # /proc/self leaves the walk in /proc/<pid>, the pid its readlink's.
+  for x in "$f" "$nm" "$at" "$g"; do case "$x" in /.vol|/.vol/*|/proc|/proc/*|/dev/fd|/dev/fd/*) die "the edit guard refuses $f in either guard mode: it is reached through /.vol, /proc or /dev/fd, which name a file by its inode or by the process that opens it, so where the edit lands cannot be read." ;; esac; done
   ! vcs "$f" "$root" && ! vcs "$p" "$pr" || die "the edit guard refuses $f in either guard mode: it lies in a .git or .jj below the project root, a repository's own files, which git or jj changes, never a file edit."
   # A hard link is the same file under another name, maybe in the main
   # checkout or another worktree, so a write through it lands there too:
   # refused in either mode, a find that fails included. A .coddy.yml reached
   # so was asked about above.
   if [ -e "$at" ] && [ ! -d "$at" ]; then
-    p=$(find "$at" -prune -links +1 2>/dev/null) || die "the edit guard could not count the links of $f, so it refuses the edit in either guard mode."
-    [ -z "$p" ] || die "the edit guard refuses $f in either guard mode: it is a hard link, one file with more than one name, so a write there changes it under every other name too, which may lie in the main checkout or another worktree."
+    l=$(find "$at" -prune -links +1 2>/dev/null) || die "the edit guard could not count the links of $f, so it refuses the edit in either guard mode."
+    [ -z "$l" ] || die "the edit guard refuses $f in either guard mode: it is a hard link, one file with more than one name, so a write there changes it under every other name too, which may lie in the main checkout or another worktree."
   fi
   warnmode edit
   case "$f" in */../*) die "refusing a path containing '..': $f" ;; esac
@@ -614,8 +624,8 @@ if [ "${1-}" = guard ]; then
       die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" && echo running || echo "not running")). Run /coddy:start $issue to take it over, or work on your own issue."
     # The owner's edit from a new session id (/clear) or process (--resume)
     # moves the lock along, as its re-claim would: a pid left behind reads
-    # as a dead owner to every other session. Only once both readings below
-    # allow the edit, so $move names the issue whose owner line moves.
+    # as a dead owner to every other session. Only once every reading below
+    # allows the edit, so $move names the issue whose owner line moves.
     [ -z "$sid" ] || [ -z "$me" ] || [ "$own" = "$(myline)" ] || move=$issue
   }
   # Claude Code hands the hooks the physical project dir, while a path may
@@ -623,17 +633,20 @@ if [ "${1-}" = guard ]; then
   # as given against the root, then spelled physically (phys, new for a
   # directory not made yet) against the physical root, found by identity
   # (inroot), and either may refuse it; the second only when either spelling
-  # differs, since it would repeat the first. A path phys cannot follow here
-  # is refused, as given it may land anywhere, and under guard: warn is
-  # advice like any other hold (only the .coddy.yml walk above is refused in
-  # both modes).
+  # differs, since it would repeat the first. Then where the edit lands ($at
+  # against the physical root, $p), which abspath finds by absolute lookup
+  # where phys cannot walk a component (a directory's inode under macOS's
+  # /.vol), unless it repeats a spelling held already. A path phys cannot
+  # follow here is refused, as given it may land anywhere, and under guard:
+  # warn is advice like any other hold (only the .coddy.yml walk above is
+  # refused in both modes).
   held "$f" "$root"; m=$move
-  # Not $at: abspath collapses a trailing /. or /.. by name.
-  g=$(phys "$f" new) && g=$(inroot "${g%x}") || die "$nf"
-  g=${g%x}
-  [ "$g" = "$f" ] && [ "$pr" = "$root" ] || held "$g" "$pr"
+  [ -n "$g" ] || die "$nf"
+  [ "$g" = "$f" ] && [ "$pr" = "$root" ] || held "$g" "$pr"; n=$move
+  [ "$p" = "$g" ] || { [ "$p" = "$f" ] && [ "$pr" = "$root" ]; } || held "$p" "$pr"
   [ -z "$m" ] || myline > "$root/.git/coddy/$m/owner" 2>/dev/null
-  [ -z "$move" ] || [ "$move" = "$m" ] || myline > "$root/.git/coddy/$move/owner" 2>/dev/null
+  [ -z "$n" ] || [ "$n" = "$m" ] || myline > "$root/.git/coddy/$n/owner" 2>/dev/null
+  [ -z "$move" ] || [ "$move" = "$m" ] || [ "$move" = "$n" ] || myline > "$root/.git/coddy/$move/owner" 2>/dev/null
   exit 0
 fi
 # Where shell command $1, run in directory $2, would make a worktree with git
