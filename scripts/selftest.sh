@@ -175,7 +175,7 @@ leg() {
   t 0 "$tool: guard allows a Claude Code worktree named for the claimed issue" guard "$repo/.claude/worktrees/$n/a.txt"
   t 0 "$tool: and one in any case of worktrees/" guard "$repo/.claude/WORKTREES/$n/a.txt"
   # The worktree's own pointer to the repository: git's .git file, jj's .jj/repo.
-  for p in .git .jj/repo; do t 2 "$tool: guard blocks the claimed worktree's $p" guard "$repo/.worktrees/$n/$p"; done
+  for p in .git .jj/repo; do t 2 "$tool: guard blocks the claimed worktree's $p" saying 'a .git or .jj below the project root' guard "$repo/.worktrees/$n/$p"; done
   t 0 "$tool: state is empty before any write" test -z "$(run state "$n" 2>&1)"
   t 0 "$tool: state sets keys" run state "$n" phase=implement round=0
   t 0 "$tool: state prints them" says "^phase=implement$" run state "$n"
@@ -457,21 +457,26 @@ for v in block warn; do
   for p in .claude/settings.json .worktrees/88/one .worktrees/88/sl .worktrees/88/.gitignore .worktrees/88/.github/x .worktrees/88/.jjconfig.toml; do
     t 0 "guard: $v allows $p" test -z "$(guard "$repo/$p" 2>&1 || echo refused)"
   done
+  # A .. after a missing directory, which the walk of the path as given
+  # cannot follow while its collapsed spelling lands on an allowed file:
+  # refused before the mode is read, in warn mode too.
+  t 2 "guard: $v blocks a .. after a missing directory" saying 'could not follow' guard "$repo/.worktrees/88/newdir/../one"
   # Paths the kernel resolves and a walk a component at a time cannot:
   # macOS's /.vol/<dev>/<inode> (a directory's, held by where the edit
   # lands, or a file's, with no name to check) and Linux's /proc/self/root.
   # Refused, in warn mode too.
-  mkdir -p src .worktrees/77; d=$(stat -f %d src 2>/dev/null)
-  if [ -d /.vol ] && [ "/.vol/$d/$(stat -f %i src)" -ef src ]; then
-    t 2 "guard: $v blocks a main-checkout file through /.vol" saying 'through /.vol' guard "/.vol/$d/$(stat -f %i src)/m.c"
-    t 2 "guard: $v blocks an unclaimed worktree's file through /.vol" saying 'through /.vol' guard "/.vol/$d/$(stat -f %i .worktrees/77)/a.txt"
-    for p in README.md .git/config; do t 2 "guard: $v blocks $p by its inode in /.vol" saying 'through /.vol' guard "/.vol/$d/$(stat -f %i $p)"; done
+  # BSD stat by its path: a GNU stat first on PATH reads -f otherwise.
+  mkdir -p src .worktrees/77; d=$(/usr/bin/stat -f %d src 2>/dev/null)
+  if [ -d /.vol ] && [ "/.vol/$d/$(/usr/bin/stat -f %i src)" -ef src ]; then
+    t 2 "guard: $v blocks a main-checkout file through /.vol" saying 'through /.vol' guard "/.vol/$d/$(/usr/bin/stat -f %i src)/m.c"
+    t 2 "guard: $v blocks an unclaimed worktree's file through /.vol" saying 'through /.vol' guard "/.vol/$d/$(/usr/bin/stat -f %i .worktrees/77)/a.txt"
+    for p in README.md .git/config; do t 2 "guard: $v blocks $p by its inode in /.vol" saying 'through /.vol' guard "/.vol/$d/$(/usr/bin/stat -f %i $p)"; done
   else echo "skip guard through /.vol: no /.vol here (macOS only)"; fi
   # macOS strips a leading /.nofollow/ or /.resolve/<flags>/ before it
   # resolves the rest, while the walk keeps it: refused like /.vol itself.
   for x in /.nofollow /.resolve/1; do
-    if [ "$x/.vol/$d/$(stat -f %i README.md 2>/dev/null)" -ef README.md ]; then
-      for p in README.md .git/config; do t 2 "guard: $v blocks $p by its inode in $x/.vol" saying 'through /.vol' guard "$x/.vol/$d/$(stat -f %i $p)"; done
+    if [ "$x/.vol/$d/$(/usr/bin/stat -f %i README.md 2>/dev/null)" -ef README.md ]; then
+      for p in README.md .git/config; do t 2 "guard: $v blocks $p by its inode in $x/.vol" saying 'through /.vol' guard "$x/.vol/$d/$(/usr/bin/stat -f %i $p)"; done
     else echo "skip guard through $x/.vol: no $x here (macOS only)"; fi
   done
   # The walk never steps onto /dev/fd, compared by identity: a case-folding

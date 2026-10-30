@@ -33,7 +33,7 @@ branch: "{type}/{issue}-{slug}"
 commit: "{type}({issue}): {summary}"
 verify: "make check"         # must exit 0 before /coddy:ship
 roadmap: docs/ROADMAP.md     # optional; /coddy:next reads it
-guard: block                 # optional; block (default) | warn. warn lets an edit outside a claimed worktree, or inside one another session claimed, through with a notice to Claude
+guard: block                 # optional; block (default) | warn. warn lets an edit outside a claimed worktree, or inside one another session claimed, through with a notice to Claude; both modes refuse .git/.jj paths, hard links and Windows paths
 tiers:                       # model per difficulty, per agent; start picks one per issue
   claude: {low: haiku, medium: sonnet, high: opus}
 review_block: high           # optional; critical | high | medium | low (default high); findings at or above it trigger another fix round

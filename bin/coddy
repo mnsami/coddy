@@ -585,13 +585,12 @@ if [ "${1-}" = guard ]; then
   g=$(phys "$f" new) && g=$(inroot "${g%x}") && g=${g%x} || die "$nf"
   # Paths the walks read in this hook, not in the tool that writes: macOS's
   # /.vol names a file by its inode, with no name the checks here can read
-  # (a .git's config included), and Linux's /proc/self, /proc/thread-self and
-  # /dev/fd name what the process opening them has (its cwd, its fds), as
-  # macOS's /dev/fd does; and macOS strips a leading /.nofollow/ or
+  # (a .git's config included), and macOS strips a leading /.nofollow/ or
   # /.resolve/<flags>/ before it resolves the rest, while each reading here
   # keeps it (/.nofollow is an empty directory, so pwd -P keeps it too).
-  # Refused in either mode, by each reading.
-  for x in "$f" "$nm" "$at" "$g"; do case "$x" in /.vol|/.vol/*|/proc|/proc/*|/dev/fd|/dev/fd/*|/.nofollow|/.nofollow/*|/.resolve|/.resolve/*) die "the edit guard refuses $f in either guard mode: it is reached through /.vol, /proc, /dev/fd, /.nofollow or /.resolve, which name a file by its inode or by the process that opens it, or which macOS strips before it resolves the rest, so where the edit lands cannot be read." ;; esac; done
+  # Refused in either mode, by each reading. /proc and /dev/fd need no
+  # pattern: both walks refuse a step onto either, by identity.
+  for x in "$f" "$nm" "$at" "$g"; do case "$x" in /.vol|/.vol/*|/.nofollow|/.nofollow/*|/.resolve|/.resolve/*) die "the edit guard refuses $f in either guard mode: it is reached through /.vol, /.nofollow or /.resolve, which name a file by its inode, or which macOS strips before it resolves the rest, so where the edit lands cannot be read." ;; esac; done
   ! vcs "$f" "$root" && ! vcs "$p" "$pr" || die "the edit guard refuses $f in either guard mode: it lies in a .git or .jj below the project root, a repository's own files, which git or jj changes, never a file edit."
   # A hard link is the same file under another name, maybe in the main
   # checkout or another worktree, so a write through it lands there too:
