@@ -415,6 +415,8 @@ saying() { local out r; out=$("${@:2}" 2>&1); r=$?; case "$out" in *"$1"*) retur
 # A cygpath that turns any path into one the guard allows: the Windows
 # refusal below never asks it, so it holds where Git Bash ships one.
 mkdir "$tmp/cyg"; printf '#!/bin/sh\necho "%s/.claude/n.md"\n' "$repo" > "$tmp/cyg/cygpath"; chmod +x "$tmp/cyg/cygpath"
+# A find that fails whatever it is asked: on PATH first when a case asks.
+mkdir "$tmp/badfind"; printf '#!/bin/sh\nexit 1\n' > "$tmp/badfind/find"; chmod +x "$tmp/badfind/find"
 for v in block warn; do
   printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
   PATH="$tmp/badjq:$PATH" t 2 "guard: $v blocks the main checkout with a jq that fails" saying 'could not read the hook payload with jq' guard "$repo/README.md"
@@ -451,6 +453,7 @@ for v in block warn; do
     t 2 "guard: $v blocks a repository's own file: $p" saying 'a .git or .jj below the project root' guard "$repo/$p"
   done
   t 2 "guard: $v blocks a hard link in a claimed worktree to a main-checkout file" saying 'is a hard link' guard "$repo/.worktrees/88/hl"
+  PATH="$tmp/badfind:$PATH" t 2 "guard: $v blocks an existing file whose links a find that fails cannot count" saying 'could not count the links' guard "$repo/.worktrees/88/one"
   for p in .claude/settings.json .worktrees/88/one .worktrees/88/sl .worktrees/88/.gitignore .worktrees/88/.github/x .worktrees/88/.jjconfig.toml; do
     t 0 "guard: $v allows $p" test -z "$(guard "$repo/$p" 2>&1 || echo refused)"
   done
