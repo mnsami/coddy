@@ -141,6 +141,7 @@ leg() {
   t 2 "$tool: guard blocks another session's edit in that worktree" guard "$repo/.worktrees/$n/a.txt" sess-b
   t 0 "$tool: that rejection names the issue and the owner" says "issue $n belongs to session sess-a (pid $$, running)" guard "$repo/.worktrees/$n/a.txt" sess-b
   t 2 "$tool: a Claude Code worktree is held to the same owner check" guard "$repo/.claude/worktrees/$n/a.txt" sess-b
+  t 2 "$tool: and so is one in any case of worktrees/" guard "$repo/.claude/WorkTrees/$n/a.txt" sess-b
   t 0 "$tool: a hook payload without session_id is not held to it" guard "$repo/.worktrees/$n/a.txt" ""
   t 0 "$tool: guard allows the owner's process under a new session id (/clear)" guard "$repo/.worktrees/$n/a.txt" sess-b $$
   t 0 "$tool: and moves the lock to that session id" holds "sess-b $$" ".git/coddy/$n/owner"
@@ -172,6 +173,9 @@ leg() {
   t 0 "$tool: the lock names the taker" holds "sess-a $$" ".git/coddy/$n/owner"
   t 0 "$tool: guard allows the worktree after the claim" guard "$repo/.worktrees/$n/a.txt"
   t 0 "$tool: guard allows a Claude Code worktree named for the claimed issue" guard "$repo/.claude/worktrees/$n/a.txt"
+  t 0 "$tool: and one in any case of worktrees/" guard "$repo/.claude/WORKTREES/$n/a.txt"
+  # The worktree's own pointer to the repository: git's .git file, jj's .jj/repo.
+  for p in .git .jj/repo; do t 2 "$tool: guard blocks the claimed worktree's $p" saying 'a .git or .jj below the project root' guard "$repo/.worktrees/$n/$p"; done
   t 0 "$tool: state is empty before any write" test -z "$(run state "$n" 2>&1)"
   t 0 "$tool: state sets keys" run state "$n" phase=implement round=0
   t 0 "$tool: state prints them" says "^phase=implement$" run state "$n"
@@ -339,7 +343,10 @@ leg() {
 printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml
 t 2 "guard blocks the main checkout" guard "$repo/README.md"
 t 0 "guard allows .claude/" guard "$repo/.claude/coddy.yml"
+t 0 "guard allows .claude/settings.json" guard "$repo/.claude/settings.json"
 t 2 "guard blocks a Claude Code worktree under .claude/ without a claim" guard "$repo/.claude/worktrees/55/a.txt"
+t 2 "guard blocks one in any case of worktrees/" guard "$repo/.claude/WORKTREES/55/a.txt"
+t 0 "guard: and holds it to that issue's claim" says 'issue 55 is not In Progress' guard "$repo/.claude/WORKTREES/55/a.txt"
 t 0 "guard ignores paths outside the project" guard "$tmp/elsewhere.txt"
 # Claude Code hands the hooks the physical project dir; a path through a link to it is the project's.
 ln -s "$repo" "$tmp/alias"
@@ -408,6 +415,8 @@ saying() { local out r; out=$("${@:2}" 2>&1); r=$?; case "$out" in *"$1"*) retur
 # A cygpath that turns any path into one the guard allows: the Windows
 # refusal below never asks it, so it holds where Git Bash ships one.
 mkdir "$tmp/cyg"; printf '#!/bin/sh\necho "%s/.claude/n.md"\n' "$repo" > "$tmp/cyg/cygpath"; chmod +x "$tmp/cyg/cygpath"
+# A find that fails whatever it is asked: on PATH first when a case asks.
+mkdir "$tmp/badfind"; printf '#!/bin/sh\nexit 1\n' > "$tmp/badfind/find"; chmod +x "$tmp/badfind/find"
 for v in block warn; do
   printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
   PATH="$tmp/badjq:$PATH" t 2 "guard: $v blocks the main checkout with a jq that fails" saying 'could not read the hook payload with jq' guard "$repo/README.md"
@@ -434,7 +443,81 @@ for v in block warn; do
   for o in msys cygwin; do
     OSTYPE=$o t 2 "guard: $v blocks every edit under OSTYPE=$o" saying 'refuses every edit on native Windows' guard "$repo/.worktrees/88/a.txt"
   done
-  rm -r .git/coddy/88
+  # A repository's own files, a .git or .jj below the root in any case, as
+  # given or reached through a link, and a hard link, whose write changes
+  # every other name of the file: refused, in warn mode too, a claimed
+  # worktree's and the agent dir's included. Beside each, paths that pass.
+  mkdir -p .worktrees/88; echo x > .worktrees/88/one; ln -s one .worktrees/88/sl; ln README.md .worktrees/88/hl
+  ln -s .. .claude/up; ln -s ../.git .claude/g
+  for p in .claude/up/.git/config .claude/g/config .git/config .GIT/config .worktrees/88/.git .worktrees/88/.Git .jj/repo .worktrees/88/.jj/repo .worktrees/88/.JJ/repo; do
+    t 2 "guard: $v blocks a repository's own file: $p" saying 'a .git or .jj below the project root' guard "$repo/$p"
+  done
+  t 2 "guard: $v blocks a hard link in a claimed worktree to a main-checkout file" saying 'is a hard link' guard "$repo/.worktrees/88/hl"
+  PATH="$tmp/badfind:$PATH" t 2 "guard: $v blocks an existing file whose links a find that fails cannot count" saying 'could not count the links' guard "$repo/.worktrees/88/one"
+  for p in .claude/settings.json .worktrees/88/one .worktrees/88/sl .worktrees/88/.gitignore .worktrees/88/.github/x .worktrees/88/.jjconfig.toml; do
+    t 0 "guard: $v allows $p" test -z "$(guard "$repo/$p" 2>&1 || echo refused)"
+  done
+  # A .. after a missing directory, which the walk of the path as given
+  # cannot follow while its collapsed spelling lands on an allowed file:
+  # refused before the mode is read, in warn mode too.
+  t 2 "guard: $v blocks a .. after a missing directory" saying 'could not follow' guard "$repo/.worktrees/88/newdir/../one"
+  # Paths the kernel resolves and a walk a component at a time cannot:
+  # macOS's /.vol/<dev>/<inode> (a directory's, held by where the edit
+  # lands, or a file's, with no name to check) and Linux's /proc/self/root.
+  # Refused, in warn mode too.
+  # BSD stat by its path: a GNU stat first on PATH reads -f otherwise.
+  mkdir -p src .worktrees/77; d=$(/usr/bin/stat -f %d src 2>/dev/null)
+  if [ -d /.vol ] && [ "/.vol/$d/$(/usr/bin/stat -f %i src)" -ef src ]; then
+    t 2 "guard: $v blocks a main-checkout file through /.vol" saying 'through /.vol' guard "/.vol/$d/$(/usr/bin/stat -f %i src)/m.c"
+    t 2 "guard: $v blocks an unclaimed worktree's file through /.vol" saying 'through /.vol' guard "/.vol/$d/$(/usr/bin/stat -f %i .worktrees/77)/a.txt"
+    for p in README.md .git/config; do t 2 "guard: $v blocks $p by its inode in /.vol" saying 'through /.vol' guard "/.vol/$d/$(/usr/bin/stat -f %i $p)"; done
+  else echo "skip guard through /.vol: no /.vol here (macOS only)"; fi
+  # macOS strips a leading /.nofollow/ or /.resolve/<flags>/ before it
+  # resolves the rest, while the walk keeps it: refused like /.vol itself.
+  for x in /.nofollow /.resolve/1; do
+    if [ "$x/.vol/$d/$(/usr/bin/stat -f %i README.md 2>/dev/null)" -ef README.md ]; then
+      for p in README.md .git/config; do t 2 "guard: $v blocks $p by its inode in $x/.vol" saying 'through /.vol' guard "$x/.vol/$d/$(/usr/bin/stat -f %i $p)"; done
+    else echo "skip guard through $x/.vol: no $x here (macOS only)"; fi
+  done
+  # The walk never steps onto /dev/fd, compared by identity: a case-folding
+  # disk reaches it as /DEV/fd too.
+  if [ /DEV/fd -ef /dev/fd ]; then t 2 "guard: $v blocks /DEV/fd/1, /dev/fd spelled in another case" saying 'could not follow' guard /DEV/fd/1
+  else echo "skip guard through /DEV/fd: /dev is not reached in another case here"; fi
+  if [ "/proc/self/root$repo" -ef "$repo" ]; then
+    t 2 "guard: $v blocks a main-checkout file through /proc/self/root" saying 'could not follow' guard "/proc/self/root$repo/README.md"
+    # Magic links, whose text names another file than the kernel reaches: a
+    # link to /proc/<pid>/fd/<n> holding a main-checkout file open under a
+    # name since removed, and to /proc/<pid>/cwd in another mount namespace,
+    # where the main checkout is bound at a path empty here. Refused, in
+    # warn mode too: the walk never steps onto /proc.
+    ln README.md .worktrees/88/dl; exec 7<.worktrees/88/dl; rm .worktrees/88/dl; ln -s "/proc/$$/fd/7" .worktrees/88/fd
+    t 2 "guard: $v blocks a link to a main-checkout file held open in /proc/<pid>/fd under a removed name" saying 'could not follow' guard "$repo/.worktrees/88/fd"
+    exec 7<&-
+    if unshare -Urm true 2>/dev/null; then
+      mkdir "$tmp/m"; unshare -Urm sh -c 'mount --bind "$1" "$2" && cd "$2" && exec sleep 60' sh "$repo" "$tmp/m" & k=$!
+      for i in 1 2 3 4 5 6 7 8 9 10; do [ "$(readlink "/proc/$k/cwd")" != "$tmp/m" ] || break; sleep 0.2; done
+      ln -s "/proc/$k/cwd" .worktrees/88/cw; ln -s "/proc/$k/cwd/.git" .worktrees/88/gg
+      for p in cw/README.md cw/new.c gg/config; do t 2 "guard: $v blocks .worktrees/88/$p through /proc/<pid>/cwd in another mount namespace" saying 'could not follow' guard "$repo/.worktrees/88/$p"; done
+      kill "$k"; wait "$k" 2>/dev/null; rmdir "$tmp/m"
+      # And where the link's text names the same directory here, with mounts
+      # below it in the other namespace alone: README.md and .git/config
+      # bound over files, the main checkout over a directory, and README.md
+      # over a file in the owner's own worktree, the second process's cwd.
+      # Reached through the magic link, a relative chain to it, a dangling
+      # link below the directory mount, and a .. the Write tool collapses
+      # by name.
+      mkdir -p "$tmp/n/d" "$tmp/y/z" .worktrees/88/sub; echo decoy > "$tmp/n/f"; echo decoy > "$tmp/n/c"; echo decoy > .worktrees/88/sub/x.c
+      unshare -Urm sh -c 'mount --bind "$1/README.md" "$2/f" && mount --bind "$1/.git/config" "$2/c" && mount --bind "$1" "$2/d" && cd "$2" && exec sleep 60' sh "$repo" "$tmp/n" & k=$!
+      unshare -Urm sh -c 'mount --bind "$1/README.md" "$2/sub/x.c" && cd "$2" && exec sleep 60' sh "$repo" "$repo/.worktrees/88" & w=$!
+      for i in 1 2 3 4 5 6 7 8 9 10; do [ "$(readlink "/proc/$k/cwd")" != "$tmp/n" ] || [ "$(readlink "/proc/$w/cwd")" != "$repo/.worktrees/88" ] || break; sleep 0.2; done
+      up=$(cd .worktrees/88 && pwd -P | sed 's#[^/][^/]*#..#g; s#^/##')
+      ln -s "/proc/$k/cwd" .worktrees/88/cn; ln -s "/proc/$k/root" .worktrees/88/rt; ln -s "$up/proc/$k/cwd" .worktrees/88/rel
+      ln -s "/proc/$k/cwd/d/new.c" .worktrees/88/dg; ln -s "/proc/$w/cwd" .worktrees/88/cs; ln -s "$tmp/y/z" .worktrees/88/x
+      for p in cn/f cn/c "rt$tmp/n/f" rel/f dg cs/sub/x.c x/../cn/f; do t 2 "guard: $v blocks .worktrees/88/$p through /proc/<pid> into mounts in another namespace below a directory the same here" saying 'could not follow' guard "$repo/.worktrees/88/$p"; done
+      kill "$k" "$w"; wait "$k" "$w" 2>/dev/null; rm -r "$tmp/n" "$tmp/y"
+    else echo "skip guard through /proc/<pid>/cwd in another mount namespace: unshare -Urm is not allowed here"; fi
+  else echo "skip guard through /proc/self/root: no /proc here (Linux only)"; fi
+  rm -r .git/coddy/88 .worktrees .claude/up .claude/g src
   for p in '{"cwd":{"a":1},"tool_input":{"file_path":"x"}}' '{"cwd":["/x"],"tool_input":{"file_path":"x"}}' '{"cwd":"proj","tool_input":{"file_path":"x"}}'; do
     t 2 "guard: $v blocks a cwd that is not absolute: $p" saying 'refuses a cwd that is not an absolute path' raw "$p"
   done

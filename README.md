@@ -146,9 +146,11 @@ project; the fourth is a pair of git hooks that `/coddy:start` installs.
 **Edit guard.** A hook rejects every file edit Claude attempts outside
 `.worktrees/<issue>/`. Inside, it rejects edits until `/coddy:start` has
 claimed that issue. `.claude/` stays editable, except Claude Code's own
-worktrees under it. An edit of `.coddy.yml` asks you first. The hook needs
-`jq`, and blocks every edit without a working one, or whose path it cannot
-read.
+worktrees under it. An edit of `.coddy.yml` asks you first. An edit inside
+a `.git` or `.jj` in the project, or of a hard-linked file other than
+`.coddy.yml` (pnpm's store links in `node_modules` included), is always
+refused. The hook needs `jq`, and blocks every edit without a working one,
+or whose path it cannot read.
 
 A claim belongs to the session that made it. Only that session may edit or
 push the worktree. Another session starting the same issue is refused and

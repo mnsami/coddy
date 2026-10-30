@@ -422,13 +422,18 @@ if [ "${1-}" = status ]; then
   exit 0
 fi
 
-# $1 made absolute against $2, . and .. collapsed by name as cd does, and its
-# longest existing directory spelled physically, as git and jj record it.
-abspath() {
-  local p=$1 o="" c t=""
+# $1 made absolute against $2, . and .. collapsed by name as cd does.
+byname() {
+  local p=$1 o="" c
   case "$p" in /*) ;; *) p="$2/$p" ;; esac
   while [ -n "$p" ]; do p=${p#/}; c=${p%%/*}; p=${p#"$c"}; case "$c" in ''|.) ;; ..) o=${o%/*} ;; *) o="$o/$c" ;; esac; done
-  p=${o:-/}
+  echo "${o:-/}"
+}
+# byname's path with its longest existing directory spelled physically, as
+# git and jj record it.
+abspath() {
+  local p t=""
+  p=$(byname "$@" && printf x) && p=${p%?x} || return 1
   while [ ! -d "$p" ]; do t="/${p##*/}$t"; p=${p%/*}; p=${p:-/}; done
   p=$(cd "$p" 2>/dev/null && pwd -P && printf x) || return 1; p=${p%?x}
   p="${p%/}$t"; echo "${p:-/}"
@@ -502,6 +507,10 @@ if [ "${1-}" = guard ]; then
   # a directory does not exist, or, with $2 new, joins the rest to it by
   # name, as the tool makes it, with no test on disk (nothing is there past
   # a missing directory); and fails on any step that does: a cd, a readlink,
+  # a step onto /proc or /dev/fd (by identity, so in any spelling: a link's
+  # text, absolute or relative, is walked a component at a time too), whose
+  # magic links the kernel follows to what their text does not name (a
+  # removed name of an open file, a directory in another mount namespace),
   # a 41st link (40, as far as a kernel follows), once $budget seconds have
   # passed (each cd costs time in the depth), a .. in that rest (nothing to
   # climb from), and a joined tail past 4096 bytes (the join costs time
@@ -513,6 +522,7 @@ if [ "${1-}" = guard ]; then
     while [ "$k" -lt "${#a[@]}" ]; do
       [ "$SECONDS" -lt "$budget" ] || exit 1
       c=${a[k]}; k=$((k+1))
+      [ ! "./$c" -ef /proc ] && [ ! "./$c" -ef /dev/fd ] || exit 1
       if [ -n "$c" ] && [ -L "./$c" ]; then
         [ "$i" -lt 40 ] || exit 1; i=$((i+1))
         t=$(rdl "./$c") || exit 1; t=${t%x}
@@ -540,7 +550,7 @@ if [ "${1-}" = guard ]; then
   # symlink or hard link from a worktree or the agent dir (-ef: the same
   # file); any case of its name, as a case-folding disk reads it.
   # The Write tool collapses $f's own . and .. by name before it writes, so
-  # they are collapsed here first (abspath, $nm), and the links then followed;
+  # they are collapsed here first (byname, $nm), and the links then followed;
   # the hard-link test stats $nm too, never a link's .. the write does not
   # take. A path the walk cannot follow is refused here, before warnmode, as
   # the payload is: let through, a write could land on a .coddy.yml not made
@@ -548,14 +558,49 @@ if [ "${1-}" = guard ]; then
   # The root's directory is compared by identity (-ef), not by name: macOS
   # reaches it through the /System/Volumes/Data firmlink too, which bash's
   # pwd -P keeps, as it would a bind mount.
-  nf="the edit guard could not follow $f to where the edit lands (a cd or readlink failed, more than 40 links, a path past 4096 bytes, a .. after a missing directory, or more than $budget seconds)."
-  nm=$(abspath "$f" && printf x) && nm=${nm%?x} && at=$(phys "$nm" new) && at=${at%x} || die "$nf"
-  warnmode edit
+  nf="the edit guard could not follow $f to where the edit lands (a cd or readlink failed, a link or directory into /proc or /dev/fd, more than 40 links, a path past 4096 bytes, a .. after a missing directory, or more than $budget seconds)."
+  nm=$(byname "$f" && printf x) && nm=${nm%?x} && at=$(phys "$nm" new) && at=${at%x} || die "$nf"
   pr=$(cd "$root" && pwd -P && printf x) && pr=${pr%?x} || pr=$root
   if [ "$nm" -ef "$root/.coddy.yml" ] || { [ "${at%/*}" -ef "$pr" ] && [ "$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')" = .coddy.yml ]; }; then
     jqh -cn --arg m "Editing .coddy.yml changes the coddy guardrails. Allow it only if you asked for this change (/coddy:config)." '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'
     exit 0
   fi
+  # $1 with its deepest ancestor that is the root directory itself (-ef)
+  # spelled $pr: the root has names no link shows (the firmlink above, a
+  # bind mount), which no match on $pr's spelling would read as the project.
+  # Fails once $budget seconds have passed, as phys does: each step costs
+  # time in the path's length.
+  inroot() { local a=$1; while [ "${a%/*}" != "$a" ]; do [ "$SECONDS" -lt "$budget" ] || return 1; a=${a%/*}; [ "${a:-/}" -ef "$pr" ] && { printf '%sx' "$pr${1#"$a"}"; return; }; done; printf '%sx' "$1"; }
+  # A repository's own files: a .git or .jj below the root, in any case of
+  # the name, as a case-folding disk reads it: the main checkout's git dir, a
+  # worktree's pointer file, jj's .jj/repo, a submodule's .git. Their config
+  # and hooks run programs outside the sandbox, so no edit reaches them, in
+  # either mode: as given against the root, or where it lands (the walk
+  # above) against the physical root. A .git above the root, or outside the
+  # project, is not the project's.
+  vcs() { case "$1" in "$2"/*) case "/${1#"$2"/}/" in */.[Gg][Ii][Tt]/*|*/.[Jj][Jj]/*) return 0 ;; esac ;; esac; return 1; }
+  p=$(inroot "$at") && p=${p%x} || die "$nf"
+  # Not $at: byname collapses a trailing /. or /.. by name. A walk that
+  # fails here is refused before warnmode too, as $at's is.
+  g=$(phys "$f" new) && g=$(inroot "${g%x}") && g=${g%x} || die "$nf"
+  # Paths the walks read in this hook, not in the tool that writes: macOS's
+  # /.vol names a file by its inode, with no name the checks here can read
+  # (a .git's config included), and macOS strips a leading /.nofollow/ or
+  # /.resolve/<flags>/ before it resolves the rest, while each reading here
+  # keeps it (/.nofollow is an empty directory, so pwd -P keeps it too).
+  # Refused in either mode, by each reading. /proc and /dev/fd need no
+  # pattern: both walks refuse a step onto either, by identity.
+  for x in "$f" "$nm" "$at" "$g"; do case "$x" in /.vol|/.vol/*|/.nofollow|/.nofollow/*|/.resolve|/.resolve/*) die "the edit guard refuses $f in either guard mode: it is reached through /.vol, /.nofollow or /.resolve, which name a file by its inode, or which macOS strips before it resolves the rest, so where the edit lands cannot be read." ;; esac; done
+  ! vcs "$f" "$root" && ! vcs "$p" "$pr" || die "the edit guard refuses $f in either guard mode: it lies in a .git or .jj below the project root, a repository's own files, which git or jj changes, never a file edit."
+  # A hard link is the same file under another name, maybe in the main
+  # checkout or another worktree, so a write through it lands there too:
+  # refused in either mode, a find that fails included. A .coddy.yml reached
+  # so was asked about above.
+  if [ -e "$at" ] && [ ! -d "$at" ]; then
+    l=$(find "$at" -prune -links +1 2>/dev/null) || die "the edit guard could not count the links of $f, so it refuses the edit in either guard mode."
+    [ -z "$l" ] || die "the edit guard refuses $f in either guard mode: it is a hard link, one file with more than one name, so a write there changes it under every other name too, which may lie in the main checkout or another worktree."
+  fi
+  warnmode edit
   case "$f" in */../*) die "refusing a path containing '..': $f" ;; esac
   agent="${CODDY_AGENT_DIR-}"
   # held <path> <root>: dies unless an edit of <path>, read against <root>,
@@ -568,9 +613,10 @@ if [ "${1-}" = guard ]; then
       "$root"/*)
         # The agent's own directory is free, except its worktrees/<name>/,
         # held to <name>'s lock as .worktrees/<name>/ is, or an unclaimed edit
-        # could hide there.
+        # could hide there; in any case of worktrees, as a case-folding disk
+        # reads it.
         [ -z "$agent" ] || case "${f#"$root"/}" in
-          "$agent"/worktrees/*) issue="${f#"$root/$agent"/worktrees/}" ;;
+          "$agent"/[Ww][Oo][Rr][Kk][Tt][Rr][Ee][Ee][Ss]/*) issue="${f#"$root/$agent"/[Ww][Oo][Rr][Kk][Tt][Rr][Ee][Ee][Ss]/}" ;;
           "$agent"/*) return 0 ;;
         esac
         [ -n "$issue" ] || die "edits belong in an issue worktree, not the main checkout. Run /coddy:start <issue>, then edit under .worktrees/<issue>/." ;;
@@ -589,32 +635,25 @@ if [ "${1-}" = guard ]; then
       die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" && echo running || echo "not running")). Run /coddy:start $issue to take it over, or work on your own issue."
     # The owner's edit from a new session id (/clear) or process (--resume)
     # moves the lock along, as its re-claim would: a pid left behind reads
-    # as a dead owner to every other session. Only once both readings below
-    # allow the edit, so $move names the issue whose owner line moves.
+    # as a dead owner to every other session. Only once every reading below
+    # allows the edit, so $move names the issue whose owner line moves.
     [ -z "$sid" ] || [ -z "$me" ] || [ "$own" = "$(myline)" ] || move=$issue
   }
-  # $1 with its deepest ancestor that is the root directory itself (-ef)
-  # spelled $pr: the root has names no link shows (the firmlink above, a
-  # bind mount), which no match on $pr's spelling would read as the project.
-  # Fails once $budget seconds have passed, as phys does: each step costs
-  # time in the path's length.
-  inroot() { local a=$1; while [ "${a%/*}" != "$a" ]; do [ "$SECONDS" -lt "$budget" ] || return 1; a=${a%/*}; [ "${a:-/}" -ef "$pr" ] && { printf '%sx' "$pr${1#"$a"}"; return; }; done; printf '%sx' "$1"; }
   # Claude Code hands the hooks the physical project dir, while a path may
   # reach the project through a link, or the root be one: the edit is held
   # as given against the root, then spelled physically (phys, new for a
   # directory not made yet) against the physical root, found by identity
   # (inroot), and either may refuse it; the second only when either spelling
-  # differs, since it would repeat the first. A path phys cannot follow here
-  # is refused, as given it may land anywhere, and under guard: warn is
-  # advice like any other hold (only the .coddy.yml walk above is refused in
-  # both modes).
+  # differs, since it would repeat the first. Then where the edit lands ($at
+  # against the physical root, $p), unless it repeats a spelling held
+  # already. A path either walk cannot follow was refused above, in both
+  # modes.
   held "$f" "$root"; m=$move
-  # Not $at: abspath collapses a trailing /. or /.. by name.
-  g=$(phys "$f" new) && g=$(inroot "${g%x}") || die "$nf"
-  g=${g%x}
-  [ "$g" = "$f" ] && [ "$pr" = "$root" ] || held "$g" "$pr"
+  [ "$g" = "$f" ] && [ "$pr" = "$root" ] || held "$g" "$pr"; n=$move
+  [ "$p" = "$g" ] || { [ "$p" = "$f" ] && [ "$pr" = "$root" ]; } || held "$p" "$pr"
   [ -z "$m" ] || myline > "$root/.git/coddy/$m/owner" 2>/dev/null
-  [ -z "$move" ] || [ "$move" = "$m" ] || myline > "$root/.git/coddy/$move/owner" 2>/dev/null
+  [ -z "$n" ] || [ "$n" = "$m" ] || myline > "$root/.git/coddy/$n/owner" 2>/dev/null
+  [ -z "$move" ] || [ "$move" = "$m" ] || [ "$move" = "$n" ] || myline > "$root/.git/coddy/$move/owner" 2>/dev/null
   exit 0
 fi
 # Where shell command $1, run in directory $2, would make a worktree with git

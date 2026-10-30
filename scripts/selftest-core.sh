@@ -535,7 +535,7 @@ rm .worktrees/1/cfg .worktrees/1/C2 .claude/coddy.yml; mv "$tmp/conf.yml" .coddy
 # marked unresolved, not split into two.
 t 0 "snap: a worktree add through a link to a name ending in a newline passes, unresolved" says 'could not tell where' run snap < <(jq -cn --arg d "$repo" '{tool_use_id: "nl", cwd: $d, tool_input: {command: "git worktree add .worktrees/1/nl/x"}}')
 rm -f "${snapfile%w}nl" "${snapfile%w}nl".*
-# The owner's edit moves the owner line only once both readings allow it.
+# The owner's edit moves the owner line only once all three readings allow it.
 printf 'sess-old %s\n' $$ > "$tmp/own"; cp "$tmp/own" .git/coddy/1/owner
 t 2 "guard: the owner's process under a new id is refused a link to the main checkout" guard "$repo/.worktrees/1/rd"
 t 0 "guard: and the owner line is left as it was" cmp -s "$tmp/own" .git/coddy/1/owner
