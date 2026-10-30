@@ -424,13 +424,15 @@ fi
 
 # $1 made absolute against $2, . and .. collapsed by name as cd does, and its
 # longest existing directory spelled physically, as git and jj record it.
+# Fails when that spelling is not the directory cd reached: bash's pwd -P
+# reads each link's text, and a /proc magic link's text may name another.
 abspath() {
   local p=$1 o="" c t=""
   case "$p" in /*) ;; *) p="$2/$p" ;; esac
   while [ -n "$p" ]; do p=${p#/}; c=${p%%/*}; p=${p#"$c"}; case "$c" in ''|.) ;; ..) o=${o%/*} ;; *) o="$o/$c" ;; esac; done
   p=${o:-/}
   while [ ! -d "$p" ]; do t="/${p##*/}$t"; p=${p%/*}; p=${p:-/}; done
-  p=$(cd "$p" 2>/dev/null && pwd -P && printf x) || return 1; p=${p%?x}
+  p=$(cd "$p" 2>/dev/null && p=$(pwd -P && printf x) && [ "${p%?x}" -ef . ] && printf %s "$p") || return 1; p=${p%?x}
   p="${p%/}$t"; echo "${p:-/}"
 }
 
@@ -502,6 +504,9 @@ if [ "${1-}" = guard ]; then
   # a directory does not exist, or, with $2 new, joins the rest to it by
   # name, as the tool makes it, with no test on disk (nothing is there past
   # a missing directory); and fails on any step that does: a cd, a readlink,
+  # a link that reaches another file than its text names (a /proc magic
+  # link: a removed name of an open file, a directory in another mount
+  # namespace; a dangling link names none, as the tool creates its target),
   # a 41st link (40, as far as a kernel follows), once $budget seconds have
   # passed (each cd costs time in the depth), a .. in that rest (nothing to
   # climb from), and a joined tail past 4096 bytes (the join costs time
@@ -516,6 +521,7 @@ if [ "${1-}" = guard ]; then
       if [ -n "$c" ] && [ -L "./$c" ]; then
         [ "$i" -lt 40 ] || exit 1; i=$((i+1))
         t=$(rdl "./$c") || exit 1; t=${t%x}
+        [ ! -e "./$c" ] || [ "$t" -ef "./$c" ] || exit 1
         case "$t" in /*) cd / 2>/dev/null || exit 1 ;; esac
         comps "$t"; a=("${b[@]}" "${a[@]:k}"); k=0 c=""; continue
       fi
@@ -548,7 +554,7 @@ if [ "${1-}" = guard ]; then
   # The root's directory is compared by identity (-ef), not by name: macOS
   # reaches it through the /System/Volumes/Data firmlink too, which bash's
   # pwd -P keeps, as it would a bind mount.
-  nf="the edit guard could not follow $f to where the edit lands (a cd or readlink failed, more than 40 links, a path past 4096 bytes, a .. after a missing directory, or more than $budget seconds)."
+  nf="the edit guard could not follow $f to where the edit lands (a cd or readlink failed, a link reached another file than its text names, more than 40 links, a path past 4096 bytes, a .. after a missing directory, or more than $budget seconds)."
   nm=$(abspath "$f" && printf x) && nm=${nm%?x} && at=$(phys "$nm" new) && at=${at%x} || die "$nf"
   pr=$(cd "$root" && pwd -P && printf x) && pr=${pr%?x} || pr=$root
   if [ "$nm" -ef "$root/.coddy.yml" ] || { [ "${at%/*}" -ef "$pr" ] && [ "$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')" = .coddy.yml ]; }; then
@@ -577,9 +583,11 @@ if [ "${1-}" = guard ]; then
   # /.vol names a file by its inode, with no name the checks here can read
   # (a .git's config included), and Linux's /proc/self, /proc/thread-self and
   # /dev/fd name what the process opening them has (its cwd, its fds), as
-  # macOS's /dev/fd does. Refused in either mode, by any reading: a link to
-  # /proc/self leaves the walk in /proc/<pid>, the pid its readlink's.
-  for x in "$f" "$nm" "$at" "$g"; do case "$x" in /.vol|/.vol/*|/proc|/proc/*|/dev/fd|/dev/fd/*) die "the edit guard refuses $f in either guard mode: it is reached through /.vol, /proc or /dev/fd, which name a file by its inode or by the process that opens it, so where the edit lands cannot be read." ;; esac; done
+  # macOS's /dev/fd does; and macOS strips a leading /.nofollow/ or
+  # /.resolve/<flags>/ before it resolves the rest, while each reading here
+  # keeps it (/.nofollow is an empty directory, so pwd -P keeps it too).
+  # Refused in either mode, by each reading.
+  for x in "$f" "$nm" "$at" "$g"; do case "$x" in /.vol|/.vol/*|/proc|/proc/*|/dev/fd|/dev/fd/*|/.nofollow|/.nofollow/*|/.resolve|/.resolve/*) die "the edit guard refuses $f in either guard mode: it is reached through /.vol, /proc, /dev/fd, /.nofollow or /.resolve, which name a file by its inode or by the process that opens it, or which macOS strips before it resolves the rest, so where the edit lands cannot be read." ;; esac; done
   ! vcs "$f" "$root" && ! vcs "$p" "$pr" || die "the edit guard refuses $f in either guard mode: it lies in a .git or .jj below the project root, a repository's own files, which git or jj changes, never a file edit."
   # A hard link is the same file under another name, maybe in the main
   # checkout or another worktree, so a write through it lands there too:
