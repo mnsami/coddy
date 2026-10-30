@@ -474,14 +474,17 @@ for v in block warn; do
       for p in README.md .git/config; do t 2 "guard: $v blocks $p by its inode in $x/.vol" saying 'through /.vol' guard "$x/.vol/$d/$(stat -f %i $p)"; done
     else echo "skip guard through $x/.vol: no $x here (macOS only)"; fi
   done
+  # The walk never steps onto /dev/fd, compared by identity: a case-folding
+  # disk reaches it as /DEV/fd too.
+  if [ /DEV/fd -ef /dev/fd ]; then t 2 "guard: $v blocks /DEV/fd/1, /dev/fd spelled in another case" saying 'could not follow' guard /DEV/fd/1
+  else echo "skip guard through /DEV/fd: /dev is not reached in another case here"; fi
   if [ "/proc/self/root$repo" -ef "$repo" ]; then
-    t 2 "guard: $v blocks a main-checkout file through /proc/self/root" saying 'through /.vol, /proc' guard "/proc/self/root$repo/README.md"
+    t 2 "guard: $v blocks a main-checkout file through /proc/self/root" saying 'could not follow' guard "/proc/self/root$repo/README.md"
     # Magic links, whose text names another file than the kernel reaches: a
     # link to /proc/<pid>/fd/<n> holding a main-checkout file open under a
     # name since removed, and to /proc/<pid>/cwd in another mount namespace,
     # where the main checkout is bound at a path empty here. Refused, in
-    # warn mode too: by the walk, or, where bash falls back to getcwd and
-    # that names the main checkout's .git, as a repository's own file.
+    # warn mode too: the walk never steps onto /proc.
     ln README.md .worktrees/88/dl; exec 7<.worktrees/88/dl; rm .worktrees/88/dl; ln -s "/proc/$$/fd/7" .worktrees/88/fd
     t 2 "guard: $v blocks a link to a main-checkout file held open in /proc/<pid>/fd under a removed name" saying 'could not follow' guard "$repo/.worktrees/88/fd"
     exec 7<&-
@@ -489,9 +492,24 @@ for v in block warn; do
       mkdir "$tmp/m"; unshare -Urm sh -c 'mount --bind "$1" "$2" && cd "$2" && exec sleep 60' sh "$repo" "$tmp/m" & k=$!
       for i in 1 2 3 4 5 6 7 8 9 10; do [ "$(readlink "/proc/$k/cwd")" != "$tmp/m" ] || break; sleep 0.2; done
       ln -s "/proc/$k/cwd" .worktrees/88/cw; ln -s "/proc/$k/cwd/.git" .worktrees/88/gg
-      for p in cw/README.md cw/new.c; do t 2 "guard: $v blocks .worktrees/88/$p through /proc/<pid>/cwd in another mount namespace" saying 'could not follow' guard "$repo/.worktrees/88/$p"; done
-      t 2 "guard: $v blocks .git/config through /proc/<pid>/cwd/.git in another mount namespace" saying 'the edit guard' guard "$repo/.worktrees/88/gg/config"
+      for p in cw/README.md cw/new.c gg/config; do t 2 "guard: $v blocks .worktrees/88/$p through /proc/<pid>/cwd in another mount namespace" saying 'could not follow' guard "$repo/.worktrees/88/$p"; done
       kill "$k"; wait "$k" 2>/dev/null; rmdir "$tmp/m"
+      # And where the link's text names the same directory here, with mounts
+      # below it in the other namespace alone: README.md and .git/config
+      # bound over files, the main checkout over a directory, and README.md
+      # over a file in the owner's own worktree, the second process's cwd.
+      # Reached through the magic link, a relative chain to it, a dangling
+      # link below the directory mount, and a .. the Write tool collapses
+      # by name.
+      mkdir -p "$tmp/n/d" "$tmp/y/z" .worktrees/88/sub; echo decoy > "$tmp/n/f"; echo decoy > "$tmp/n/c"; echo decoy > .worktrees/88/sub/x.c
+      unshare -Urm sh -c 'mount --bind "$1/README.md" "$2/f" && mount --bind "$1/.git/config" "$2/c" && mount --bind "$1" "$2/d" && cd "$2" && exec sleep 60' sh "$repo" "$tmp/n" & k=$!
+      unshare -Urm sh -c 'mount --bind "$1/README.md" "$2/sub/x.c" && cd "$2" && exec sleep 60' sh "$repo" "$repo/.worktrees/88" & w=$!
+      for i in 1 2 3 4 5 6 7 8 9 10; do [ "$(readlink "/proc/$k/cwd")" != "$tmp/n" ] || [ "$(readlink "/proc/$w/cwd")" != "$repo/.worktrees/88" ] || break; sleep 0.2; done
+      up=$(cd .worktrees/88 && pwd -P | sed 's#[^/][^/]*#..#g; s#^/##')
+      ln -s "/proc/$k/cwd" .worktrees/88/cn; ln -s "/proc/$k/root" .worktrees/88/rt; ln -s "$up/proc/$k/cwd" .worktrees/88/rel
+      ln -s "/proc/$k/cwd/d/new.c" .worktrees/88/dg; ln -s "/proc/$w/cwd" .worktrees/88/cs; ln -s "$tmp/y/z" .worktrees/88/x
+      for p in cn/f cn/c "rt$tmp/n/f" rel/f dg cs/sub/x.c x/../cn/f; do t 2 "guard: $v blocks .worktrees/88/$p through /proc/<pid> into mounts in another namespace below a directory the same here" saying 'could not follow' guard "$repo/.worktrees/88/$p"; done
+      kill "$k" "$w"; wait "$k" "$w" 2>/dev/null; rm -r "$tmp/n" "$tmp/y"
     else echo "skip guard through /proc/<pid>/cwd in another mount namespace: unshare -Urm is not allowed here"; fi
   else echo "skip guard through /proc/self/root: no /proc here (Linux only)"; fi
   rm -r .git/coddy/88 .worktrees .claude/up .claude/g src
