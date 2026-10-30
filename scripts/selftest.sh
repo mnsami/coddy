@@ -141,6 +141,7 @@ leg() {
   t 2 "$tool: guard blocks another session's edit in that worktree" guard "$repo/.worktrees/$n/a.txt" sess-b
   t 0 "$tool: that rejection names the issue and the owner" says "issue $n belongs to session sess-a (pid $$, running)" guard "$repo/.worktrees/$n/a.txt" sess-b
   t 2 "$tool: a Claude Code worktree is held to the same owner check" guard "$repo/.claude/worktrees/$n/a.txt" sess-b
+  t 2 "$tool: and so is one in any case of worktrees/" guard "$repo/.claude/WorkTrees/$n/a.txt" sess-b
   t 0 "$tool: a hook payload without session_id is not held to it" guard "$repo/.worktrees/$n/a.txt" ""
   t 0 "$tool: guard allows the owner's process under a new session id (/clear)" guard "$repo/.worktrees/$n/a.txt" sess-b $$
   t 0 "$tool: and moves the lock to that session id" holds "sess-b $$" ".git/coddy/$n/owner"
@@ -172,6 +173,9 @@ leg() {
   t 0 "$tool: the lock names the taker" holds "sess-a $$" ".git/coddy/$n/owner"
   t 0 "$tool: guard allows the worktree after the claim" guard "$repo/.worktrees/$n/a.txt"
   t 0 "$tool: guard allows a Claude Code worktree named for the claimed issue" guard "$repo/.claude/worktrees/$n/a.txt"
+  t 0 "$tool: and one in any case of worktrees/" guard "$repo/.claude/WORKTREES/$n/a.txt"
+  # The worktree's own pointer to the repository: git's .git file, jj's .jj/repo.
+  for p in .git .jj/repo; do t 2 "$tool: guard blocks the claimed worktree's $p" guard "$repo/.worktrees/$n/$p"; done
   t 0 "$tool: state is empty before any write" test -z "$(run state "$n" 2>&1)"
   t 0 "$tool: state sets keys" run state "$n" phase=implement round=0
   t 0 "$tool: state prints them" says "^phase=implement$" run state "$n"
@@ -339,7 +343,10 @@ leg() {
 printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml
 t 2 "guard blocks the main checkout" guard "$repo/README.md"
 t 0 "guard allows .claude/" guard "$repo/.claude/coddy.yml"
+t 0 "guard allows .claude/settings.json" guard "$repo/.claude/settings.json"
 t 2 "guard blocks a Claude Code worktree under .claude/ without a claim" guard "$repo/.claude/worktrees/55/a.txt"
+t 2 "guard blocks one in any case of worktrees/" guard "$repo/.claude/WORKTREES/55/a.txt"
+t 0 "guard: and holds it to that issue's claim" says 'issue 55 is not In Progress' guard "$repo/.claude/WORKTREES/55/a.txt"
 t 0 "guard ignores paths outside the project" guard "$tmp/elsewhere.txt"
 # Claude Code hands the hooks the physical project dir; a path through a link to it is the project's.
 ln -s "$repo" "$tmp/alias"
@@ -434,7 +441,20 @@ for v in block warn; do
   for o in msys cygwin; do
     OSTYPE=$o t 2 "guard: $v blocks every edit under OSTYPE=$o" saying 'refuses every edit on native Windows' guard "$repo/.worktrees/88/a.txt"
   done
-  rm -r .git/coddy/88
+  # A repository's own files, a .git or .jj below the root in any case, as
+  # given or reached through a link, and a hard link, whose write changes
+  # every other name of the file: refused, in warn mode too, a claimed
+  # worktree's and the agent dir's included. Beside each, paths that pass.
+  mkdir -p .worktrees/88; echo x > .worktrees/88/one; ln -s one .worktrees/88/sl; ln README.md .worktrees/88/hl
+  ln -s .. .claude/up; ln -s ../.git .claude/g
+  for p in .claude/up/.git/config .claude/g/config .git/config .GIT/config .worktrees/88/.git .worktrees/88/.Git .jj/repo .worktrees/88/.jj/repo .worktrees/88/.JJ/repo; do
+    t 2 "guard: $v blocks a repository's own file: $p" saying 'a .git or .jj below the project root' guard "$repo/$p"
+  done
+  t 2 "guard: $v blocks a hard link in a claimed worktree to a main-checkout file" saying 'is a hard link' guard "$repo/.worktrees/88/hl"
+  for p in .claude/settings.json .worktrees/88/one .worktrees/88/sl .worktrees/88/.gitignore .worktrees/88/.github/x .worktrees/88/.jjconfig.toml; do
+    t 0 "guard: $v allows $p" test -z "$(guard "$repo/$p" 2>&1 || echo refused)"
+  done
+  rm -r .git/coddy/88 .worktrees .claude/up .claude/g
   for p in '{"cwd":{"a":1},"tool_input":{"file_path":"x"}}' '{"cwd":["/x"],"tool_input":{"file_path":"x"}}' '{"cwd":"proj","tool_input":{"file_path":"x"}}'; do
     t 2 "guard: $v blocks a cwd that is not absolute: $p" saying 'refuses a cwd that is not an absolute path' raw "$p"
   done
