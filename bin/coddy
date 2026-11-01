@@ -337,13 +337,15 @@ alive() {
   now=$(started "$1"); [ -z "${2-}" ] || [ -z "$now" ] || ! cstart "$2" || [ "$now" = "$2" ]
 }
 die() { echo "coddy: $*" >&2; exit "$code"; }
-cfg() { # key $1, from the config or file $2: a quoted value runs to its closing quote, an unquoted one loses a blank-led # comment, a CRLF line's \r and trailing blanks
-  local _l; _l=$(sed -n "s/^$1:[[:space:]]*//p" "${2:-$conf}" | head -1); _l=${_l%$'\r'}
+cfg() { # key $1, from the config or file $2: a quoted value runs to its closing quote (a \" does not close one) when only blanks or a # comment follow it, else it is read as an unquoted one; that loses a blank-led # comment, a CRLF line's \r and trailing blanks
+  local _l _q; _l=$(sed -n "s/^$1:[[:space:]]*//p" "${2:-$conf}" | head -1); _l=${_l%$'\r'}
   case $_l in
-    \"*) _l=${_l#\"}; printf '%s\n' "${_l%%\"*}" ;;
-    \'*) _l=${_l#\'}; printf '%s\n' "${_l%%\'*}" ;;
-    *) printf '%s\n' "$_l" | sed -e 's/^#.*$//' -e 's/[[:space:]][[:space:]]*#.*$//' -e 's/[[:space:]]*$//' ;;
+    \"*) _q=$(printf '%s\n' "$_l" | sed -nE 's/^"(([^"\\]|\\.)*)"([[:space:]]+#.*)?[[:space:]]*$/Q\1/p') ;;
+    \'*) _q=$(printf '%s\n' "$_l" | sed -nE "s/^'(([^']|'')*)'([[:space:]]+#.*)?[[:space:]]*\$/Q\\1/p") ;;
+    *) _q= ;;
   esac
+  if [ -n "$_q" ]; then printf '%s\n' "${_q#Q}"; return; fi
+  printf '%s\n' "$_l" | sed -e 's/^#.*$//' -e 's/[[:space:]][[:space:]]*#.*$//' -e 's/[[:space:]]*$//'
 }
 # The lock's owner ($sid, $pid, $start) is this session ($me): the same
 # session id, or the same agent process, since Claude Code's /clear changes

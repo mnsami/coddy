@@ -641,6 +641,10 @@ vc 'verify: test -f ok.txt  # tests'; t 0 "cfg: a trailing comment is dropped an
 vc 'verify: test -f ok.txt#x'; t 1 "cfg: a # with no blank before it stays" run verify 1
 vc "verify: \"test -f '#ok' && false\""; t 1 "cfg: a quoted # does not turn a failing verify into a pass" run verify 1
 t 1 "cfg: and ship refuses" run ship 1 "feat(1): nope"
+rm -f .worktrees/1/e2e
+vc 'verify: "true && test \"x\" = \"x\" && touch e2e"'; t 0 "cfg: an escaped quote does not end a double-quoted value" run verify 1
+t 0 "cfg: and the part after it ran" test -f .worktrees/1/e2e
+vc 'verify: "true" && false'; t 1 "cfg: text after the closing quote is kept, not dropped" run verify 1
 vc 'verify: |'; t 1 "verify: a block scalar is refused" run verify 1
 t 0 "verify: and the message names the key" says 'verify: a block scalar' run verify 1
 cp "$tmp/conf.bak" .coddy.yml; rm .worktrees/1/main.c
