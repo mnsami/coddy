@@ -647,6 +647,9 @@ t 0 "cfg: and the part after it ran" test -f .worktrees/1/e2e
 vc 'verify: "true" && false'; t 1 "cfg: text after the closing quote is kept, not dropped" run verify 1
 vc 'verify: |'; t 1 "verify: a block scalar is refused" run verify 1
 t 0 "verify: and the message names the key" says 'verify: a block scalar' run verify 1
+for h in '>2' '|2' '>-2' '>2-' '>+1'; do vc "verify: $h"; t 1 "verify: $h is refused" run verify 1; t 0 "verify: $h names the key" says 'verify: a block scalar' run verify 1; t 1 "verify: $h made no file" test -e .worktrees/1/2; done
+rm -f .worktrees/1/out; vc 'verify: >out'; t 0 "verify: >out still runs" run verify 1
+vc 'verify: |x'; t 1 "verify: |x is not refused as a block scalar" says 'block scalar' run verify 1; rm -f .worktrees/1/out
 cp "$tmp/conf.bak" .coddy.yml; rm .worktrees/1/main.c
 t 1 "ship refuses another session" as sess-b 1 ship 1 "feat(1): ok"
 t 0 "ship verifies then pushes" says 'pushed: feat/1-thing' run ship 1 "feat(1): ok"

@@ -1569,7 +1569,7 @@ has() { [ -n "$(jj log --no-graph -r "$1" -T '"x"' 2>/dev/null)" ]; } # a jj rev
 verify() {
   [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
   v=$(cfg verify); [ -n "$v" ] || die "no verify command in $cname"
-  case $v in '|'|'|-'|'|+'|'>'|'>-'|'>+') die "verify: a block scalar (|, >) is not read; write the command on one line in $cname" ;; esac
+  case $v in [\|\>]|[\|\>][-+1-9]|[\|\>][-+1-9][-+1-9]) die "verify: a block scalar (|, >) is not read; write the command on one line in $cname" ;; esac
   (cd "$wt" && sh -c "$v")
 }
 # The git hooks, .git/hooks/coddy/: pre-commit and pre-push run githook
