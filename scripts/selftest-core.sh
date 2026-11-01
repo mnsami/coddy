@@ -663,6 +663,8 @@ if [ -x /bin/bash ]; then
   for f in "$here"/scripts/*.sh "$here/bin/coddy" "$here/get.sh"; do t 0 "/bin/bash: ${f#$here/} parses" /bin/bash -n "$f"; done
   t 1 "/bin/bash: state refuses a key with an upper-case letter in a UTF-8 locale" env LC_ALL=en_US.UTF-8 /bin/bash "$here/bin/coddy" state 1 Key=x
   t 0 "/bin/bash: and for the key, not the lock" says "lower case words" env LC_ALL=en_US.UTF-8 /bin/bash "$here/bin/coddy" state 1 Key=x
+  printf 'verify: "a # b"  # c\r\n' > "$tmp/cfg3.yml"
+  t 0 "/bin/bash: cfg reads a quoted # and drops the comment and the CR" test "$(/bin/bash -c "$(sed -n '/^cfg() {/,/^}/p' "$here/bin/coddy")"'; cfg verify "$1"' _ "$tmp/cfg3.yml")" = "a # b"
 fi
 t 1 "start from stdin fails" sh -c "bash -s start 1 feat/1-thing < '$here/bin/coddy'"
 t 0 "and says why" says 'not stdin' sh -c "bash -s start 1 feat/1-thing < '$here/bin/coddy'"
