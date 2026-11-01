@@ -3,7 +3,7 @@
 Release = a version bump PR of its own, never a direct commit to `main`. Tags and GitHub releases are out of scope (#282).
 
 1. List the installed GitHub and Atlassian plugin tools in a session; compare them with `grep -oh 'mcp__[A-Za-z0-9_]*' skills/*/SKILL.md | sort -u`. A name that differs → stop and fix the skills first.
-2. The release branch `chore/<issue>-release-X-Y-Z` comes from `/coddy:start <issue>`. Rebase it on `main` (`git rebase main`, or `jj rebase -d main` in a jj worktree).
+2. The release branch `chore/<issue>-release-X-Y-Z` comes from `/coddy:start <issue>`. Rebase it on the remote's `main`, which the local `main` may lag: `git fetch origin && git rebase origin/main`, or `jj git fetch && jj rebase -d main@origin` in a jj worktree.
 3. Bump `version` in `.claude-plugin/plugin.json` as its own commit: `chore: bump to X.Y.Z`. Keep `version` on its own line (`bin/coddy` and `scripts/selftest-core.sh` read it by sed).
 4. Verify, from the worktree: `bash scripts/selftest.sh && bash scripts/selftest-core.sh && claude plugin validate .`. Only the CLAUDE.md warning is expected.
 5. Smoke run under `/bin/bash` 3.2 (stock macOS bash). The hooks and shims call `bash` through `PATH`, so put it first: `PATH=/bin:$PATH claude --plugin-dir <worktree>`, and confirm with `bash --version` in the session's shell.
