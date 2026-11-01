@@ -633,6 +633,17 @@ HOME="$tmp" GIT_DIR="$tmp/origin.git" t 0 "shim: push commits with the environme
 was=$(git ls-remote origin refs/heads/feat/1-thing)
 echo ok > .worktrees/1/ok.txt
 t 0 "verify passes now" run verify 1
+# cfg: a quoted value runs to its closing quote, an unquoted one loses a blank-led # comment
+cp .coddy.yml "$tmp/conf.bak"; vc() { printf 'tracker: github\nworktree: git\ndefault_branch: main\n%s\n' "$1" > .coddy.yml; }
+printf '#include\n' > .worktrees/1/main.c
+vc "verify: \"grep -q '#include' main.c && true\""; t 0 "cfg: a # inside quotes stays in the command" run verify 1
+vc 'verify: test -f ok.txt  # tests'; t 0 "cfg: a trailing comment is dropped and the command runs" run verify 1
+vc 'verify: test -f ok.txt#x'; t 1 "cfg: a # with no blank before it stays" run verify 1
+vc "verify: \"test -f '#ok' && false\""; t 1 "cfg: a quoted # does not turn a failing verify into a pass" run verify 1
+t 1 "cfg: and ship refuses" run ship 1 "feat(1): nope"
+vc 'verify: |'; t 1 "verify: a block scalar is refused" run verify 1
+t 0 "verify: and the message names the key" says 'verify: a block scalar' run verify 1
+cp "$tmp/conf.bak" .coddy.yml; rm .worktrees/1/main.c
 t 1 "ship refuses another session" as sess-b 1 ship 1 "feat(1): ok"
 t 0 "ship verifies then pushes" says 'pushed: feat/1-thing' run ship 1 "feat(1): ok"
 t 1 "ship moved the branch on the remote" test "$(git ls-remote origin refs/heads/feat/1-thing)" = "$was"

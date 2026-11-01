@@ -337,7 +337,14 @@ alive() {
   now=$(started "$1"); [ -z "${2-}" ] || [ -z "$now" ] || ! cstart "$2" || [ "$now" = "$2" ]
 }
 die() { echo "coddy: $*" >&2; exit "$code"; }
-cfg() { sed -n "s/^$1:[[:space:]]*//p" "${2:-$conf}" | sed -e $'s/\r$//' -e "s/[[:space:]]*#.*$//; s/[[:space:]]*$//; s/^[\"']//; s/[\"']$//" | head -1; } # key $1, from the config or file $2, a CRLF line's \r and trailing blanks dropped
+cfg() { # key $1, from the config or file $2: a quoted value runs to its closing quote, an unquoted one loses a blank-led # comment, a CRLF line's \r and trailing blanks
+  local _l; _l=$(sed -n "s/^$1:[[:space:]]*//p" "${2:-$conf}" | head -1); _l=${_l%$'\r'}
+  case $_l in
+    \"*) _l=${_l#\"}; printf '%s\n' "${_l%%\"*}" ;;
+    \'*) _l=${_l#\'}; printf '%s\n' "${_l%%\'*}" ;;
+    *) printf '%s\n' "$_l" | sed -e 's/^#.*$//' -e 's/[[:space:]][[:space:]]*#.*$//' -e 's/[[:space:]]*$//' ;;
+  esac
+}
 # The lock's owner ($sid, $pid, $start) is this session ($me): the same
 # session id, or the same agent process, since Claude Code's /clear changes
 # the id and not the pid; a pid reused since the owner's start is not that process.
@@ -1560,6 +1567,7 @@ has() { [ -n "$(jj log --no-graph -r "$1" -T '"x"' 2>/dev/null)" ]; } # a jj rev
 verify() {
   [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
   v=$(cfg verify); [ -n "$v" ] || die "no verify command in $cname"
+  case $v in '|'|'|-'|'|+'|'>'|'>-'|'>+') die "verify: a block scalar (|, >) is not read; write the command on one line in $cname" ;; esac
   (cd "$wt" && sh -c "$v")
 }
 # The git hooks, .git/hooks/coddy/: pre-commit and pre-push run githook
