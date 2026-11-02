@@ -376,6 +376,16 @@ leg() {
   kept "a merged worktree holding ignored files while .git/coddy/swept is a link"
   t 0 "$tool: and moves nothing through that link" test -z "$(ls -A "$tmp/out$n")"
   rm .git/coddy/swept; mv "$tmp/swept$n" .git/coddy/swept
+  # A record that will not go (a locked git worktree, a jj forget that
+  # fails) gets its directory back, whole: kept as it was.
+  stub="$tmp/noforget$n"; mkdir -p "$stub"
+  if [ "$tool" = git ]; then git worktree lock ".worktrees/$p"
+  else printf '#!/bin/sh\ncase "$*" in *"workspace forget"*) exit 1 ;; esac\nexec '\''%s'\'' "$@"\n' "$(command -v jj)" > "$stub/jj"; chmod +x "$stub/jj"; fi
+  PATH="$stub:$PATH" kept "a merged worktree holding ignored files whose record will not go"
+  t 0 "$tool: and leaves it whole" test -e ".worktrees/$p/.$tool" -a -f ".worktrees/$p/.env"
+  t 0 "$tool: and still a worktree" sh -c "if [ $tool = git ]; then git worktree list --porcelain | grep -q '/\.worktrees/$p\$'; else jj workspace list --ignore-working-copy | grep -q '^$p:'; fi"
+  t 1 "$tool: and keeps no copy" test -e ".git/coddy/swept/$p"
+  [ "$tool" = jj ] || git worktree unlock ".worktrees/$p"
   # Another worktree whose directory is away (moved by hand, on a drive not
   # mounted) keeps its admin data: only the swept one is forgotten.
   git worktree add -q --detach "$tmp/aside$n" >/dev/null 2>&1; mv "$tmp/aside$n" "$tmp/away$n"
