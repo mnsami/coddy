@@ -624,12 +624,12 @@ t 1 "push refuses another session" as sess-b 1 push 1 "feat(1): thing"
 t 1 "ship stops on a failing verify" run ship 1 "feat(1): thing"
 t 0 "and says so" says "verify" run ship 1 "feat(1): thing"
 t 2 "and pushed nothing" git ls-remote --exit-code origin refs/heads/feat/1-thing
-t 0 "push alone pushes without verify" says 'pushed: feat/1-thing' run push 1 "feat(1): thing"
+t 0 "push alone pushes without verify" says 'pushed: feat/1-thing' run push 1 "feat(1): thing" -- a.txt
 t 0 "the branch reached the remote" git ls-remote --exit-code origin refs/heads/feat/1-thing
 # The identity in GIT_AUTHOR_* and GIT_COMMITTER_* is kept by the shim (no
 # git config holds one under this HOME), as the discovery variables are not.
 echo y > .worktrees/1/b.txt
-HOME="$tmp" GIT_DIR="$tmp/origin.git" t 0 "shim: push commits with the environment's identity, GIT_DIR dropped" says 'pushed: feat/1-thing' shim push 1 "feat(1): more"
+HOME="$tmp" GIT_DIR="$tmp/origin.git" t 0 "shim: push commits with the environment's identity, GIT_DIR dropped" says 'pushed: feat/1-thing' shim push 1 "feat(1): more" -- b.txt
 was=$(git ls-remote origin refs/heads/feat/1-thing)
 echo ok > .worktrees/1/ok.txt
 t 0 "verify passes now" run verify 1
@@ -652,7 +652,7 @@ rm -f .worktrees/1/out; vc 'verify: >out'; t 0 "verify: >out still runs" run ver
 vc 'verify: |x'; t 1 "verify: |x is not refused as a block scalar" says 'block scalar' run verify 1; rm -f .worktrees/1/out
 cp "$tmp/conf.bak" .coddy.yml; rm .worktrees/1/main.c
 t 1 "ship refuses another session" as sess-b 1 ship 1 "feat(1): ok"
-t 0 "ship verifies then pushes" says 'pushed: feat/1-thing' run ship 1 "feat(1): ok"
+t 0 "ship verifies then pushes" says 'pushed: feat/1-thing' run ship 1 "feat(1): ok" -- ok.txt e2e
 t 1 "ship moved the branch on the remote" test "$(git ls-remote origin refs/heads/feat/1-thing)" = "$was"
 t 0 "status lists the claimed issue as mine" says '^owners: 1=me' run status
 t 0 "sweep keeps the unmerged worktree" sh -c "'$here/bin/coddy' sweep; test -d '$repo/.worktrees/1'"
@@ -767,6 +767,24 @@ git config --remove-section 'includeIf.onbranch:feat/**'; rm "$tmp/prev/post-com
 t 1 "githook: a refused commit runs no previous hook" test -s "$tmp/prev.log"
 t 0 "githook: a passed commit runs the previous pre-commit" sh -c "git -C .worktrees/1 commit -q --allow-empty -m x && grep -qx 'pre-commit ' '$tmp/prev.log'"
 PREV_EXIT=1 t 1 "githook: whose failure fails the commit" git -C .worktrees/1 commit -q --allow-empty -m x
+# A push whose commit the hook refuses unstages only what it named: a named
+# file stays untracked, the tracked change stays as git add -u staged it.
+echo y >> .worktrees/1/a.txt; echo s > .worktrees/1/.env
+PREV_EXIT=1 t 1 "push: a commit the previous pre-commit refuses fails the push" run push 1 "feat(1): refused" -- .env
+t 0 "push: leaving the named file untracked, not added" test "$(git -C .worktrees/1 status --porcelain -- .env)" = "?? .env"
+t 0 "push: and the tracked change as git add -u staged it" test "$(git -C .worktrees/1 status --porcelain -- a.txt)" = "M  a.txt"
+git -C .worktrees/1 checkout -q HEAD -- a.txt
+# A merge whose resolution the hook refuses stays a merge: push resets no
+# MERGE_HEAD, so the next ship still commits it with both parents.
+tip=$(git -C .worktrees/1 rev-parse HEAD)
+git -C .worktrees/1 checkout -q -b side; echo side > .worktrees/1/a.txt; git -C .worktrees/1 commit -q --no-verify -am side
+git -C .worktrees/1 checkout -q feat/1-thing; echo mine > .worktrees/1/a.txt; git -C .worktrees/1 commit -q --no-verify -am mine
+git -C .worktrees/1 merge -q side >/dev/null 2>&1; echo both > .worktrees/1/a.txt; git -C .worktrees/1 add a.txt
+PREV_EXIT=1 t 1 "push: a merge commit the previous pre-commit refuses fails the push" run push 1 "feat(1): merge" -- .env
+t 0 "push: leaving the merge in progress" git -C .worktrees/1 rev-parse -q --verify MERGE_HEAD
+t 0 "push: its resolution staged" test "$(git -C .worktrees/1 status --porcelain -- a.txt)" = "M  a.txt"
+t 0 "push: and the named file untracked" test "$(git -C .worktrees/1 status --porcelain -- .env)" = "?? .env"
+git -C .worktrees/1 merge --abort; git -C .worktrees/1 reset -q --hard "$tip"; git -C .worktrees/1 branch -q -D side; rm .worktrees/1/.env
 PREV_EXIT=1 t 1 "githook: a previous pre-push's failure fails the push" git -C .worktrees/1 push -q origin HEAD
 t 0 "githook: which gets the push's arguments and stdin" sh -c "git -C .worktrees/1 push -q origin HEAD && grep -q '^pre-push origin ' '$tmp/prev.log' && grep -q ' refs/heads/feat/1-thing [0-9a-f]*\$' '$tmp/prev.log'"
 t 0 "githook: a commit runs the previous commit-msg" sh -c "git -C .worktrees/1 commit -q --allow-empty -m x && grep -q '^commit-msg .*COMMIT_EDITMSG\$' '$tmp/prev.log'"

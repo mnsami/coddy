@@ -4,7 +4,7 @@
 # the shims under scripts/, which map its environment onto the inputs below.
 #   coddy start  <issue> <branch> [base-issue]   worktree at .worktrees/<issue> on <branch>, from default_branch or the base issue's branch (alias: create)
 #   coddy claim  <issue> [--take]   lock the issue for this session, move it to In Progress
-#   coddy ship   <issue> [message]  verify, then commit what is uncommitted and push (push: the push alone)
+#   coddy ship   <issue> [message] [-- <path>...]  verify, then commit the tracked changes and the untracked files named after --, and push (push: the push alone)
 #   coddy state  <issue> [key=value | key+=value ...]   print, or set, the issue's phase state for start and ship
 #   coddy verify <issue>            run the config's verify command in the issue's worktree, passing its exit code through
 #   coddy diff   <issue>            the worktree's diff against its base (default_branch on the remote, or the stacked issue's branch)
@@ -1558,9 +1558,49 @@ fi
 # The worktree sits on branch $1: checked out (git), an ancestor of @ (jj).
 on() {
   if [ "$tool" = jj ]; then
-    [ -n "$(jj -R "$wt" log --no-graph -r "bookmarks(exact:\"$1\") & ::@" -T '"x"' 2>/dev/null)" ]
+    [ -n "$(jjn log --no-graph -r "bookmarks(exact:\"$1\") & ::@" -T '"x"' 2>/dev/null)" ]
   else
     [ "$(git -C "$wt" branch --show-current)" = "$1" ]
+  fi
+}
+# A jj call in the issue's workspace that tracks no new file, whatever the
+# workspace's own config says (one made before start turned auto-track off).
+jjn() { jj -R "$wt" --config 'snapshot.auto-track="none()"' "$@"; }
+# jjn, failing on jj's "Refused to snapshot" warning, which it only prints:
+# a new file over snapshot.max-new-file-size (1 MiB by default).
+jjs() {
+  local e; e=$(jjn "$@" 2>&1) || die "jj $1 failed in $wt: $e"
+  case "$e" in *"Refused to snapshot"*) e=${e%%$'\n'Hint:*}; die "jj refused a new file over snapshot.max-new-file-size (1 MiB by default) in $wt, so nothing was pushed: $e" ;; esac
+}
+# The issue's jj workspace, in its own config alone, tracks no new file
+# (snapshot.auto-track none()): a file is committed once it is tracked or named.
+notrack() {
+  [ "$tool" = jj ] || return 0
+  # push lists the untracked files with --no-integrate-operation (jj 0.41), so
+  # a jj without it is refused here, before the issue is claimed.
+  jj -R "$wt" --no-integrate-operation --ignore-working-copy log --no-graph -r @ -T '""' >/dev/null 2>&1 || die "coddy needs jj 0.41 or later in $wt, and $(jj --version 2>/dev/null || echo 'no jj') is installed"
+  # Written once: jj keeps it outside the project, so a re-run writes nothing.
+  [ "$(jj -R "$wt" config get snapshot.auto-track 2>/dev/null)" != 'none()' ] || return 0
+  local e; e=$(jj -R "$wt" config set --workspace snapshot.auto-track 'none()' 2>&1) || nowrite "could not turn off snapshot.auto-track in $wt" "$e" "jj keeps this workspace's settings outside the project. Set it once"
+}
+# A write that fails names the sandbox only when the system says so, with
+# the one way past it, for the user; $3, why the sandbox blocks it, defaults
+# to the git hooks.
+nowrite() {
+  case "$2" in
+    *'Operation not permitted'*) die "$1: $2. A sandbox blocks it, since ${3:-git runs these hooks outside the sandbox. Install them once} from your own terminal, not through an agent: cd $(printf %q "$root") && $(printf %q "$(cd "${src%/*}" && pwd)/${src##*/}") start $issue $(printf %q "$branch"). Later runs change nothing there, so they pass inside the sandbox." ;;
+    *) die "$1: $2" ;;
+  esac
+}
+# The worktree's untracked files that are not ignored, each followed by a NUL.
+# jj lists them from a snapshot that tracks every file, of any size, and that
+# --no-integrate-operation (jj 0.41) leaves out of the repository.
+untracked() {
+  if [ "$tool" = jj ]; then
+    local c; c=$(jjn log --no-graph -r @ -T commit_id) || return
+    jj -R "$wt" --no-integrate-operation --config 'snapshot.auto-track="all()"' --config snapshot.max-new-file-size=0 diff --from "$c" --to @ -T 'path ++ "\0"' 2>/dev/null
+  else
+    git -C "$wt" ls-files -z --others --exclude-standard
   fi
 }
 record() { mkdir -p .git/coddy && echo "$branch" > "$rec" || die "could not record the branch"; }
@@ -1593,14 +1633,6 @@ hooks() {
   local q="'\''" c d e f g h p o m s new=""
   { [ -L .git/hooks ] || [ -L .git/hooks/coddy ]; } && die ".git/hooks or .git/hooks/coddy is a symlink: coddy writes its git hooks into .git/hooks/coddy, which a sandbox keeps out of an agent's reach. Replace the link with a directory (to keep hooks in the directory it links to, point core.hooksPath there instead), then run /coddy:start $issue again."
   c="$(cd "${src%/*}" && pwd)/${src##*/}" || die "could not find $src"
-  # A write that fails names the sandbox only when the system says so, with
-  # the one way past it, for the user.
-  nowrite() {
-    case "$2" in
-      *'Operation not permitted'*) die "$1: $2. A sandbox blocks it, since git runs these hooks outside the sandbox. Install them once from your own terminal, not through an agent: cd $(printf %q "$root") && $(printf %q "$c") start $issue $(printf %q "$branch"). Later runs change nothing there, so they pass inside the sandbox." ;;
-      *) die "$1: $2" ;;
-    esac
-  }
   [ -d .git/hooks/coddy ] || { e=$(mkdir -p .git/hooks/coddy 2>&1) || nowrite "could not make .git/hooks/coddy" "$e"; }
   d=$(cd .git/hooks/coddy && pwd) || die "cannot enter .git/hooks/coddy"
   # Hook $1 holds $2 unless it does already: written aside under a dot name and
@@ -1681,7 +1713,7 @@ case "$cmd" in
         on "$branch" || die "$wt is not on $branch"
         record
       fi
-      hooks; echo "exists: $wt"; exit 0
+      notrack; hooks; echo "exists: $wt"; exit 0
     fi
     mkdir -p .worktrees
     git check-ignore -q .worktrees || echo '.worktrees/' >> .git/info/exclude
@@ -1702,6 +1734,7 @@ case "$cmd" in
         jj workspace add --name "$issue" -r "$start" "$wt" || die "could not create the jj workspace"
         jj -R "$wt" bookmark create "$branch" -r @ || die "could not create branch $branch"
       fi
+      notrack
     else
       git fetch origin || die "fetch failed"
       if git show-ref -q "refs/heads/$branch" "refs/remotes/origin/$branch"; then
@@ -1749,7 +1782,10 @@ case "$cmd" in
     if [ -n "$again" ]; then echo "claimed: $issue (already by this session)"; else echo "claimed: $issue"; fi ;;
 
   ship|push)
-    msg="${3-}"
+    # <issue> [message] [-- <path>...]: the paths after -- are the untracked
+    # files to commit; any other untracked file that is not ignored stops it.
+    if [ "${3-}" = -- ]; then msg=""; shift 3
+    else msg="${3-}"; [ $# -le 3 ] || [ "$4" = -- ] || die "usage: $self $cmd <issue> [message] [-- <path>...]"; shift $(($# < 4 ? $# : 4)); fi
     [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
     [ -e ".git/coddy/$issue" ] || die "issue $issue is not In Progress. Run /coddy:start $issue."
     # Held to the lock's owner as the guard is: a lock or a push that names
@@ -1762,18 +1798,53 @@ case "$cmd" in
     [ -n "$branch" ] || die "no branch recorded for $issue. Record it: $self create $issue <branch>"
     if [ "$cmd" = ship ]; then verify; r=$?; [ "$r" = 0 ] || die "verify failed (exit $r): fix it in $wt before shipping"; fi
     [ "$branch" != "$base" ] && on "$branch" || die "$wt is not on issue branch $branch"
-    if [ "$tool" = jj ]; then dirty=$(jj -R "$wt" diff --summary); else dirty=$(git -C "$wt" status --porcelain); fi
-    if [ -n "$dirty" ]; then
+    for p; do
+      case "/$p/" in //|*/../*) ;; *) [ "${p#/}" = "$p" ] && { [ -e "$wt/$p" ] || [ -L "$wt/$p" ]; } && continue ;; esac
+      clean "$p" || p=$(q "$p"); die "$p is not a file in $wt, so nothing was committed or pushed"
+    done
+    miss=$(set -o pipefail; untracked | while IFS= read -r -d '' u; do
+      for p; do [ "$p" != "$u" ] || continue 2; done
+      q "$u" # one inert shell word: ship hands it back after -- as listed
+    done) || die "could not list the untracked files in $wt$([ "$tool" != jj ] || echo ', which needs jj 0.41 or later')"
+    [ -z "$miss" ] || die "untracked files in $wt, so nothing was committed or pushed:
+$miss
+Name each one to include after --, or remove or ignore it, then $cmd again."
+    if [ "$tool" = jj ]; then dirty=$(jjn diff --summary) || die "jj diff failed in $wt"; else dirty=$(git -C "$wt" status --porcelain -uno) || die "git status failed in $wt"; fi
+    made=""
+    if [ -n "$dirty$*" ]; then
       [ -n "$msg" ] || die "uncommitted changes in $wt: pass a commit message"
       if [ "$tool" = jj ]; then
-        jj -R "$wt" commit -m "$msg" || die "commit failed"
+        fs=(); for p; do p=${p//\\/\\\\}; p=${p//\"/\\\"}; fs+=("root-file:\"$p\""); done
+        if [ $# != 0 ]; then
+          c=$(jjn log --no-graph -r @ -T commit_id) || die "jj log failed in $wt"
+          e=$(jjn file track "${fs[@]}" 2>&1) || die "jj file track failed in $wt: $e"
+          case "$e" in *"Refused to snapshot"*)
+            # jj tracks the rest and names the refused raw: named here, escaped,
+            # and those it did track untracked again, so nothing is left behind.
+            bad=$(untracked | while IFS= read -r -d '' u; do for p; do [ "$p" != "$u" ] || { q "$u"; break; }; done; done)
+            un=(); while IFS= read -r -d '' u; do u=${u//\\/\\\\}; un+=("root-file:\"${u//\"/\\\"}\""); done < <(jjn diff --from "$c" --to @ -T 'if(status != "modified", path ++ "\0")')
+            [ ${#un[@]} = 0 ] || jjn file untrack "${un[@]}" >/dev/null 2>&1
+            die "jj refused a new file over snapshot.max-new-file-size (1 MiB by default) in $wt, so nothing was committed or pushed:
+$bad" ;;
+          esac
+        fi
+        [ -z "$(jjn diff --summary)" ] || { jjs commit -m "$msg"; made=1; }
       else
-        git -C "$wt" add -A && git -C "$wt" commit -q -m "$msg" || die "commit failed"
+        # Tracked changes and the named files alone. A refused commit (a
+        # pre-commit hook) unstages the named files that were untracked and
+        # nothing else, so a merge, cherry-pick or revert in progress keeps its state.
+        new=(); [ $# = 0 ] || while IFS= read -r -d '' u; do new+=("$u"); done < <(git --literal-pathspecs -C "$wt" ls-files -z --others --exclude-standard -- "$@")
+        { git -C "$wt" add -u && { [ $# = 0 ] || git --literal-pathspecs -C "$wt" add -- "$@"; } &&
+          { git -C "$wt" diff --cached --quiet || { git -C "$wt" commit -q -m "$msg" && made=1; }; }; } || { [ ${#new[@]} = 0 ] || git --literal-pathspecs -C "$wt" reset -q -- "${new[@]}"; die "commit failed"; }
       fi
     fi
+    if [ -n "$made" ]; then
+      if [ "$tool" = jj ]; then jj -R "$wt" --ignore-working-copy diff -r @- -T 'if(status == "renamed", source.path() ++ "\0") ++ path ++ "\0"'; else git -C "$wt" diff-tree --no-commit-id --name-only -r -z HEAD; fi |
+        while IFS= read -r -d '' p; do clean "$p" || p=$(q "$p"); echo "committed: $p"; done
+    fi
     if [ "$tool" = jj ]; then
-      jj -R "$wt" bookmark set "$branch" -r @- || die "nothing committed on $branch"
-      jj -R "$wt" git push --bookmark "$branch" || die "push failed"
+      jjn bookmark set "$branch" -r @- || die "nothing committed on $branch"
+      jjn git push --bookmark "$branch" || die "push failed"
     else
       git -C "$wt" push -u origin HEAD || die "push failed"
     fi
@@ -1810,7 +1881,9 @@ case "$cmd" in
       # worktree through a symlink is not recognised as being inside it.
       case "${CODDY_ROOT-}/ ${OLDPWD-}/" in *"$root/$wt/"*) continue ;; esac
       if [ "$tool" = jj ]; then
-        tip=$(jj -R "$wt" log --no-graph -r @- -T commit_id 2>/dev/null); dirty=$(jj -R "$wt" diff --summary 2>/dev/null)
+        tip=$(jj -R "$wt" log --no-graph -r @- -T commit_id 2>/dev/null)
+        # Untracked files are uncommitted work too: auto-track is off.
+        dirty=$(set -o pipefail; jj -R "$wt" diff --summary 2>/dev/null && untracked 2>/dev/null | tr '\0' '\n' || echo unknown)
       else
         tip=$(git -C "$wt" rev-parse HEAD 2>/dev/null); dirty=$(git -C "$wt" status --porcelain 2>/dev/null)
       fi
@@ -1883,5 +1956,5 @@ case "$cmd" in
         { grep -v "^$k=" "$f" 2>/dev/null; printf '%s=%s\n' "$k" "$v"; } > "$f.tmp" && mv "$f.tmp" "$f" || die "could not write $f"
       fi
     done ;;
-  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | sweep | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard | githook pre-commit|pre-push" ;;
+  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] [-- <path>...] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | sweep | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard | githook pre-commit|pre-push" ;;
 esac
