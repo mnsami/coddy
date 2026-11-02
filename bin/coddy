@@ -1576,7 +1576,10 @@ jjs() {
 # (snapshot.auto-track none()): a file is committed once it is tracked or named.
 notrack() {
   [ "$tool" = jj ] || return 0
-  local e; e=$(jj -R "$wt" config set --workspace snapshot.auto-track 'none()' 2>&1) || die "could not turn off snapshot.auto-track in $wt, which needs jj 0.35 or later: $e"
+  # push lists the untracked files with --no-integrate-operation (jj 0.41), so
+  # a jj without it is refused here, before the issue is claimed.
+  jj -R "$wt" --no-integrate-operation --ignore-working-copy log --no-graph -r @ -T '""' >/dev/null 2>&1 || die "coddy needs jj 0.41 or later in $wt, and $(jj --version 2>/dev/null || echo 'no jj') is installed"
+  local e; e=$(jj -R "$wt" config set --workspace snapshot.auto-track 'none()' 2>&1) || die "could not turn off snapshot.auto-track in $wt: $e"
 }
 # The worktree's untracked files that are not ignored, each followed by a NUL.
 # jj lists them from a snapshot that tracks every file, of any size, and that
@@ -1798,7 +1801,7 @@ case "$cmd" in
     done
     miss=$(set -o pipefail; untracked | while IFS= read -r -d '' u; do
       for p; do [ "$p" != "$u" ] || continue 2; done
-      clean "$u" || u=$(q "$u"); printf '%s\n' "$u"
+      q "$u" # one inert shell word: ship hands it back after -- as listed
     done) || die "could not list the untracked files in $wt$([ "$tool" != jj ] || echo ', which needs jj 0.41 or later')"
     [ -z "$miss" ] || die "untracked files in $wt, so nothing was committed or pushed:
 $miss
@@ -1809,7 +1812,19 @@ Name each one to include after --, or remove or ignore it, then $cmd again."
       [ -n "$msg" ] || die "uncommitted changes in $wt: pass a commit message"
       if [ "$tool" = jj ]; then
         fs=(); for p; do p=${p//\\/\\\\}; p=${p//\"/\\\"}; fs+=("root-file:\"$p\""); done
-        [ $# = 0 ] || jjs file track "${fs[@]}"
+        if [ $# != 0 ]; then
+          c=$(jjn log --no-graph -r @ -T commit_id) || die "jj log failed in $wt"
+          e=$(jjn file track "${fs[@]}" 2>&1) || die "jj file track failed in $wt: $e"
+          case "$e" in *"Refused to snapshot"*)
+            # jj tracks the rest and names the refused raw: named here, escaped,
+            # and those it did track untracked again, so nothing is left behind.
+            bad=$(untracked | while IFS= read -r -d '' u; do for p; do [ "$p" != "$u" ] || { q "$u"; break; }; done; done)
+            un=(); while IFS= read -r -d '' u; do u=${u//\\/\\\\}; un+=("root-file:\"${u//\"/\\\"}\""); done < <(jjn diff --from "$c" --to @ -T 'if(status != "modified", path ++ "\0")')
+            [ ${#un[@]} = 0 ] || jjn file untrack "${un[@]}" >/dev/null 2>&1
+            die "jj refused a new file over snapshot.max-new-file-size (1 MiB by default) in $wt, so nothing was committed or pushed:
+$bad" ;;
+          esac
+        fi
         [ -z "$(jjn diff --summary)" ] || { jjs commit -m "$msg"; made=1; }
       else
         # Tracked changes and the named files alone; a refused commit (a

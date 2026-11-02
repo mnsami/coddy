@@ -205,10 +205,10 @@ leg() {
   t 0 "$tool: that refusal names the owner" says "belongs to session sess-a" as sess-b 1 push "$n" "feat($n): thing"
   # Nothing untracked is committed unless it is named after --.
   t 1 "$tool: push refuses untracked files" run push "$n" "feat($n): thing"
-  t 0 "$tool: naming each on its own line" says '^\.env$' run push "$n" "feat($n): thing"
+  t 0 "$tool: naming each on its own line, in single quotes" says "^'\.env'\$" run push "$n" "feat($n): thing"
   : > ".worktrees/$n/s.txt" # verify passes, so ship reaches the commit
   t 1 "$tool: so does ship" run ship "$n" "feat($n): thing"
-  t 0 "$tool: naming each on its own line" says '^\.env$' run ship "$n" "feat($n): thing"
+  t 0 "$tool: naming each on its own line, in single quotes" says "^'\.env'\$" run ship "$n" "feat($n): thing"
   rm ".worktrees/$n/s.txt"
   t 1 "$tool: naming only some of them is refused too" run push "$n" "feat($n): thing" -- a.txt
   t 1 "$tool: a named path not in the worktree is refused" run push "$n" "feat($n): thing" -- a.txt .env nope.txt
@@ -221,12 +221,19 @@ leg() {
   t 0 "$tool: branch reached the remote" git ls-remote --exit-code origin "refs/heads/feat/$n-thing"
   if [ "$tool" = jj ]; then
     t 0 "jj: create turns auto-track off in the issue's workspace" test "$(jj -R ".worktrees/$n" config get snapshot.auto-track)" = 'none()'
+    # A jj before 0.41, which has no --no-integrate-operation for push's untracked list.
+    mkdir -p "$tmp/oldjj"; printf '#!/bin/sh\nfor a; do [ "$a" != --no-integrate-operation ] || exit 2; done\nexec %s "$@"\n' "$(command -v jj)" > "$tmp/oldjj/jj"; chmod +x "$tmp/oldjj/jj"
+    PATH="$tmp/oldjj:$PATH" t 1 "jj: create refuses a jj before 0.41" run create "$n" "feat/$n-thing"
+    PATH="$tmp/oldjj:$PATH" t 0 "jj: naming the version it needs" says 'jj 0\.41 or later' run create "$n" "feat/$n-thing"
     head -c 2097152 /dev/zero > ".worktrees/$n/big.bin"; was=$(git ls-remote origin "refs/heads/feat/$n-thing")
-    t 0 "jj: a new file over snapshot.max-new-file-size is listed as untracked" says '^big\.bin$' run push "$n" "feat($n): big"
+    t 0 "jj: a new file over snapshot.max-new-file-size is listed as untracked" says "^'big\.bin'\$" run push "$n" "feat($n): big"
     t 1 "jj: named, it is refused" run push "$n" "feat($n): big" -- big.bin
     t 0 "jj: naming it" says 'max-new-file-size.*big\.bin' sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' push $n 'feat($n): big' -- big.bin 2>&1 | tr '\n' ' '"
     t 0 "jj: and nothing reached the remote" test "$(git ls-remote origin "refs/heads/feat/$n-thing")" = "$was"
-    rm ".worktrees/$n/big.bin"
+    echo s > ".worktrees/$n/small.txt"
+    t 1 "jj: named with a file it can track, it is refused" run push "$n" "feat($n): big" -- small.txt big.bin
+    t 0 "jj: and that file is left untracked" says "^'small\.txt'\$" run push "$n" "feat($n): big" -- big.bin
+    rm ".worktrees/$n/big.bin" ".worktrees/$n/small.txt"
   fi
   rm -f ".git/coddy/$n.branch" # a worktree made before create recorded the branch
   t 1 "$tool: push refuses a worktree with no recorded branch" run push "$n"
