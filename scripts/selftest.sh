@@ -414,6 +414,20 @@ leg() {
   t 0 "$tool: sweep moves a merged worktree whose ignored files cannot be listed" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p (ignored files kept under .git/coddy/swept/$p)'"
   chmod 755 ".git/coddy/swept/$p/locked" ".worktrees/$p/locked" 2>/dev/null
   t 0 "$tool: and keeps them" grep -qx db ".git/coddy/swept/$p/locked/db"
+  # jj names paths it never writes to disk (one outside the sparse patterns, a
+  # submodule's gitlink): the ignored files are the ones on disk it does not
+  # name, however few. The gitlink goes from main again once merged.
+  if [ "$tool" = jj ]; then
+    for k in sparse submodule; do
+      [ "$k" = sparse ] || (cd "$tmp/merge$p" && git fetch -q origin && git checkout -q -b "sub$p" "origin/ext/pr-$p" && git update-index --add --cacheinfo "160000,$(git rev-parse HEAD),sub" && git commit -q -m "sub $p" && git push -q origin "HEAD:ext/pr-$p" && git checkout -q main && git merge -q --no-ff -m "merge sub $p" "sub$p" && git rm -q --cached sub && git commit -q -m "drop sub $p" && git push -q origin main) >/dev/null 2>&1
+      rm -rf ".git/coddy/swept/$p"
+      run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
+      [ "$k" = submodule ] || jj -R ".worktrees/$p" sparse set --clear --add nothing >/dev/null 2>&1
+      echo secret > ".worktrees/$p/.env"
+      t 0 "jj: sweep moves a merged $k workspace holding ignored files" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p (ignored files kept under .git/coddy/swept/$p)'"
+      t 0 "jj: and keeps them in the $k workspace's copy" grep -qx secret ".git/coddy/swept/$p/.env"
+    done
+  fi
   # Submodules checked out in a git worktree keep their repositories in its
   # git dir, which git refuses to remove: the worktree stays, as before.
   if [ "$tool" = git ]; then

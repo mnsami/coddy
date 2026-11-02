@@ -1874,18 +1874,22 @@ $bad" ;;
       [ -n "$id" ] && git log -p --no-merges "$fork..origin/$base" 2>/dev/null | git patch-id --stable | grep -q "^$id "
     }
     # The worktree, clean, holds files its tool ignores. jj lists none, so
-    # they are what is on disk beyond the files jj tracks; a listing that
-    # fails counts as some: the worktree is moved, never deleted.
+    # they are the paths on disk its commit does not name (it names some it
+    # never writes: a gitlink, a path outside the sparse patterns), each
+    # quoted to one line and matched whole; a listing that fails counts as
+    # some: the worktree is moved, never deleted.
     ignored() {
       local n m
       if [ "$tool" = jj ]; then
-        n=$(jj -R "$wt" --ignore-working-copy file list -r @ -T '"x"' 2>/dev/null) || return 0
-        m=$(set -o pipefail; find "$wt" \( -path "$wt/.jj" -o -path "$wt/.git" \) -prune -o ! -type d -print 2>/dev/null | wc -l) || return 0
-        [ "$m" -gt "${#n}" ]
+        n=$(set -o pipefail; jj -R "$wt" --ignore-working-copy file list -r @ -T '"./" ++ path ++ "\0"' 2>/dev/null | lines) || return 0
+        m=$(set -o pipefail; cd "$wt" && find . \( -path ./.jj -o -path ./.git \) -prune -o ! -type d -print0 2>/dev/null | lines) || return 0
+        [ -n "$m" ] || return 1
+        LC_ALL=C grep -qFxv -e "$n" <<<"$m"; [ $? -ne 1 ]
       else
         n=$(git -C "$wt" ls-files -o -i --exclude-standard --directory 2>/dev/null) || return 0; [ -n "$n" ]
       fi
     }
+    lines() { while IFS= read -r -d '' p; do printf '%q\n' "$p"; done; }
     for rec in .git/coddy/*.branch; do
       issue=$(basename "$rec" .branch); wt=".worktrees/$issue"; branch=$(cat "$rec" 2>/dev/null)
       # swept is where the copies live, never an issue's lock to remove.
