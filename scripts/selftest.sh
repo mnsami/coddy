@@ -225,6 +225,9 @@ leg() {
     mkdir -p "$tmp/oldjj"; printf '#!/bin/sh\nfor a; do [ "$a" != --no-integrate-operation ] || exit 2; done\nexec %s "$@"\n' "$(command -v jj)" > "$tmp/oldjj/jj"; chmod +x "$tmp/oldjj/jj"
     PATH="$tmp/oldjj:$PATH" t 1 "jj: create refuses a jj before 0.41" run create "$n" "feat/$n-thing"
     PATH="$tmp/oldjj:$PATH" t 0 "jj: naming the version it needs" says 'jj 0\.41 or later' run create "$n" "feat/$n-thing"
+    # The setting lives outside the project (jj's own config dir), so a re-run that finds it writes nothing.
+    mkdir -p "$tmp/rojj"; printf '#!/bin/sh\ncase " $* " in *" config set "*) exit 3 ;; esac\nexec %s "$@"\n' "$(command -v jj)" > "$tmp/rojj/jj"; chmod +x "$tmp/rojj/jj"
+    PATH="$tmp/rojj:$PATH" t 0 "jj: create on a workspace that already tracks no new file writes no config" run create "$n" "feat/$n-thing"
     head -c 2097152 /dev/zero > ".worktrees/$n/big.bin"; was=$(git ls-remote origin "refs/heads/feat/$n-thing")
     t 0 "jj: a new file over snapshot.max-new-file-size is listed as untracked" says "^'big\.bin'\$" run push "$n" "feat($n): big"
     t 1 "jj: named, it is refused" run push "$n" "feat($n): big" -- big.bin
@@ -261,6 +264,9 @@ leg() {
   was=$(git ls-remote origin "refs/heads/ext/pr-$p")
   t 0 "$tool: push to a continued branch" as ${w% *} ${w#* } push "$p" "fix($p): more" -- more.txt # as the winner: push is the owner's too
   t 1 "$tool: that push moved the branch on the remote" test "$(git ls-remote origin "refs/heads/ext/pr-$p")" = "$was"
+  mv ".worktrees/$p/more.txt" ".worktrees/$p/moved$p.txt" # per leg, as more.txt is
+  out=$(as ${w% *} ${w#* } push "$p" "fix($p): moved" -- "moved$p.txt" 2>&1)
+  t 0 "$tool: a rename's push prints both its paths" sh -c 'printf "%s\n" "$1" | grep -qx "committed: more\.txt" && printf "%s\n" "$1" | grep -qx "committed: moved$2\.txt"' _ "$out" "$p"
   t 0 "$tool: create refuses a branch that belongs to another issue" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' create 11 feat/$n-thing 2>&1 | grep -q 'belongs to issue $n'"
   t 1 "$tool: create refuses another branch for an existing worktree" run create "$n" "feat/$n-other"
   t 0 "$tool: create refuses the default branch" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' create 12 main 2>&1 | grep -q 'default branch'"

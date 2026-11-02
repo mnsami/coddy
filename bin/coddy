@@ -1579,6 +1579,8 @@ notrack() {
   # push lists the untracked files with --no-integrate-operation (jj 0.41), so
   # a jj without it is refused here, before the issue is claimed.
   jj -R "$wt" --no-integrate-operation --ignore-working-copy log --no-graph -r @ -T '""' >/dev/null 2>&1 || die "coddy needs jj 0.41 or later in $wt, and $(jj --version 2>/dev/null || echo 'no jj') is installed"
+  # Written once: jj keeps it outside the project, so a re-run writes nothing.
+  [ "$(jj -R "$wt" config get snapshot.auto-track 2>/dev/null)" != 'none()' ] || return 0
   local e; e=$(jj -R "$wt" config set --workspace snapshot.auto-track 'none()' 2>&1) || die "could not turn off snapshot.auto-track in $wt: $e"
 }
 # The worktree's untracked files that are not ignored, each followed by a NUL.
@@ -1834,7 +1836,7 @@ $bad" ;;
       fi
     fi
     if [ -n "$made" ]; then
-      if [ "$tool" = jj ]; then jj -R "$wt" --ignore-working-copy diff -r @- -T 'path ++ "\0"'; else git -C "$wt" diff-tree --no-commit-id --name-only -r -z HEAD; fi |
+      if [ "$tool" = jj ]; then jj -R "$wt" --ignore-working-copy diff -r @- -T 'if(status == "renamed", source.path() ++ "\0") ++ path ++ "\0"'; else git -C "$wt" diff-tree --no-commit-id --name-only -r -z HEAD; fi |
         while IFS= read -r -d '' p; do clean "$p" || p=$(q "$p"); echo "committed: $p"; done
     fi
     if [ "$tool" = jj ]; then
