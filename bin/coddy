@@ -1873,6 +1873,18 @@ $bad" ;;
       id=$(git diff "$fork" "$tip" 2>/dev/null | git patch-id --stable | cut -d' ' -f1)
       [ -n "$id" ] && git log -p --no-merges "$fork..origin/$base" 2>/dev/null | git patch-id --stable | grep -q "^$id "
     }
+    # The worktree, clean, holds files its tool ignores. jj lists none, so
+    # they are what is on disk beyond the files jj tracks; a listing that
+    # fails counts as some: the worktree is moved, never deleted.
+    ignored() {
+      local n
+      if [ "$tool" = jj ]; then
+        n=$(jj -R "$wt" --ignore-working-copy file list -r @ -T '"x"' 2>/dev/null) || return 0
+        [ "$(find "$wt" \( -path "$wt/.jj" -o -path "$wt/.git" \) -prune -o ! -type d -print 2>/dev/null | wc -l)" -gt "${#n}" ]
+      else
+        n=$(git -C "$wt" ls-files -o -i --exclude-standard --directory 2>/dev/null) || return 0; [ -n "$n" ]
+      fi
+    }
     for rec in .git/coddy/*.branch; do
       issue=$(basename "$rec" .branch); wt=".worktrees/$issue"; branch=$(cat "$rec" 2>/dev/null)
       case "$issue" in ''|*[!A-Za-z0-9_-]*) continue ;; esac
@@ -1896,14 +1908,27 @@ $bad" ;;
         echo "kept: $issue (merged into $base, session $sid still holds it)"; continue
       fi
       if [ -n "$dirty" ]; then echo "kept: $issue (merged into $base, but $wt holds uncommitted work)"; continue; fi
+      # Ignored files (a .env, a local database) are in no commit: the
+      # worktree moves whole to .git/coddy/swept/<issue>, as plain files, and
+      # stays there until the user deletes it. git forgets it by its missing
+      # path (jj's git worktree too); a copy already there is never touched.
+      keep=".git/coddy/swept/$issue" moved=
+      if ignored; then
+        if [ -e "$keep" ] || [ -L "$keep" ]; then echo "kept: $issue (merged into $base, but $keep already holds an earlier copy)"; continue; fi
+        # A link is never moved, and only a worktree's .git file and a
+        # workspace's .jj (its repo a file) are dropped, never a repository.
+        [ ! -L "$wt" ] && mkdir -p .git/coddy/swept 2>/dev/null && mv "$wt" "$keep" 2>/dev/null || continue
+        rm -f "$keep/.git"; [ ! -f "$keep/.jj/repo" ] || rm -rf "$keep/.jj"
+        git worktree prune >/dev/null 2>&1; moved=" (ignored files kept under $keep)"
+      fi
       if [ "$tool" = jj ]; then
-        jj workspace forget "$issue" >/dev/null 2>&1 || continue
+        jj workspace forget "$issue" >/dev/null 2>&1 || [ -n "$moved" ] || continue
         rm -rf "$wt"; jj bookmark forget "$branch" >/dev/null 2>&1
       else
-        git worktree remove "$wt" >/dev/null 2>&1 || continue
+        [ -n "$moved" ] || git worktree remove "$wt" >/dev/null 2>&1 || continue
         git branch -D "$branch" >/dev/null 2>&1
       fi
-      rm -rf ".git/coddy/$issue" "$rec" ".git/coddy/$issue.base"; echo "cleaned: $issue"
+      rm -rf ".git/coddy/$issue" "$rec" ".git/coddy/$issue.base"; echo "cleaned: $issue$moved"
     done
     exit 0 ;;
 

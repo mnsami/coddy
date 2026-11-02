@@ -355,6 +355,7 @@ leg() {
   mkdir -p ".git/coddy/$p" && echo "phase=done" > ".git/coddy/$p/state"
   t 0 "$tool: sweep reports a merged, clean worktree as cleaned" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
   t 1 "$tool: sweep removed that worktree" test -e ".worktrees/$p"
+  t 1 "$tool: and kept no copy of a worktree with no ignored files" test -e ".git/coddy/swept/$p"
   t 1 "$tool: sweep removed its lock and branch record" test -e ".git/coddy/$p" -o -e ".git/coddy/$p.branch"
   t 1 "$tool: sweep removed its state" test -e ".git/coddy/$p/state"
   t 1 "$tool: sweep removed its local branch" git show-ref -q "refs/heads/ext/pr-$p"
@@ -362,6 +363,24 @@ leg() {
   # The same worktree back, held by this session: swept as before.
   run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
   t 0 "$tool: sweep cleans a merged worktree this session holds" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
+  # Ignored files (a .env) are in no commit: the worktree moves whole under
+  # .git/coddy/swept/<issue>, its .git and .jj dropped, unless a copy is there.
+  run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
+  echo .env >> .git/info/exclude; echo secret > ".worktrees/$p/.env"; mkdir -p ".git/coddy/swept/$p"
+  kept "a merged worktree holding ignored files while an earlier copy is kept"
+  t 0 "$tool: and names that copy" says "kept: $p (merged into main, but .git/coddy/swept/$p already holds an earlier copy)" run sweep
+  t 0 "$tool: and leaves the copy as it was" test -z "$(ls -A ".git/coddy/swept/$p")"
+  rmdir ".git/coddy/swept/$p"
+  t 0 "$tool: sweep cleans a merged worktree holding ignored files, keeping them" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p (ignored files kept under .git/coddy/swept/$p)'"
+  t 0 "$tool: the ignored file is in the swept copy" grep -qx secret ".git/coddy/swept/$p/.env"
+  t 1 "$tool: which holds no .git" test -e ".git/coddy/swept/$p/.git"
+  t 1 "$tool: and no .jj" test -e ".git/coddy/swept/$p/.jj"
+  t 1 "$tool: the worktree is gone" test -e ".worktrees/$p"
+  t 1 "$tool: git lists it no longer" sh -c "git worktree list --porcelain | grep -qx 'worktree .*/\.worktrees/$p'"
+  [ "$tool" = git ] || t 1 "jj: jj lists it no longer" sh -c "jj workspace list --ignore-working-copy | grep -q '^$p:'"
+  t 1 "$tool: its lock and branch record are gone" test -e ".git/coddy/$p" -o -e ".git/coddy/$p.branch"
+  t 1 "$tool: and its local branch" git show-ref -q "refs/heads/ext/pr-$p"
+  sed -i.bak '/^\.env$/d' .git/info/exclude && rm -f .git/info/exclude.bak
   # Squash and rebase merges leave no ancestor, so sweep finds the branch's
   # two commits in main by patch id. A branch deleted from the remote
   # without a merge is not finished.
