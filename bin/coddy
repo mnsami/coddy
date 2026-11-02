@@ -1581,7 +1581,16 @@ notrack() {
   jj -R "$wt" --no-integrate-operation --ignore-working-copy log --no-graph -r @ -T '""' >/dev/null 2>&1 || die "coddy needs jj 0.41 or later in $wt, and $(jj --version 2>/dev/null || echo 'no jj') is installed"
   # Written once: jj keeps it outside the project, so a re-run writes nothing.
   [ "$(jj -R "$wt" config get snapshot.auto-track 2>/dev/null)" != 'none()' ] || return 0
-  local e; e=$(jj -R "$wt" config set --workspace snapshot.auto-track 'none()' 2>&1) || die "could not turn off snapshot.auto-track in $wt: $e"
+  local e; e=$(jj -R "$wt" config set --workspace snapshot.auto-track 'none()' 2>&1) || nowrite "could not turn off snapshot.auto-track in $wt" "$e" "jj keeps this workspace's settings outside the project. Set it once"
+}
+# A write that fails names the sandbox only when the system says so, with
+# the one way past it, for the user; $3, why the sandbox blocks it, defaults
+# to the git hooks.
+nowrite() {
+  case "$2" in
+    *'Operation not permitted'*) die "$1: $2. A sandbox blocks it, since ${3:-git runs these hooks outside the sandbox. Install them once} from your own terminal, not through an agent: cd $(printf %q "$root") && $(printf %q "$(cd "${src%/*}" && pwd)/${src##*/}") start $issue $(printf %q "$branch"). Later runs change nothing there, so they pass inside the sandbox." ;;
+    *) die "$1: $2" ;;
+  esac
 }
 # The worktree's untracked files that are not ignored, each followed by a NUL.
 # jj lists them from a snapshot that tracks every file, of any size, and that
@@ -1624,14 +1633,6 @@ hooks() {
   local q="'\''" c d e f g h p o m s new=""
   { [ -L .git/hooks ] || [ -L .git/hooks/coddy ]; } && die ".git/hooks or .git/hooks/coddy is a symlink: coddy writes its git hooks into .git/hooks/coddy, which a sandbox keeps out of an agent's reach. Replace the link with a directory (to keep hooks in the directory it links to, point core.hooksPath there instead), then run /coddy:start $issue again."
   c="$(cd "${src%/*}" && pwd)/${src##*/}" || die "could not find $src"
-  # A write that fails names the sandbox only when the system says so, with
-  # the one way past it, for the user.
-  nowrite() {
-    case "$2" in
-      *'Operation not permitted'*) die "$1: $2. A sandbox blocks it, since git runs these hooks outside the sandbox. Install them once from your own terminal, not through an agent: cd $(printf %q "$root") && $(printf %q "$c") start $issue $(printf %q "$branch"). Later runs change nothing there, so they pass inside the sandbox." ;;
-      *) die "$1: $2" ;;
-    esac
-  }
   [ -d .git/hooks/coddy ] || { e=$(mkdir -p .git/hooks/coddy 2>&1) || nowrite "could not make .git/hooks/coddy" "$e"; }
   d=$(cd .git/hooks/coddy && pwd) || die "cannot enter .git/hooks/coddy"
   # Hook $1 holds $2 unless it does already: written aside under a dot name and
@@ -1829,10 +1830,12 @@ $bad" ;;
         fi
         [ -z "$(jjn diff --summary)" ] || { jjs commit -m "$msg"; made=1; }
       else
-        # Tracked changes and the named files alone; a refused commit (a
-        # pre-commit hook) leaves nothing staged.
+        # Tracked changes and the named files alone. A refused commit (a
+        # pre-commit hook) unstages the named files that were untracked and
+        # nothing else, so a merge, cherry-pick or revert in progress keeps its state.
+        new=(); [ $# = 0 ] || while IFS= read -r -d '' u; do new+=("$u"); done < <(git --literal-pathspecs -C "$wt" ls-files -z --others --exclude-standard -- "$@")
         { git -C "$wt" add -u && { [ $# = 0 ] || git --literal-pathspecs -C "$wt" add -- "$@"; } &&
-          { git -C "$wt" diff --cached --quiet || { git -C "$wt" commit -q -m "$msg" && made=1; }; }; } || { git -C "$wt" reset -q; die "commit failed"; }
+          { git -C "$wt" diff --cached --quiet || { git -C "$wt" commit -q -m "$msg" && made=1; }; }; } || { [ ${#new[@]} = 0 ] || git --literal-pathspecs -C "$wt" reset -q -- "${new[@]}"; die "commit failed"; }
       fi
     fi
     if [ -n "$made" ]; then

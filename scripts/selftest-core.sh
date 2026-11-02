@@ -767,12 +767,24 @@ git config --remove-section 'includeIf.onbranch:feat/**'; rm "$tmp/prev/post-com
 t 1 "githook: a refused commit runs no previous hook" test -s "$tmp/prev.log"
 t 0 "githook: a passed commit runs the previous pre-commit" sh -c "git -C .worktrees/1 commit -q --allow-empty -m x && grep -qx 'pre-commit ' '$tmp/prev.log'"
 PREV_EXIT=1 t 1 "githook: whose failure fails the commit" git -C .worktrees/1 commit -q --allow-empty -m x
-# A push whose commit the hook refuses leaves nothing staged: a named file stays untracked.
+# A push whose commit the hook refuses unstages only what it named: a named
+# file stays untracked, the tracked change stays as git add -u staged it.
 echo y >> .worktrees/1/a.txt; echo s > .worktrees/1/.env
 PREV_EXIT=1 t 1 "push: a commit the previous pre-commit refuses fails the push" run push 1 "feat(1): refused" -- .env
 t 0 "push: leaving the named file untracked, not added" test "$(git -C .worktrees/1 status --porcelain -- .env)" = "?? .env"
-t 0 "push: and the tracked change unstaged" test "$(git -C .worktrees/1 status --porcelain -- a.txt)" = " M a.txt"
-git -C .worktrees/1 checkout -q a.txt; rm .worktrees/1/.env
+t 0 "push: and the tracked change as git add -u staged it" test "$(git -C .worktrees/1 status --porcelain -- a.txt)" = "M  a.txt"
+git -C .worktrees/1 checkout -q HEAD -- a.txt
+# A merge whose resolution the hook refuses stays a merge: push resets no
+# MERGE_HEAD, so the next ship still commits it with both parents.
+tip=$(git -C .worktrees/1 rev-parse HEAD)
+git -C .worktrees/1 checkout -q -b side; echo side > .worktrees/1/a.txt; git -C .worktrees/1 commit -q --no-verify -am side
+git -C .worktrees/1 checkout -q feat/1-thing; echo mine > .worktrees/1/a.txt; git -C .worktrees/1 commit -q --no-verify -am mine
+git -C .worktrees/1 merge -q side >/dev/null 2>&1; echo both > .worktrees/1/a.txt; git -C .worktrees/1 add a.txt
+PREV_EXIT=1 t 1 "push: a merge commit the previous pre-commit refuses fails the push" run push 1 "feat(1): merge" -- .env
+t 0 "push: leaving the merge in progress" git -C .worktrees/1 rev-parse -q --verify MERGE_HEAD
+t 0 "push: its resolution staged" test "$(git -C .worktrees/1 status --porcelain -- a.txt)" = "M  a.txt"
+t 0 "push: and the named file untracked" test "$(git -C .worktrees/1 status --porcelain -- .env)" = "?? .env"
+git -C .worktrees/1 merge --abort; git -C .worktrees/1 reset -q --hard "$tip"; git -C .worktrees/1 branch -q -D side; rm .worktrees/1/.env
 PREV_EXIT=1 t 1 "githook: a previous pre-push's failure fails the push" git -C .worktrees/1 push -q origin HEAD
 t 0 "githook: which gets the push's arguments and stdin" sh -c "git -C .worktrees/1 push -q origin HEAD && grep -q '^pre-push origin ' '$tmp/prev.log' && grep -q ' refs/heads/feat/1-thing [0-9a-f]*\$' '$tmp/prev.log'"
 t 0 "githook: a commit runs the previous commit-msg" sh -c "git -C .worktrees/1 commit -q --allow-empty -m x && grep -q '^commit-msg .*COMMIT_EDITMSG\$' '$tmp/prev.log'"

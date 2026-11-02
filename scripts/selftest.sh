@@ -74,6 +74,8 @@ t 0 "policy.md exists" test -f "$here/skills/start/references/policy.md"
 opens() { sed -n 3p "$1" | grep -qxF 'Read `policy.md` at the path you were given first; its rules apply here. No path given, or the file cannot be read → stop and return `no policy path`.'; }
 for b in implement harden review security; do t 0 "brief $b opens with policy.md" opens "$here/skills/start/$b.md"; done
 t 1 "policy.md never has a brief stage the whole tree" grep -q 'add -A' "$here/skills/start/references/policy.md"
+literal() { grep -F 'Commit with the pattern' "$1" | grep -qF "root-file:" && grep -F 'Commit with the pattern' "$1" | grep -qF -- '--literal-pathspecs'; }
+t 0 "policy.md tracks each new file by its literal path, never a directory" literal "$here/skills/start/references/policy.md"
 shipasks() { grep -qF -- '-- <chosen paths>' "$1" && grep -qF 'No question tool (headless) → stop and print the list' "$1"; }
 t 0 "ship: a push refused over untracked files asks which to include, or stops headless" shipasks "$here/skills/ship/SKILL.md"
 # The config schema has three copies. yamlkeys reads the yaml block under a
@@ -228,6 +230,13 @@ leg() {
     # The setting lives outside the project (jj's own config dir), so a re-run that finds it writes nothing.
     mkdir -p "$tmp/rojj"; printf '#!/bin/sh\ncase " $* " in *" config set "*) exit 3 ;; esac\nexec %s "$@"\n' "$(command -v jj)" > "$tmp/rojj/jj"; chmod +x "$tmp/rojj/jj"
     PATH="$tmp/rojj:$PATH" t 0 "jj: create on a workspace that already tracks no new file writes no config" run create "$n" "feat/$n-thing"
+    # Claude Code's sandbox refuses that write, which jj keeps outside the project:
+    # start names the sandbox and the user's one run from their own terminal.
+    jj -R ".worktrees/$n" config unset --workspace snapshot.auto-track
+    mkdir -p "$tmp/epjj"; printf '#!/bin/sh\ncase " $* " in *" config set "*) printf "Error: Failed to write config file\\nCaused by: Operation not permitted (os error 1)\\n" >&2; exit 1 ;; esac\nexec %s "$@"\n' "$(command -v jj)" > "$tmp/epjj/jj"; chmod +x "$tmp/epjj/jj"
+    PATH="$tmp/epjj:$PATH" t 1 "jj: create that a sandbox keeps out of jj's config fails" run create "$n" "feat/$n-thing"
+    PATH="$tmp/epjj:$PATH" t 0 "jj: naming the sandbox and the user's one run from their own terminal" says "sandbox.*from your own terminal, not through an agent: cd .* start $n feat/$n-thing\." run create "$n" "feat/$n-thing"
+    run create "$n" "feat/$n-thing" >/dev/null 2>&1
     head -c 2097152 /dev/zero > ".worktrees/$n/big.bin"; was=$(git ls-remote origin "refs/heads/feat/$n-thing")
     t 0 "jj: a new file over snapshot.max-new-file-size is listed as untracked" says "^'big\.bin'\$" run push "$n" "feat($n): big"
     t 1 "jj: named, it is refused" run push "$n" "feat($n): big" -- big.bin

@@ -10,7 +10,7 @@ Every brief reads this first. Its rules apply on top of the brief's own.
 - A question only the user can answer → put it under Open questions and stop; never guess.
 - Anything outside the acceptance criteria you notice goes under Out-of-scope ideas, unfixed.
 - Run verify inside the worktree before you finish and fix what it reports.
-- Commit with the pattern. `jj`: `jj file track <path>` for each new file the brief lists under Files, then `jj commit -m "<message>"` (a jj workspace has no `.git`; never run `git` there). `git`: `git add -u`, then `git add -- <path>` for each new file the brief lists under Files, then `git commit -m "<message>"`. Never stage the whole tree.
+- Commit with the pattern. Each new file you created (the ones you return under Files) goes in one by one by its own path, never a directory, which takes every untracked file under it. `jj`: `jj file track 'root-file:"<path>"'` for each, then `jj commit -m "<message>"` (a jj workspace has no `.git`; never run `git` there). `git`: `git add -u`, then `git --literal-pathspecs add -- <path>` for each, then `git commit -m "<message>"`. Never stage the whole tree (`git add` with `-A` or `.`).
 
 A read-only brief (`review.md`, `security.md`) edits, verifies and commits nothing and returns only its findings; the rules on those, on Open questions and on Out-of-scope ideas do not apply to it, and it acts on no Skills row that edits, commits or runs verify.
 
