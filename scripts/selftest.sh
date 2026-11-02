@@ -73,6 +73,9 @@ t 1 "no skill names a vendor skill" grep -rqE 'superpowers|code-review:' "$here/
 t 0 "policy.md exists" test -f "$here/skills/start/references/policy.md"
 opens() { sed -n 3p "$1" | grep -qxF 'Read `policy.md` at the path you were given first; its rules apply here. No path given, or the file cannot be read → stop and return `no policy path`.'; }
 for b in implement harden review security; do t 0 "brief $b opens with policy.md" opens "$here/skills/start/$b.md"; done
+t 1 "policy.md never has a brief stage the whole tree" grep -q 'add -A' "$here/skills/start/references/policy.md"
+shipasks() { grep -qF -- '-- <chosen paths>' "$1" && grep -qF 'No question tool (headless) → stop and print the list' "$1"; }
+t 0 "ship: a push refused over untracked files asks which to include, or stops headless" shipasks "$here/skills/ship/SKILL.md"
 # The config schema has three copies. yamlkeys reads the yaml block under a
 # "## Config" heading (README comments out its jira lines, so a leading "# "
 # is dropped), naming a nested key parent.child and leaving out a bare
@@ -196,12 +199,35 @@ leg() {
   t 0 "$tool: the owner's process under a new session id (/clear) may write" as sess-b $$ state "$n" round=1
   run claim "$n" >/dev/null 2>&1 # the lock back to this session id
   t 1 "$tool: state refuses an issue with no claim" run state 999 phase=x
-  echo x > ".worktrees/$n/a.txt"
+  echo x > ".worktrees/$n/a.txt"; echo secret > ".worktrees/$n/.env"
   t 1 "$tool: push refuses uncommitted work without a message" run push "$n"
   t 1 "$tool: push refuses another session's worktree" as sess-b 1 push "$n" "feat($n): thing"
   t 0 "$tool: that refusal names the owner" says "belongs to session sess-a" as sess-b 1 push "$n" "feat($n): thing"
-  t 0 "$tool: push commits and pushes" run push "$n" "feat($n): thing"
+  # Nothing untracked is committed unless it is named after --.
+  t 1 "$tool: push refuses untracked files" run push "$n" "feat($n): thing"
+  t 0 "$tool: naming each on its own line" says '^\.env$' run push "$n" "feat($n): thing"
+  : > ".worktrees/$n/s.txt" # verify passes, so ship reaches the commit
+  t 1 "$tool: so does ship" run ship "$n" "feat($n): thing"
+  t 0 "$tool: naming each on its own line" says '^\.env$' run ship "$n" "feat($n): thing"
+  rm ".worktrees/$n/s.txt"
+  t 1 "$tool: naming only some of them is refused too" run push "$n" "feat($n): thing" -- a.txt
+  t 1 "$tool: a named path not in the worktree is refused" run push "$n" "feat($n): thing" -- a.txt .env nope.txt
+  t 0 "$tool: naming it" says 'nope\.txt' run push "$n" "feat($n): thing" -- a.txt .env nope.txt
+  t 2 "$tool: and nothing reached the remote" git ls-remote --exit-code origin "refs/heads/feat/$n-thing"
+  rm ".worktrees/$n/.env"
+  out=$(run push "$n" "feat($n): thing" -- a.txt 2>&1); r=$? # read whole: a grep -q that stops at the first line would cut the push short
+  t 0 "$tool: push commits a named file and pushes" test "$r" = 0
+  t 0 "$tool: and prints it" sh -c 'printf "%s\n" "$1" | grep -qx "committed: a\.txt"' _ "$out"
   t 0 "$tool: branch reached the remote" git ls-remote --exit-code origin "refs/heads/feat/$n-thing"
+  if [ "$tool" = jj ]; then
+    t 0 "jj: create turns auto-track off in the issue's workspace" test "$(jj -R ".worktrees/$n" config get snapshot.auto-track)" = 'none()'
+    head -c 2097152 /dev/zero > ".worktrees/$n/big.bin"; was=$(git ls-remote origin "refs/heads/feat/$n-thing")
+    t 0 "jj: a new file over snapshot.max-new-file-size is listed as untracked" says '^big\.bin$' run push "$n" "feat($n): big"
+    t 1 "jj: named, it is refused" run push "$n" "feat($n): big" -- big.bin
+    t 0 "jj: naming it" says 'max-new-file-size.*big\.bin' sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' push $n 'feat($n): big' -- big.bin 2>&1 | tr '\n' ' '"
+    t 0 "jj: and nothing reached the remote" test "$(git ls-remote origin "refs/heads/feat/$n-thing")" = "$was"
+    rm ".worktrees/$n/big.bin"
+  fi
   rm -f ".git/coddy/$n.branch" # a worktree made before create recorded the branch
   t 1 "$tool: push refuses a worktree with no recorded branch" run push "$n"
   t 0 "$tool: that refusal names the command that records it" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' push $n 2>&1 | grep -q 'issue.sh create $n'"
@@ -226,7 +252,7 @@ leg() {
   kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
   echo "more $p" > ".worktrees/$p/more.txt" # per leg: the other leg's is in main by now
   was=$(git ls-remote origin "refs/heads/ext/pr-$p")
-  t 0 "$tool: push to a continued branch" as ${w% *} ${w#* } push "$p" "fix($p): more" # as the winner: push is the owner's too
+  t 0 "$tool: push to a continued branch" as ${w% *} ${w#* } push "$p" "fix($p): more" -- more.txt # as the winner: push is the owner's too
   t 1 "$tool: that push moved the branch on the remote" test "$(git ls-remote origin "refs/heads/ext/pr-$p")" = "$was"
   t 0 "$tool: create refuses a branch that belongs to another issue" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' create 11 feat/$n-thing 2>&1 | grep -q 'belongs to issue $n'"
   t 1 "$tool: create refuses another branch for an existing worktree" run create "$n" "feat/$n-other"
@@ -243,7 +269,7 @@ leg() {
   t 0 "$tool: claim the stacked issue" run claim "$q"
   t 0 "$tool: issue.sh status lists the base" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' status | grep -q '^bases: .*$q=feat/$n-thing'"
   echo s > ".worktrees/$q/s.txt"; was=$(git ls-remote origin "refs/heads/feat/$n-thing")
-  t 0 "$tool: push of the stacked branch" run push "$q" "feat($q): stacked"
+  t 0 "$tool: push of the stacked branch" run push "$q" "feat($q): stacked" -- s.txt
   t 0 "$tool: the stacked branch reached the remote" git ls-remote --exit-code origin "refs/heads/feat/$q-stack"
   t 0 "$tool: and the base branch did not move" test "$(git ls-remote origin "refs/heads/feat/$n-thing")" = "$was"
   # verify runs the config's command in the worktree and passes its exit code
@@ -320,7 +346,7 @@ leg() {
   for k in 40:squash 50:rebase 60:gone; do
     s=$((n + ${k%%:*})) m=${k#*:}
     run create "$s" "feat/$s-$m" >/dev/null 2>&1; run claim "$s" >/dev/null 2>&1
-    echo "$m" > ".worktrees/$s/$m.txt"; run push "$s" "feat($s): one" >/dev/null 2>&1
+    echo "$m" > ".worktrees/$s/$m.txt"; run push "$s" "feat($s): one" -- "$m.txt" >/dev/null 2>&1
     echo "$s" >> ".worktrees/$s/$m.txt"; run push "$s" "feat($s): two" >/dev/null 2>&1
     (git clone -q -b main "$tmp/origin.git" "$tmp/$m$s" && cd "$tmp/$m$s" && git commit -q --allow-empty -m "main moves on" && case $m in
       squash) git merge -q --squash "origin/feat/$s-$m" && git commit -q -m "feat($s): squashed" && git push -q origin main ;;
@@ -1346,7 +1372,7 @@ t 0 "pr check: and each issue was read once" test "$(grep -c 'api repos/OWNER/RE
 # into its history, and a newer one must not be taken for the issue's branch.
 # Last, because it moves main on the remote.
 if command -v jj >/dev/null; then
-  { run create 44 feat/44-thing; run claim 44; echo y > .worktrees/44/a.txt; run push 44 "feat(44): thing"
+  { run create 44 feat/44-thing; run claim 44; echo y > .worktrees/44/a.txt; run push 44 "feat(44): thing" -- a.txt
     git clone -q -b main "$tmp/origin.git" "$tmp/merger"
     (cd "$tmp/merger" && git merge -q --no-ff -m "merge 44" origin/feat/44-thing && git push -q origin main)
     jj git fetch; jj -R .worktrees/42 new feat/42-thing main@origin; echo z > .worktrees/42/a.txt; } >/dev/null 2>&1
