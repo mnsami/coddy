@@ -1877,17 +1877,19 @@ $bad" ;;
     # they are what is on disk beyond the files jj tracks; a listing that
     # fails counts as some: the worktree is moved, never deleted.
     ignored() {
-      local n
+      local n m
       if [ "$tool" = jj ]; then
         n=$(jj -R "$wt" --ignore-working-copy file list -r @ -T '"x"' 2>/dev/null) || return 0
-        [ "$(find "$wt" \( -path "$wt/.jj" -o -path "$wt/.git" \) -prune -o ! -type d -print 2>/dev/null | wc -l)" -gt "${#n}" ]
+        m=$(set -o pipefail; find "$wt" \( -path "$wt/.jj" -o -path "$wt/.git" \) -prune -o ! -type d -print 2>/dev/null | wc -l) || return 0
+        [ "$m" -gt "${#n}" ]
       else
         n=$(git -C "$wt" ls-files -o -i --exclude-standard --directory 2>/dev/null) || return 0; [ -n "$n" ]
       fi
     }
     for rec in .git/coddy/*.branch; do
       issue=$(basename "$rec" .branch); wt=".worktrees/$issue"; branch=$(cat "$rec" 2>/dev/null)
-      case "$issue" in ''|*[!A-Za-z0-9_-]*) continue ;; esac
+      # swept is where the copies live, never an issue's lock to remove.
+      case "$issue" in ''|swept|*[!A-Za-z0-9_-]*) continue ;; esac
       [ -n "$branch" ] && [ -e ".git/coddy/$issue" ] && [ -d "$wt" ] || continue
       # ponytail: compared as strings, so a session that reached its
       # worktree through a symlink is not recognised as being inside it.
@@ -1910,16 +1912,21 @@ $bad" ;;
       if [ -n "$dirty" ]; then echo "kept: $issue (merged into $base, but $wt holds uncommitted work)"; continue; fi
       # Ignored files (a .env, a local database) are in no commit: the
       # worktree moves whole to .git/coddy/swept/<issue>, as plain files, and
-      # stays there until the user deletes it. git forgets it by its missing
-      # path (jj's git worktree too); a copy already there is never touched.
+      # stays there until the user deletes it. git forgets that one worktree
+      # by its missing path (jj's git worktree too), never another whose
+      # directory is away; a copy already there is never touched.
       keep=".git/coddy/swept/$issue" moved=
       if ignored; then
         if [ -e "$keep" ] || [ -L "$keep" ]; then echo "kept: $issue (merged into $base, but $keep already holds an earlier copy)"; continue; fi
-        # A link is never moved, and only a worktree's .git file and a
-        # workspace's .jj (its repo a file) are dropped, never a repository.
-        [ ! -L "$wt" ] && mkdir -p .git/coddy/swept 2>/dev/null && mv "$wt" "$keep" 2>/dev/null || continue
+        # Submodules checked out in a git worktree keep their repositories in
+        # its git dir, which forgetting it would delete: it stays, as git
+        # refuses to remove it.
+        [ "$tool" = jj ] || [ ! -d "$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null)/modules" ] || continue
+        # A link is never moved, nor moved through, and only a worktree's .git
+        # file and a workspace's .jj (its repo a file) are dropped, never a repository.
+        [ ! -L "$wt" ] && [ ! -L .git/coddy/swept ] && mkdir -p .git/coddy/swept 2>/dev/null && mv "$wt" "$keep" 2>/dev/null || continue
         rm -f "$keep/.git"; [ ! -f "$keep/.jj/repo" ] || rm -rf "$keep/.jj"
-        git worktree prune >/dev/null 2>&1; moved=" (ignored files kept under $keep)"
+        git worktree remove "$wt" >/dev/null 2>&1; moved=" (ignored files kept under $keep)"
       fi
       if [ "$tool" = jj ]; then
         jj workspace forget "$issue" >/dev/null 2>&1 || [ -n "$moved" ] || continue
