@@ -633,6 +633,24 @@ HOME="$tmp" GIT_DIR="$tmp/origin.git" t 0 "shim: push commits with the environme
 was=$(git ls-remote origin refs/heads/feat/1-thing)
 echo ok > .worktrees/1/ok.txt
 t 0 "verify passes now" run verify 1
+# cfg: a quoted value runs to its closing quote, an unquoted one loses a blank-led # comment
+cp .coddy.yml "$tmp/conf.bak"; vc() { printf 'tracker: github\nworktree: git\ndefault_branch: main\n%s\n' "$1" > .coddy.yml; }
+printf '#include\n' > .worktrees/1/main.c
+vc "verify: \"grep -q '#include' main.c && true\""; t 0 "cfg: a # inside quotes stays in the command" run verify 1
+vc 'verify: test -f ok.txt  # tests'; t 0 "cfg: a trailing comment is dropped and the command runs" run verify 1
+vc 'verify: test -f ok.txt#x'; t 1 "cfg: a # with no blank before it stays" run verify 1
+vc "verify: \"test -f '#ok' && false\""; t 1 "cfg: a quoted # does not turn a failing verify into a pass" run verify 1
+t 1 "cfg: and ship refuses" run ship 1 "feat(1): nope"
+rm -f .worktrees/1/e2e
+vc 'verify: "true && test \"x\" = \"x\" && touch e2e"'; t 0 "cfg: an escaped quote does not end a double-quoted value" run verify 1
+t 0 "cfg: and the part after it ran" test -f .worktrees/1/e2e
+vc 'verify: "true" && false'; t 1 "cfg: text after the closing quote is kept, not dropped" run verify 1
+vc 'verify: |'; t 1 "verify: a block scalar is refused" run verify 1
+t 0 "verify: and the message names the key" says 'verify: a block scalar' run verify 1
+for h in '>2' '|2' '>-2' '>2-' '>+1'; do vc "verify: $h"; t 1 "verify: $h is refused" run verify 1; t 0 "verify: $h names the key" says 'verify: a block scalar' run verify 1; t 1 "verify: $h made no file" test -e .worktrees/1/2; done
+rm -f .worktrees/1/out; vc 'verify: >out'; t 0 "verify: >out still runs" run verify 1
+vc 'verify: |x'; t 1 "verify: |x is not refused as a block scalar" says 'block scalar' run verify 1; rm -f .worktrees/1/out
+cp "$tmp/conf.bak" .coddy.yml; rm .worktrees/1/main.c
 t 1 "ship refuses another session" as sess-b 1 ship 1 "feat(1): ok"
 t 0 "ship verifies then pushes" says 'pushed: feat/1-thing' run ship 1 "feat(1): ok"
 t 1 "ship moved the branch on the remote" test "$(git ls-remote origin refs/heads/feat/1-thing)" = "$was"
@@ -652,6 +670,8 @@ if [ -x /bin/bash ]; then
   for f in "$here"/scripts/*.sh "$here/bin/coddy" "$here/get.sh"; do t 0 "/bin/bash: ${f#$here/} parses" /bin/bash -n "$f"; done
   t 1 "/bin/bash: state refuses a key with an upper-case letter in a UTF-8 locale" env LC_ALL=en_US.UTF-8 /bin/bash "$here/bin/coddy" state 1 Key=x
   t 0 "/bin/bash: and for the key, not the lock" says "lower case words" env LC_ALL=en_US.UTF-8 /bin/bash "$here/bin/coddy" state 1 Key=x
+  printf 'verify: "a # b"  # c\r\n' > "$tmp/cfg3.yml"
+  t 0 "/bin/bash: cfg reads a quoted # and drops the comment and the CR" test "$(/bin/bash -c "$(sed -n '/^cfg() {/,/^}/p' "$here/bin/coddy")"'; cfg verify "$1"' _ "$tmp/cfg3.yml")" = "a # b"
 fi
 t 1 "start from stdin fails" sh -c "bash -s start 1 feat/1-thing < '$here/bin/coddy'"
 t 0 "and says why" says 'not stdin' sh -c "bash -s start 1 feat/1-thing < '$here/bin/coddy'"
