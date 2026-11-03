@@ -15,7 +15,7 @@
 #   coddy exclude answers | config  put the agent's coddy/ directory, or .coddy.yml, into git's info/exclude unless git ignores it already
 #   coddy forget answers            remove the agent's coddy/onboard-answers.json once the config is written
 #   coddy migrate                   the config brought up to the current schema version, for /coddy:migrate to write
-#   coddy doctor                    the install this runs from (its directory, how it got there, version and commit), a platform: line on native Windows, which coddy does not run on, and, in a project, what is missing or off, one line per check; exit 1 on either
+#   coddy doctor                    the install this runs from (its directory, how it got there, version and commit) and the bash on PATH, a platform: line on native Windows, which coddy does not run on, and, in a project, what is missing or off, one line per check; exit 1 on either
 #   coddy guard                     PreToolUse hook on Edit/Write (hooks/hooks.json)
 #   coddy snap | trip               Pre/PostToolUse hooks on Bash
 #   coddy githook pre-commit|pre-push   the git hooks start installs under .git/hooks/coddy
@@ -96,7 +96,8 @@ inproj() { local d=$1 w; while [ -n "$d" ]; do for w in "${ins[@]}"; do [ "$d" -
 osname() { case "$1" in Darwin) echo macos ;; Linux) echo linux ;; CYGWIN*|MINGW*|MSYS*|Windows_NT) echo windows ;; *) echo unknown ;; esac; }
 
 # The install this runs from: its real directory, through a PATH link or a
-# shim that sources it; get.sh's when that is CODDY_HOME. Outside a project
+# shim that sources it; get.sh's when that is CODDY_HOME; then the bash on
+# PATH with its version, which the hooks run. Outside a project
 # that is all doctor prints, with a platform: line after it on native
 # Windows, which coddy does not run on, and bad, doctor's exit, starting at 1
 # there; inside one, the checks after the config guard.
@@ -112,6 +113,9 @@ if [ "${1-}" = doctor ]; then
   echo "via: $([ "$d" = "$h" ] && echo get.sh || echo other)"
   echo "version: ${v:-unknown}"
   echo "commit: ${c:-none}"
+  # the bash the hooks run, first on PATH, as it reports its own version; informational, never bad
+  u=$(command -v bash) && { c=$("$u" -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}.${BASH_VERSINFO[2]}"' 2>/dev/null); u="$u ${c:-unknown}"; }
+  echo "bash: $(printf %s "${u:-missing}" | tr -d '[:cntrl:]')"
   inst=$d bad=0 u=$(uname -s 2>/dev/null | tr -d '[:cntrl:]')
   [ "$(osname "$u")" != windows ] || { echo "platform: windows ($u) is not supported: coddy runs on macOS, Linux and WSL"; bad=1; }
 fi
@@ -569,34 +573,35 @@ if [ "${1-}" = guard ]; then
   # climb from), and a joined tail past 4096 bytes (the join costs time
   # quadratic in its length, and links repeat it).
   phys() (
-    set -f; comps "$1"; a=("${b[@]}")
+    set -f; comps "$1"; parts=("${pieces[@]}")
     case "$1" in /*) cd / 2>/dev/null || exit 1 ;; esac
     k=0 i=0 c=""
-    while [ "$k" -lt "${#a[@]}" ]; do
+    while [ "$k" -lt "${#parts[@]}" ]; do
       [ "$SECONDS" -lt "$budget" ] || exit 1
-      c=${a[k]}; k=$((k+1))
+      c=${parts[k]}; k=$((k+1))
       [ ! "./$c" -ef /proc ] && [ ! "./$c" -ef /dev/fd ] || exit 1
       if [ -n "$c" ] && [ -L "./$c" ]; then
         [ "$i" -lt 40 ] || exit 1; i=$((i+1))
         t=$(rdl "./$c") || exit 1; t=${t%x}
         case "$t" in /*) cd / 2>/dev/null || exit 1 ;; esac
-        comps "$t"; a=("${b[@]}" "${a[@]:k}"); k=0 c=""; continue
+        comps "$t"; parts=("${pieces[@]}" "${parts[@]:k}"); k=0 c=""; continue
       fi
-      [ "$k" -lt "${#a[@]}" ] || break
+      [ "$k" -lt "${#parts[@]}" ] || break
       case "$c" in ''|.) continue ;; esac
       if [ -d "./$c" ]; then cd -P "./$c" 2>/dev/null || exit 1
       elif [ "${2-}" = new ]; then
         t=$(pwd -P && printf x) || exit 1; t=${t%?x}
         t=${t%/}
-        for c in "${a[@]:k-1}"; do case "$c" in ''|.) ;; ..) exit 1 ;; *) t="$t/$c"; ! long "$t" && [ "$SECONDS" -lt "$budget" ] || exit 1 ;; esac; done
+        for c in "${parts[@]:k-1}"; do case "$c" in ''|.) ;; ..) exit 1 ;; *) t="$t/$c"; ! long "$t" && [ "$SECONDS" -lt "$budget" ] || exit 1 ;; esac; done
         printf '%sx' "$t"; exit
       else exit 1; fi
     done
     t=$(pwd -P && printf x) && printf '%s/%sx' "${t%?x}" "$c"
   )
-  # $1's components into b, a trailing / as a last empty one. IFS is / for
-  # the split alone: bash 3.2 joins a quoted "${a[@]:k}" under it.
-  comps() { IFS=/; b=($1); IFS=$' \t\n'; case "$1" in */) b+=("") ;; esac; }
+  # $1's components into pieces, a trailing / as a last empty one. IFS is /
+  # for the split alone: bash 3.2 joins a quoted "${parts[@]:k}" under it.
+  # shellcheck disable=SC2206 # the split on / is the point, globbing off (set -f in phys)
+  comps() { IFS=/; pieces=($1); IFS=$' \t\n'; case "$1" in */) pieces+=("") ;; esac; }
   # The off switch for every hook here, and no sensitive-file prompt of the
   # agent's own: the user allows each edit of it, in both modes, by whatever
   # path the write reaches it: its own spelling or one with ./, // or ..; a
@@ -1535,10 +1540,12 @@ fi
 # changed; the next schema change is one more pair and cur+1.
 # m1 puts version after a leading --- marker and ends it as the file's first line ends (CRLF).
 m1() { awk 'NR == 1 { e = /\r$/ ? "\r" : ""; if (/^---\r?$/) { print; print "version: 1" e; next }; print "version: 1" e }; !/^version:/; END { if (!NR) print "version: 1" }'; }
+# shellcheck disable=SC2034 # read through ${!d} in migrate
 d1="add version: 1"
 # m2 bumps version to 2 and, when the first worktree key is missing or empty (read as jj before 2),
 # pins worktree: jj: in place of an empty one, else after the version line.
 m2() { awk 'NR == 1 { e = /\r$/ ? "\r" : "" } { l[NR] = $0 } /^worktree:/ && !w { w = NR; if ($0 ~ /^worktree:[[:space:]]*["\047]?["\047]?[[:space:]]*(#.*)?\r?$/) r = NR } END { for (i = 1; i <= NR; i++) { if (i == r) print "worktree: jj" e; else if (l[i] ~ /^version:/) { if (!v++) { print "version: 2" e; if (!w) print "worktree: jj" e } } else print l[i] } }'; }
+# shellcheck disable=SC2034 # read through ${!d} in migrate
 d2="add version: 2, and worktree: jj when no worktree key is set"
 if [ "${1-}" = migrate ]; then
   # The skill Reads and Writes these paths, which follow a link: only plain files.
