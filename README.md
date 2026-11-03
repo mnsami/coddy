@@ -219,8 +219,11 @@ say, gets a pass-through to it, so pointing `core.hooksPath` elsewhere turns
 none of them off. The hooks run coddy through a launcher, a link in the
 plugin's data directory that each Claude Code session points at the current
 install, so an update leaves them as they are; never a `coddy` on `PATH`.
-`/coddy:start` refuses to write hooks that would run a coddy inside the
-project, which a sandboxed command could rewrite. A hook whose coddy is gone
+They run it under a `bash` from `PATH`, and it finds its tools there, past
+every entry that is relative or inside the repository; the old hook gets
+`PATH` as it was. `/coddy:start` refuses to write hooks that would run a
+coddy inside the project or a worktree of it, which a sandboxed command
+could rewrite. A hook whose coddy is gone
 refuses and says, in words, what puts it back, that `--no-verify` skips it
 and how to turn the hooks off. Their ceilings:
 

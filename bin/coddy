@@ -24,7 +24,10 @@
 # lock's owner line records and is compared with (a caller naming none is
 # not held to the owner); CODDY_AGENT_DIR, the agent's own directory under
 # the root, free to edit and skipped by snap, except its worktrees/<name>/,
-# held to <name>'s lock (none without it).
+# held to <name>'s lock (none without it); CODDY_EXEC, the coddy the git
+# hooks start writes run (this file without it); CODDY_PATH, set by those
+# hooks alone: the PATH git gave them, which githook hands the hook before,
+# its own PATH having lost every entry that is relative or in the repository.
 # The config is .coddy.yml at the root, or .claude/coddy.yml from before.
 # An issue counts as In Progress once the lock .git/coddy/<issue>/ exists.
 # Only claim makes it (mkdir, so of two sessions claiming at once one wins;
@@ -82,6 +85,10 @@ follow() {
   done
   rp=${d:-/}
 }
+# Whether directory $1, or one above it, is one of ins (wtroots): a place a
+# command in the project can write, so a coddy there is no coddy for git to
+# run outside the sandbox.
+inproj() { local d=$1 w; while [ -n "$d" ]; do for w in "${ins[@]}"; do [ "$d" -ef "$w" ] && return 0; done; d=${d%/*}; done; return 1; }
 
 # The platform uname -s printed ($1) names: macos, linux, windows (Cygwin,
 # MSYS2, Git Bash; WSL is linux) or unknown.
@@ -1150,6 +1157,15 @@ gitwts() {
   done < <(git worktree list --porcelain 2>/dev/null)
   [ -z "$p" ] || printf '%s\n\0' "$p"
 }
+# ins, for inproj: the root, where the call began and every worktree of the
+# repository, git's and, under worktree: jj, jj's (listed as snap lists
+# them, the working copy ignored), any of which a session's sandbox may write.
+wtroots() {
+  local l
+  ins=("$root"); [ -z "${began-}" ] || ins+=("$began")
+  while IFS= read -r -d '' l; do case "$l" in "worktree "*) ins+=("${l#worktree }") ;; esac; done < <(gitwts)
+  [ "$tool" != jj ] || while IFS= read -r -d '' l; do ins+=("$l"); done < <(jj --no-pager workspace list --ignore-working-copy --color=never -T 'if(root, stringify(root) ++ "\0")' 2>/dev/null)
+}
 # gi: the git admin id worktree $1's .git names, when it is a plain file;
 # its first line, read no further than a NUL or 1024 characters, so a huge
 # or sparse file stalls no hook.
@@ -1477,6 +1493,9 @@ if [ "${1-}" = githook ]; then
   p=$(git config --file "$root/.git/config" coddy.previousHooksPath); p="${p:-$root/.git/hooks}/$h"
   # Never this hook again: a previous path that is another spelling of it would loop.
   { [ -x "$p" ] && [ ! "$p" -ef "$root/.git/hooks/coddy/$h" ]; } || exit 0
+  # It is the project's own, and gets PATH as git gave the hook (CODDY_PATH),
+  # in-repository entries and all, which coddy's own lookups went without.
+  [ -z "${CODDY_PATH+x}" ] || { PATH=$CODDY_PATH; unset CODDY_PATH; }
   [ "$h" = pre-push ] || exec "$p" "$@"
   printf %s "$in" | "$p" "$@"; exit
 fi
@@ -1493,6 +1512,8 @@ fi
 [ -f "$conf" ] || { [ "${1-}" = sweep ] && exit 0; die "NOT_ONBOARDED"; }
 # This file by a path the cd below leaves valid, for the git hooks start writes.
 src="${BASH_SOURCE[0]-}"; case "$src" in /*|'') ;; *) src="$PWD/$src" ;; esac
+# Where the call began, physical, for wtroots: a session's sandbox writes it.
+began=$(cd "$dir" 2>/dev/null && pwd -P)
 cd "$root" || die "cannot enter $root"
 # The answers onboarding saved go once the config is written, and only then
 # (above: NOT_ONBOARDED before); starting over is removing the file by hand.
@@ -1565,7 +1586,9 @@ if [ "$cmd" = doctor ]; then
   elif git rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null 2>&1; then say default_branch "ok (origin/$base)"; else say default_branch "origin/$base is missing here (fix: fetch origin, or set default_branch with /coddy:config)"; fi
   for x in jq git; do if command -v "$x" >/dev/null 2>&1; then say "$x" ok; else say "$x" "missing (fix: install $x)"; fi; done
   if [ "$tool" = jj ]; then if command -v jj >/dev/null 2>&1; then say jj ok; else say jj "missing (fix: install jj, or set worktree to git with /coddy:config)"; fi; fi
-  hp=$(git config core.hooksPath) gd="$root/.git/hooks/coddy" e=""
+  hp=$(git config core.hooksPath) gd="$root/.git/hooks/coddy" e="" fx="/coddy:start <issue>"
+  # what git runs outside the sandbox, which a sandboxed start cannot rewrite
+  tf="one run of coddy's start from your own terminal, with a coddy installed outside the project"
   case "$hp" in /*) [ "$hp" -ef "$gd" ] || e="core.hooksPath is $hp, not coddy's directory" ;; *) if [ -n "$hp" ]; then e="core.hooksPath is $hp, not coddy's directory"; else e="core.hooksPath is not set"; fi ;; esac
   for h in pre-commit pre-push; do
     [ -z "$e" ] || break
@@ -1573,10 +1596,12 @@ if [ "$cmd" = doctor ]; then
     if ! { [ -f "$f" ] && [ ! -L "$f" ] && head -c 4096 "$f" | grep -q '^# Written by coddy start: '; }; then e="$h is missing or not one coddy start wrote"; break; fi
     [ -x "$f" ] || { e="$h is not executable, so git skips it"; break; }
     c=$(head -c 4096 "$f" | sed -n "s/^c='\(.*\)'\$/\1/p" | head -1); c=${c//"'\\''"/"'"}
-    { [ -f "$c" ] && [ -x "$c" ]; } || e="$h runs $c, which is gone"
+    if ! { [ -f "$c" ] && [ -x "$c" ]; }; then e="$h runs $c, which is gone"
+    elif head -c 4096 "$f" | grep -q 'command -v coddy'; then e="$h falls back to a coddy on PATH, where a command in the project could plant one" fx=$tf
+    else [ -n "${ins+x}" ] || wtroots; follow "$c" inproj; [ $? != 2 ] || e="$h runs $c, which lies in the project or a worktree of it, or is reached through a link there" fx=$tf; fi
   done
   if [ ! -d "$root/.git" ]; then say hooks "ok (not applicable: no .git at the root)"
-  elif [ -n "$e" ]; then say hooks "$e (fix: /coddy:start <issue>)"; else say hooks ok; fi
+  elif [ -n "$e" ]; then say hooks "$e (fix: $fx)"; else say hooks ok; fi
   if [ "$(cfg tracker)" = github ]; then
     w=.github/workflows/coddy.yml tpl="$inst/templates/coddy.yml"
     if [ -L .github ] || [ -L .github/workflows ] || [ -L "$w" ] || [ ! -f "$w" ]; then say pr_check "$w is missing or not a plain file (fix: copy $tpl to $w)"
@@ -1651,9 +1676,11 @@ verify() {
 # The git hooks, .git/hooks/coddy/: pre-commit and pre-push run githook
 # through the coddy start embeds ($exe: CODDY_EXEC, the launcher an adapter
 # keeps pointed at its current install, else this file), never one on PATH,
-# where a sandboxed command could plant one, and refuse when it is gone. Their
-# content is a function of that path and the previous directory alone, so
-# behind a launcher it stays the same across updates. Each other hook the
+# where a sandboxed command could plant one, and refuse when it is gone; they
+# run it under a bash from PATH, and hand it PATH, without the entries that
+# are relative or lie in the repository. Their content is a function of that
+# path, the root and the previous directory alone, so behind a launcher it
+# stays the same across updates. Each other hook the
 # previous directory holds gets a pass-through in sh that never starts coddy,
 # and a name it does not hold gets no file, so a hook git fires often
 # (reference-transaction, on every ref update) costs nothing the project did
@@ -1666,14 +1693,15 @@ verify() {
 # was not this one, so a rerun keeps the record, for githook to hand off to.
 # git runs hooks outside a sandbox, so Claude Code's keeps writes out of
 # .git/hooks and .git/config: what a hook runs is named in one or the other
-# and lies outside the root (start refuses $exe otherwise), never where a
-# sandboxed command could rewrite it. start writes a hook, or
+# and lies outside the root and its worktrees (start refuses $exe otherwise),
+# never where a sandboxed command could rewrite it. start writes a hook, or
 # .git/config, only when it would change, so a rerun with nothing to change
 # passes inside the sandbox.
 hooks() {
-  local q="'\''" c d e f g h p o m s new=""
+  local q="'\''" c d e f g h k n p o m s new=""
   { [ -L .git/hooks ] || [ -L .git/hooks/coddy ]; } && die ".git/hooks or .git/hooks/coddy is a symlink: coddy writes its git hooks into .git/hooks/coddy, which a sandbox keeps out of an agent's reach. Replace the link with a directory (to keep hooks in the directory it links to, point core.hooksPath there instead), then run /coddy:start $issue again."
-  c=$exe
+  # the root by its physical path, the same for every run of start, sandboxed or not
+  c=$exe k=$(pwd -P) || die "cannot find $root"
   [ -d .git/hooks/coddy ] || { e=$(mkdir -p .git/hooks/coddy 2>&1) || nowrite "could not make .git/hooks/coddy" "$e"; }
   d=$(cd .git/hooks/coddy && pwd) || die "cannot enter .git/hooks/coddy"
   # Hook $1 holds $2 unless it does already: written aside under a dot name and
@@ -1708,7 +1736,32 @@ hooks() {
     # CODDY_EXEC or not: the terminal run nowrite names passes no CODDY_EXEC,
     # and its hooks must match a sandboxed rerun's byte for byte.
     m="coddy: $c, the coddy that checks this ${h#pre-}, is gone. When it is the launcher your agent points at its coddy install as a session starts, a new session puts it back; either way, one run of coddy's start from your own terminal, with a coddy installed outside the project, puts these hooks back. --no-verify skips the check. To turn these hooks off, $o."
-    printf -v s '#!/bin/sh\n# Written by coddy start: coddy githook refuses a commit or push outside a claimed issue branch, then runs the hook core.hooksPath named before.\nc=%s\n[ -x "$c" ] || { printf "%%s\\n" %s >&2; exit 1; }\n# git runs this at the top of the worktree, where coddy finds the root.\nunset CODDY_ROOT\nexec "$c" githook %s "$@"\n' "'${c//\'/$q}'" "'${m//\'/$q}'" "$h"
+    n="coddy: no bash on PATH outside the repository at $k, so $c, the coddy that checks this ${h#pre-}, cannot run. An entry that is relative or lies in the repository is skipped, since a command in the project could plant a bash there. --no-verify skips the check. To turn these hooks off, $o."
+    printf -v s '#!/bin/sh
+# Written by coddy start: coddy githook refuses a commit or push outside a claimed issue branch, then runs the hook core.hooksPath named before.
+c=%s
+[ -x "$c" ] || { printf "%%s\\n" %s >&2; exit 1; }
+# git runs this at the top of the worktree, where coddy finds the root.
+unset CODDY_ROOT
+# coddy runs under the first bash on PATH and finds its tools there, past every
+# entry that is relative or lies, physically, in the repository (the checkout
+# at r, this worktree), where a command in the project could plant one. Shell
+# builtins alone until then; the hook before gets PATH as git gave it.
+r=%s
+t=$(pwd -P) || exit 1
+o() { x=$1; while [ -n "$x" ]; do { [ "$x" -ef "$r" ] || [ "$x" -ef "$t" ]; } && return 0; x=${x%%/*}; done; return 1; }
+s=$PATH: n= b=
+while [ -n "$s" ]; do
+  e=${s%%%%:*}; s=${s#*:}
+  case $e in /*) d=$(cd -P "$e" 2>/dev/null && pwd -P) && ! o "$d" || continue ;; *) continue ;; esac
+  n=$n${n:+:}$d
+  [ -n "$b" ] || [ ! -f "$d/bash" ] || [ ! -x "$d/bash" ] || b=$d/bash
+done
+[ -n "$b" ] || { printf "%%s\\n" %s >&2; exit 1; }
+CODDY_PATH=$PATH PATH=$n
+export CODDY_PATH PATH
+exec "$b" "$c" githook %s "$@"
+' "'${c//\'/$q}'" "'${m//\'/$q}'" "'${k//\'/$q}'" "'${n//\'/$q}'" "$h"
     put "$h" "$s"
   done
   # Read back as git resolves it, at the root and in the issue's worktree, before
@@ -1741,14 +1794,15 @@ case "$cmd" in
     # The coddy the git hooks run: CODDY_EXEC, the launcher an adapter keeps
     # pointed at its current install, else this file. git runs them outside
     # any sandbox, so neither it nor any link on the way to its file may lie
-    # under the root, where a sandboxed command could rewrite it.
+    # under the root, a worktree of the repository or where the call began,
+    # where a sandboxed command could rewrite it.
     exe=${CODDY_EXEC-}
     [ -n "$exe" ] || exe="$(cd "${src%/*}" && pwd)/${src##*/}" || die "could not find $src"
     case "$exe" in /*) ;; *) die "CODDY_EXEC must be an absolute path, got $exe" ;; esac
-    inproj() { local d=$1; while [ -n "$d" ]; do [ "$d" -ef "$root" ] && return 0; d=${d%/*}; done; return 1; }
+    wtroots
     follow "$exe" inproj; case $? in
       0) { [ -f "$rp" ] && [ -x "$rp" ]; } || die "$exe is not an executable file, so the git hooks could not run it" ;;
-      2) die "$exe is inside the project at $root, or a link on the way to its file lies there. git runs its hooks outside any sandbox, so they must not run a file a command in the project can rewrite: run start from a coddy installed outside the project." ;;
+      2) die "$exe is inside the project at $root, a worktree of it or where this start began, or a link on the way to its file lies there. git runs its hooks outside any sandbox, so they must not run a file a command in the project can rewrite: run start from a coddy installed outside the project." ;;
       *) die "could not follow $exe to its file" ;;
     esac
     # A new branch starts from $base on the remote, or, given a base issue,

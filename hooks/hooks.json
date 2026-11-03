@@ -2,6 +2,7 @@
   "hooks": {
     "SessionStart": [
       {
+        "matcher": "startup|resume",
         "hooks": [
           { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "OSTYPE", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "link", "${CLAUDE_PLUGIN_DATA}"] }
         ]
