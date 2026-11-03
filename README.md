@@ -135,6 +135,9 @@ Jira moves to In Review.
 Once a PR has merged, the next `/coddy:next` or `/coddy:start` removes that
 issue's worktree, claim and local branch. A worktree that still holds work
 not in the PR, or that another running session holds, is kept and reported.
+One that holds ignored files (a `.env`, a local database) is moved whole to
+`.git/coddy/swept/<issue>/` instead, and stays there until you delete it;
+while an earlier copy is there, the worktree is kept and reported.
 Merge, squash and rebase merges are all seen; one whose conflicts were
 resolved on the way in is not, so remove that worktree by hand.
 

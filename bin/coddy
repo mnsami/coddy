@@ -1987,9 +1987,27 @@ $bad" ;;
       id=$(git diff "$fork" "$tip" 2>/dev/null | git patch-id --stable | cut -d' ' -f1)
       [ -n "$id" ] && git log -p --no-merges "$fork..origin/$base" 2>/dev/null | git patch-id --stable | grep -q "^$id "
     }
+    # The worktree, clean, holds files its tool ignores. jj lists none, so
+    # they are the paths on disk its commit does not name (it names some it
+    # never writes: a gitlink, a path outside the sparse patterns), each
+    # quoted to one line and matched whole; a listing that fails counts as
+    # some: the worktree is moved, never deleted.
+    ignored() {
+      local n m
+      if [ "$tool" = jj ]; then
+        n=$(set -o pipefail; jj -R "$wt" --ignore-working-copy file list -r @ -T '"./" ++ path ++ "\0"' 2>/dev/null | lines) || return 0
+        m=$(set -o pipefail; cd "$wt" && find . \( -path ./.jj -o -path ./.git \) -prune -o ! -type d -print0 2>/dev/null | lines) || return 0
+        [ -n "$m" ] || return 1
+        LC_ALL=C grep -qFxv -e "$n" <<<"$m"; [ $? -ne 1 ]
+      else
+        n=$(git -C "$wt" ls-files -o -i --exclude-standard --directory 2>/dev/null) || return 0; [ -n "$n" ]
+      fi
+    }
+    lines() { while IFS= read -r -d '' p; do printf '%q\n' "$p"; done; }
     for rec in .git/coddy/*.branch; do
       issue=$(basename "$rec" .branch); wt=".worktrees/$issue"; branch=$(cat "$rec" 2>/dev/null)
-      case "$issue" in ''|*[!A-Za-z0-9_-]*) continue ;; esac
+      # swept is where the copies live, never an issue's lock to remove.
+      case "$issue" in ''|swept|*[!A-Za-z0-9_-]*) continue ;; esac
       [ -n "$branch" ] && [ -e ".git/coddy/$issue" ] && [ -d "$wt" ] || continue
       # ponytail: compared as strings, so a session that reached its
       # worktree through a symlink is not recognised as being inside it.
@@ -2010,14 +2028,36 @@ $bad" ;;
         echo "kept: $issue (merged into $base, session $sid still holds it)"; continue
       fi
       if [ -n "$dirty" ]; then echo "kept: $issue (merged into $base, but $wt holds uncommitted work)"; continue; fi
+      # Ignored files (a .env, a local database) are in no commit: the
+      # worktree moves whole to .git/coddy/swept/<issue>, as plain files, and
+      # stays there until the user deletes it. git forgets that one worktree
+      # by its missing path (jj's git worktree too), never another whose
+      # directory is away; a copy already there is never touched.
+      keep=".git/coddy/swept/$issue" moved=
+      if ignored; then
+        if [ -e "$keep" ] || [ -L "$keep" ]; then echo "kept: $issue (merged into $base, but $keep already holds an earlier copy)"; continue; fi
+        # Submodules checked out in a git worktree keep their repositories in
+        # its git dir, which forgetting it would delete: it stays, as git
+        # refuses to remove it.
+        [ "$tool" = jj ] || [ ! -d "$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null)/modules" ] || continue
+        # A link is never moved, nor moved through, and only a worktree's .git
+        # file and a workspace's .jj (its repo a file) are dropped, never a repository.
+        [ ! -L "$wt" ] && [ ! -L .git/coddy/swept ] && mkdir -p .git/coddy/swept 2>/dev/null && mv "$wt" "$keep" 2>/dev/null || continue
+        # The record goes while the copy is still whole: one that will not go
+        # (a locked worktree) gets its directory back and stays, as before.
+        if [ "$tool" = jj ]; then jj workspace forget "$issue" >/dev/null 2>&1; else git worktree remove "$wt" >/dev/null 2>&1; fi || { mv "$keep" "$wt" 2>/dev/null; continue; }
+        [ "$tool" = git ] || git worktree remove "$wt" >/dev/null 2>&1
+        rm -f "$keep/.git"; [ ! -f "$keep/.jj/repo" ] || rm -rf "$keep/.jj"
+        moved=" (ignored files kept under $keep)"
+      fi
       if [ "$tool" = jj ]; then
-        jj workspace forget "$issue" >/dev/null 2>&1 || continue
+        [ -n "$moved" ] || jj workspace forget "$issue" >/dev/null 2>&1 || continue
         rm -rf "$wt"; jj bookmark forget "$branch" >/dev/null 2>&1
       else
-        git worktree remove "$wt" >/dev/null 2>&1 || continue
+        [ -n "$moved" ] || git worktree remove "$wt" >/dev/null 2>&1 || continue
         git branch -D "$branch" >/dev/null 2>&1
       fi
-      rm -rf ".git/coddy/$issue" "$rec" ".git/coddy/$issue.base"; echo "cleaned: $issue"
+      rm -rf ".git/coddy/$issue" "$rec" ".git/coddy/$issue.base"; echo "cleaned: $issue$moved"
     done
     exit 0 ;;
 
