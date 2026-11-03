@@ -59,22 +59,28 @@ unset CDPATH TMOUT GREP_OPTIONS
 # target ending in one, so it is read without -n only when -n fails.
 rdl() { local t; t=$(readlink -n "$1" 2>/dev/null && printf x) || { t=$(readlink "$1" && printf x) && case "$t" in *$'\n'x) t=${t%?x}x ;; *) false ;; esac; } && printf %s "$t"; }
 
-# The file path $1 names, through every link, into rp, each step's directory
-# read physically. $2, a test, runs on each step's directory and, passing,
-# stops the walk with 2; past 40 links, or at a directory that is not there, 1.
+# The file path $1 names, through every link, into rp: a component at a
+# time, each link read from its own directory, so a link on the way to a
+# directory counts as one on the way to the file (cd -P would pass it
+# unseen). $2, a test, runs on the physical directory each component sits in
+# and, passing, stops the walk with 2; past 40 links, at a step that is no
+# directory (a trailing / after a file included) or an empty link, 1.
 follow() {
-  local p=$1 d i=0
-  case "$p" in */*) ;; *) p="./$p" ;; esac
-  while :; do
-    d=$(cd -P "${p%/*}/" 2>/dev/null && pwd -P) || return 1
-    p="${d%/}/${p##*/}"
-    [ -z "${2-}" ] || ! "$2" "$d" || return 2
-    [ -L "$p" ] || break
-    [ "$i" -lt 40 ] || return 1
-    i=$((i + 1)); d=$(rdl "$p") || return 1; d=${d%x}
-    case "$d" in /*) p=$d ;; *) p="${p%/*}/$d" ;; esac
+  local p=$1 d c t i=0
+  case "$p" in /*) d="" ;; *) d=$(pwd -P) || return 1 ;; esac
+  while [ -n "$p" ]; do
+    [ -d "${d:-/}" ] || return 1
+    c=${p%%/*}; case "$p" in */*) p=${p#*/}; p=${p:-.} ;; *) p="" ;; esac
+    case "$c" in ''|.) continue ;; ..) d=${d%/*}; continue ;; esac
+    [ -z "${2-}" ] || ! "$2" "${d:-/}" || return 2
+    if [ -L "$d/$c" ]; then
+      [ "$i" -lt 40 ] || return 1
+      i=$((i + 1)); t=$(rdl "$d/$c") || return 1; t=${t%x}
+      case "$t" in '') return 1 ;; /*) d="" ;; esac
+      p="$t${p:+/$p}"
+    else d="$d/$c"; fi
   done
-  rp=$p
+  rp=${d:-/}
 }
 
 # The platform uname -s printed ($1) names: macos, linux, windows (Cygwin,
@@ -110,7 +116,7 @@ fi
 # prints nothing and exits 0: an adapter runs it as a hook whose output an
 # agent reads.
 if [ "${1-}" = link ]; then
-  { follow "${BASH_SOURCE[0]-}" && [ -d "${2-}" ] && [ ! -d "$2/coddy" ] && [ "$(rdl "$2/coddy")" != "${rp}x" ] &&
+  { follow "${BASH_SOURCE[0]-}" && [ -f "$rp" ] && [ -d "${2-}" ] && [ ! -d "$2/coddy" ] && [ "$(rdl "$2/coddy")" != "${rp}x" ] &&
     rm -f "$2/.coddy.$$" && ln -s "$rp" "$2/.coddy.$$" && { mv -f "$2/.coddy.$$" "$2/coddy" || rm -f "$2/.coddy.$$"; }; } >/dev/null 2>&1
   exit 0
 fi
@@ -1739,7 +1745,7 @@ case "$cmd" in
     inproj() { local d=$1; while [ -n "$d" ]; do [ "$d" -ef "$root" ] && return 0; d=${d%/*}; done; return 1; }
     follow "$exe" inproj; case $? in
       0) { [ -f "$rp" ] && [ -x "$rp" ]; } || die "$exe is not an executable file, so the git hooks could not run it" ;;
-      2) die "$exe is inside the project at $root, or reaches a file there through a link. git runs its hooks outside any sandbox, so they must not run a file a command in the project can rewrite: run start from a coddy installed outside the project." ;;
+      2) die "$exe is inside the project at $root, or a link on the way to its file lies there. git runs its hooks outside any sandbox, so they must not run a file a command in the project can rewrite: run start from a coddy installed outside the project." ;;
       *) die "could not follow $exe to its file" ;;
     esac
     # A new branch starts from $base on the remote, or, given a base issue,

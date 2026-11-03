@@ -871,13 +871,19 @@ t 1 "githook: and running none on PATH" test -e "$tmp/planted"
 mkdir "$repo/bin"; cp "$here/bin/coddy" "$repo/bin/"; ln -s "$repo/bin/coddy" "$tmp/inlink"; ln -s "$here/bin/coddy" "$repo/bin/mid"; ln -s "$repo/bin/mid" "$tmp/chain"
 sums=$(cksum "$hooks"/*; git config --local --list)
 t 1 "start run from <root>/bin/coddy is refused" "$repo/bin/coddy" start 1 feat/1-thing
-t 0 "saying why" says 'is inside the project at .*, or reaches a file there through a link\. git runs its hooks outside any sandbox' "$repo/bin/coddy" start 1 feat/1-thing
+t 0 "saying why" says 'is inside the project at .*, or a link on the way to its file lies there\. git runs its hooks outside any sandbox' "$repo/bin/coddy" start 1 feat/1-thing
 CODDY_EXEC="$tmp/inlink" t 1 "so is a CODDY_EXEC that resolves to a file there" run start 1 feat/1-thing
 CODDY_EXEC="$tmp/chain" t 1 "and one whose links pass through the project" run start 1 feat/1-thing
 CODDY_EXEC="$tmp/alias/bin/coddy" t 1 "and one through a link to the root" run start 1 feat/1-thing
 CODDY_EXEC=bin/coddy t 1 "and a relative CODDY_EXEC" run start 1 feat/1-thing
+# A link to a directory on the way counts too: cd -P passes it unseen, and the
+# hook names the path through it, which a sandboxed command can repoint.
+ln -s "$here/bin" "$repo/lnk"; ln -s "$repo/lnk" "$tmp/dirchain"
+t 1 "start run through a link in the project to a directory outside it is refused" "$repo/lnk/coddy" start 1 feat/1-thing
+CODDY_EXEC="$tmp/dirchain/coddy" t 1 "and a CODDY_EXEC whose directory's links pass through the project" run start 1 feat/1-thing
+CODDY_EXEC="$here/bin/coddy/" t 1 "and one with a trailing slash, which names no file" run start 1 feat/1-thing
 t 0 "having written nothing" test "$(cksum "$hooks"/*; git config --local --list)" = "$sums"
-rm -r "$repo/bin" "$repo/plant" "$tmp/inlink" "$tmp/chain"
+rm -r "$repo/bin" "$repo/plant" "$repo/lnk" "$tmp/inlink" "$tmp/chain" "$tmp/dirchain"
 git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
 # Not onboarded, coddy's check is off.
 pp() { echo "refs/heads/main $d refs/heads/main $d" | "$hooks/pre-push" origin x; }
