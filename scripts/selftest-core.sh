@@ -1044,6 +1044,9 @@ t 0 "doctor: no bash on PATH" says '^bash: missing$' env PATH="$tmp/nobash" CODD
 t 0 "doctor: and exits 0 for it" env PATH="$tmp/nobash" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
 mkdir "$tmp/c"$'\n'"b"; ln -s "$BASH" "$tmp/c"$'\n'"b/bash"
 t 0 "doctor: a bash whose path holds a line break, on one line" says "^bash: $tmp/cb/bash [0-9]*\.[0-9]*\.[0-9]*\$" env PATH="$tmp/c"$'\n'"b:$PATH" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
+t 0 "doctor: a function named bash is not the bash on PATH" says "^bash: $(command -v bash) [0-9]*\.[0-9]*\.[0-9]*\$" env 'BASH_FUNC_bash%%=() { echo 9.9.9; }' CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
+mkdir "$tmp/fakebash"; printf '#!/bin/sh\necho ..\n' > "$tmp/fakebash/bash"; chmod +x "$tmp/fakebash/bash"
+t 0 "doctor: a bash that prints no version reads unknown" says "^bash: $tmp/fakebash/bash unknown\$" env PATH="$tmp/fakebash:$PATH" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
 
 # doctor in a project: a line per check, ok or the problem with its fix; exit 1 on any; writes nothing.
 dp="$tmp/dp"; git init -q --bare "$tmp/dorigin.git"; git clone -q "$tmp/dorigin.git" "$dp" 2>/dev/null

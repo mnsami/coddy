@@ -113,8 +113,9 @@ if [ "${1-}" = doctor ]; then
   echo "via: $([ "$d" = "$h" ] && echo get.sh || echo other)"
   echo "version: ${v:-unknown}"
   echo "commit: ${c:-none}"
-  # the bash the hooks run, first on PATH, as it reports its own version; informational, never bad
-  u=$(command -v bash) && { c=$("$u" -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}.${BASH_VERSINFO[2]}"' 2>/dev/null); u="$u ${c:-unknown}"; }
+  # the bash the hooks run, first on PATH (type -P: a function named bash is not it), as it reports
+  # its own version, unknown when that is no x.y.z; informational, never bad
+  u=$(type -P bash) && { c=$("$u" -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}.${BASH_VERSINFO[2]}"' 2>/dev/null); [[ $c =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || c=""; u="$u ${c:-unknown}"; }
   echo "bash: $(printf %s "${u:-missing}" | tr -d '[:cntrl:]')"
   inst=$d bad=0 u=$(uname -s 2>/dev/null | tr -d '[:cntrl:]')
   [ "$(osname "$u")" != windows ] || { echo "platform: windows ($u) is not supported: coddy runs on macOS, Linux and WSL"; bad=1; }
