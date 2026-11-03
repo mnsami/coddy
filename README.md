@@ -67,6 +67,8 @@ another way) it refuses every edit. `/coddy:onboard` stops and
 
 You also need:
 
+- bash 3.2 or later. The hooks run the first `bash` on Claude Code's `PATH`
+  (on macOS that may be `/bin/bash`, 3.2); `coddy doctor` prints which one.
 - `jq`. The edit guard needs it and blocks every edit without a working one.
 - Optionally `jj` ([Jujutsu](https://jj-vcs.github.io)), for `worktree: jj`;
   `worktree: git`, the default, needs nothing more. `/coddy:onboard`
