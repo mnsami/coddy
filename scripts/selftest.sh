@@ -355,6 +355,7 @@ leg() {
   mkdir -p ".git/coddy/$p" && echo "phase=done" > ".git/coddy/$p/state"
   t 0 "$tool: sweep reports a merged, clean worktree as cleaned" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
   t 1 "$tool: sweep removed that worktree" test -e ".worktrees/$p"
+  t 1 "$tool: and kept no copy of a worktree with no ignored files" test -e ".git/coddy/swept/$p"
   t 1 "$tool: sweep removed its lock and branch record" test -e ".git/coddy/$p" -o -e ".git/coddy/$p.branch"
   t 1 "$tool: sweep removed its state" test -e ".git/coddy/$p/state"
   t 1 "$tool: sweep removed its local branch" git show-ref -q "refs/heads/ext/pr-$p"
@@ -362,6 +363,82 @@ leg() {
   # The same worktree back, held by this session: swept as before.
   run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
   t 0 "$tool: sweep cleans a merged worktree this session holds" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
+  # Ignored files (a .env) are in no commit: the worktree moves whole under
+  # .git/coddy/swept/<issue>, its .git and .jj dropped, unless a copy is there.
+  run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
+  echo .env >> .git/info/exclude; echo secret > ".worktrees/$p/.env"; mkdir -p ".git/coddy/swept/$p"
+  kept "a merged worktree holding ignored files while an earlier copy is kept"
+  t 0 "$tool: and names that copy" says "kept: $p (merged into main, but .git/coddy/swept/$p already holds an earlier copy)" run sweep
+  t 0 "$tool: and leaves the copy as it was" test -z "$(ls -A ".git/coddy/swept/$p")"
+  rmdir ".git/coddy/swept/$p"
+  # Never through a link: the worktree stays, and nothing lands where it points.
+  mv .git/coddy/swept "$tmp/swept$n"; mkdir "$tmp/out$n"; ln -s "$tmp/out$n" .git/coddy/swept
+  kept "a merged worktree holding ignored files while .git/coddy/swept is a link"
+  t 0 "$tool: and moves nothing through that link" test -z "$(ls -A "$tmp/out$n")"
+  rm .git/coddy/swept; mv "$tmp/swept$n" .git/coddy/swept
+  # A record that will not go (a locked git worktree, a jj forget that
+  # fails) gets its directory back, whole: kept as it was.
+  stub="$tmp/noforget$n"; mkdir -p "$stub"
+  if [ "$tool" = git ]; then git worktree lock ".worktrees/$p"
+  else printf '#!/bin/sh\ncase "$*" in *"workspace forget"*) exit 1 ;; esac\nexec '\''%s'\'' "$@"\n' "$(command -v jj)" > "$stub/jj"; chmod +x "$stub/jj"; fi
+  PATH="$stub:$PATH" kept "a merged worktree holding ignored files whose record will not go"
+  t 0 "$tool: and leaves it whole" test -e ".worktrees/$p/.$tool" -a -f ".worktrees/$p/.env"
+  t 0 "$tool: and still a worktree" sh -c "if [ $tool = git ]; then git worktree list --porcelain | grep -q '/\.worktrees/$p\$'; else jj workspace list --ignore-working-copy | grep -q '^$p:'; fi"
+  t 1 "$tool: and keeps no copy" test -e ".git/coddy/swept/$p"
+  [ "$tool" = jj ] || git worktree unlock ".worktrees/$p"
+  # Another worktree whose directory is away (moved by hand, on a drive not
+  # mounted) keeps its admin data: only the swept one is forgotten.
+  git worktree add -q --detach "$tmp/aside$n" >/dev/null 2>&1; mv "$tmp/aside$n" "$tmp/away$n"
+  t 0 "$tool: sweep cleans a merged worktree holding ignored files, keeping them" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p (ignored files kept under .git/coddy/swept/$p)'"
+  t 0 "$tool: the ignored file is in the swept copy" grep -qx secret ".git/coddy/swept/$p/.env"
+  t 1 "$tool: which holds no .git" test -e ".git/coddy/swept/$p/.git"
+  t 1 "$tool: and no .jj" test -e ".git/coddy/swept/$p/.jj"
+  t 1 "$tool: the worktree is gone" test -e ".worktrees/$p"
+  t 1 "$tool: git lists it no longer" sh -c "git worktree list --porcelain | grep -qx 'worktree .*/\.worktrees/$p'"
+  [ "$tool" = git ] || t 1 "jj: jj lists it no longer" sh -c "jj workspace list --ignore-working-copy | grep -q '^$p:'"
+  t 1 "$tool: its lock and branch record are gone" test -e ".git/coddy/$p" -o -e ".git/coddy/$p.branch"
+  t 1 "$tool: and its local branch" git show-ref -q "refs/heads/ext/pr-$p"
+  t 0 "$tool: and leaves git another worktree whose directory is away" sh -c "git worktree list --porcelain | grep -q '/aside$n\$'"
+  mv "$tmp/away$n" "$tmp/aside$n"; git worktree remove --force "$tmp/aside$n" >/dev/null 2>&1
+  # A record named swept is no issue: the directory its lock would be holds the copies.
+  run create swept "ext/pr-$p" >/dev/null 2>&1; run sweep >/dev/null 2>&1
+  t 0 "$tool: sweep never takes .git/coddy/swept for an issue's lock" grep -qx secret ".git/coddy/swept/$p/.env"
+  if [ "$tool" = jj ]; then jj workspace forget swept >/dev/null 2>&1; rm -rf .worktrees/swept; jj bookmark forget "ext/pr-$p" >/dev/null 2>&1
+  else git worktree remove --force .worktrees/swept >/dev/null 2>&1; git branch -qD "ext/pr-$p" >/dev/null 2>&1; fi
+  rm -f .git/coddy/swept.branch .git/coddy/swept.base
+  # Ignored files find cannot list (in a directory it may not read, a
+  # database another user owns) count as some: the worktree moves whole.
+  rm -rf ".git/coddy/swept/$p"
+  run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
+  echo locked/ >> .git/info/exclude; mkdir ".worktrees/$p/locked"; echo db > ".worktrees/$p/locked/db"; chmod 000 ".worktrees/$p/locked"
+  t 0 "$tool: sweep moves a merged worktree whose ignored files cannot be listed" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p (ignored files kept under .git/coddy/swept/$p)'"
+  chmod 755 ".git/coddy/swept/$p/locked" ".worktrees/$p/locked" 2>/dev/null
+  t 0 "$tool: and keeps them" grep -qx db ".git/coddy/swept/$p/locked/db"
+  # jj names paths it never writes to disk (one outside the sparse patterns, a
+  # submodule's gitlink): the ignored files are the ones on disk it does not
+  # name, however few. The gitlink goes from main again once merged.
+  if [ "$tool" = jj ]; then
+    for k in sparse submodule; do
+      [ "$k" = sparse ] || (cd "$tmp/merge$p" && git fetch -q origin && git checkout -q -b "sub$p" "origin/ext/pr-$p" && git update-index --add --cacheinfo "160000,$(git rev-parse HEAD),sub" && git commit -q -m "sub $p" && git push -q origin "HEAD:ext/pr-$p" && git checkout -q main && git merge -q --no-ff -m "merge sub $p" "sub$p" && git rm -q --cached sub && git commit -q -m "drop sub $p" && git push -q origin main) >/dev/null 2>&1
+      rm -rf ".git/coddy/swept/$p"
+      run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
+      [ "$k" = submodule ] || jj -R ".worktrees/$p" sparse set --clear --add nothing >/dev/null 2>&1
+      echo secret > ".worktrees/$p/.env"
+      t 0 "jj: sweep moves a merged $k workspace holding ignored files" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p (ignored files kept under .git/coddy/swept/$p)'"
+      t 0 "jj: and keeps them in the $k workspace's copy" grep -qx secret ".git/coddy/swept/$p/.env"
+    done
+  fi
+  # Submodules checked out in a git worktree keep their repositories in its
+  # git dir, which git refuses to remove: the worktree stays, as before.
+  if [ "$tool" = git ]; then
+    rm -rf ".git/coddy/swept/$p"
+    run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
+    echo secret > ".worktrees/$p/.env"; gd=$(git -C ".worktrees/$p" rev-parse --absolute-git-dir); mkdir -p "$gd/modules/sub"
+    kept "a merged worktree whose submodules' repositories live in its git dir"
+    t 0 "git: and keeps those repositories" test -d "$gd/modules/sub"
+    rm -rf "$gd/modules" ".worktrees/$p/.env"; run sweep >/dev/null 2>&1
+  fi
+  sed -i.bak '/^\.env$/d;/^locked\/$/d' .git/info/exclude && rm -f .git/info/exclude.bak
   # Squash and rebase merges leave no ancestor, so sweep finds the branch's
   # two commits in main by patch id. A branch deleted from the remote
   # without a merge is not finished.
