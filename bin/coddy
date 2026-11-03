@@ -59,6 +59,24 @@ unset CDPATH TMOUT GREP_OPTIONS
 # target ending in one, so it is read without -n only when -n fails.
 rdl() { local t; t=$(readlink -n "$1" 2>/dev/null && printf x) || { t=$(readlink "$1" && printf x) && case "$t" in *$'\n'x) t=${t%?x}x ;; *) false ;; esac; } && printf %s "$t"; }
 
+# The file path $1 names, through every link, into rp, each step's directory
+# read physically. $2, a test, runs on each step's directory and, passing,
+# stops the walk with 2; past 40 links, or at a directory that is not there, 1.
+follow() {
+  local p=$1 d i=0
+  case "$p" in */*) ;; *) p="./$p" ;; esac
+  while :; do
+    d=$(cd -P "${p%/*}/" 2>/dev/null && pwd -P) || return 1
+    p="${d%/}/${p##*/}"
+    [ -z "${2-}" ] || ! "$2" "$d" || return 2
+    [ -L "$p" ] || break
+    [ "$i" -lt 40 ] || return 1
+    i=$((i + 1)); d=$(rdl "$p") || return 1; d=${d%x}
+    case "$d" in /*) p=$d ;; *) p="${p%/*}/$d" ;; esac
+  done
+  rp=$p
+}
+
 # The platform uname -s printed ($1) names: macos, linux, windows (Cygwin,
 # MSYS2, Git Bash; WSL is linux) or unknown.
 osname() { case "$1" in Darwin) echo macos ;; Linux) echo linux ;; CYGWIN*|MINGW*|MSYS*|Windows_NT) echo windows ;; *) echo unknown ;; esac; }
@@ -69,11 +87,10 @@ osname() { case "$1" in Darwin) echo macos ;; Linux) echo linux ;; CYGWIN*|MINGW
 # Windows, which coddy does not run on, and bad, doctor's exit, starting at 1
 # there; inside one, the checks after the config guard.
 if [ "${1-}" = doctor ]; then
-  p="${BASH_SOURCE[0]-}" i=0
+  p="${BASH_SOURCE[0]-}"
   [ -n "$p" ] || { echo "coddy: doctor needs to run from its file, not stdin" >&2; exit 1; }
-  case "$p" in */*) ;; *) p="./$p" ;; esac
-  while [ -L "$p" ] && [ "$i" -lt 40 ]; do t=$(rdl "$p"); t=${t%x}; case "$t" in /*) p=$t ;; *) p="${p%/*}/$t" ;; esac; i=$((i+1)); done
-  d=$(cd -P "${p%/*}/.." && pwd -P) || exit 1
+  follow "$p" || exit 1
+  d=$(cd -P "${rp%/*}/.." && pwd -P) || exit 1
   h=$(cd "${CODDY_HOME:-${HOME-}/.coddy}" 2>/dev/null && pwd -P)
   v=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$d/.claude-plugin/plugin.json" 2>/dev/null | head -1)
   c=""; [ ! -e "$d/.git" ] || c=$(unset GIT_DIR GIT_WORK_TREE; git -C "$d" rev-parse --short HEAD 2>/dev/null)
@@ -83,6 +100,19 @@ if [ "${1-}" = doctor ]; then
   echo "commit: ${c:-none}"
   inst=$d bad=0 u=$(uname -s 2>/dev/null | tr -d '[:cntrl:]')
   [ "$(osname "$u")" != windows ] || { echo "platform: windows ($u) is not supported: coddy runs on macOS, Linux and WSL"; bad=1; }
+fi
+
+# link <dir>: <dir>/coddy, a link to this file by its real path, the launcher
+# an adapter keeps pointed at its current install for the git hooks to run
+# (CODDY_EXEC), so they outlive the install an update replaces. Only when it
+# points elsewhere, made aside under a dot name and moved over, so a hook
+# never finds it missing, and never moved into a directory. Needs no project,
+# prints nothing and exits 0: an adapter runs it as a hook whose output an
+# agent reads.
+if [ "${1-}" = link ]; then
+  { follow "${BASH_SOURCE[0]-}" && [ -d "${2-}" ] && [ ! -d "$2/coddy" ] && [ "$(rdl "$2/coddy")" != "${rp}x" ] &&
+    rm -f "$2/.coddy.$$" && ln -s "$rp" "$2/.coddy.$$" && { mv -f "$2/.coddy.$$" "$2/coddy" || rm -f "$2/.coddy.$$"; }; } >/dev/null 2>&1
+  exit 0
 fi
 
 # Whether git dir $1 is a repository as git tests one, its HEAD read into l:
@@ -1537,7 +1567,7 @@ if [ "$cmd" = doctor ]; then
     if ! { [ -f "$f" ] && [ ! -L "$f" ] && head -c 4096 "$f" | grep -q '^# Written by coddy start: '; }; then e="$h is missing or not one coddy start wrote"; break; fi
     [ -x "$f" ] || { e="$h is not executable, so git skips it"; break; }
     c=$(head -c 4096 "$f" | sed -n "s/^c='\(.*\)'\$/\1/p" | head -1); c=${c//"'\\''"/"'"}
-    { [ -f "$c" ] && [ -x "$c" ]; } || command -v coddy >/dev/null 2>&1 || e="$h runs $c, which is gone, and coddy is not on PATH"
+    { [ -f "$c" ] && [ -x "$c" ]; } || e="$h runs $c, which is gone"
   done
   if [ ! -d "$root/.git" ]; then say hooks "ok (not applicable: no .git at the root)"
   elif [ -n "$e" ]; then say hooks "$e (fix: /coddy:start <issue>)"; else say hooks ok; fi
@@ -1588,7 +1618,7 @@ notrack() {
 # to the git hooks.
 nowrite() {
   case "$2" in
-    *'Operation not permitted'*) die "$1: $2. A sandbox blocks it, since ${3:-git runs these hooks outside the sandbox. Install them once} from your own terminal, not through an agent: cd $(printf %q "$root") && $(printf %q "$(cd "${src%/*}" && pwd)/${src##*/}") start $issue $(printf %q "$branch"). Later runs change nothing there, so they pass inside the sandbox." ;;
+    *'Operation not permitted'*) die "$1: $2. A sandbox blocks it, since ${3:-git runs these hooks outside the sandbox. Install them once} from your own terminal, not through an agent: in $root, run start for issue $issue on branch $branch with the coddy at $exe. A rerun then writes nothing, so it passes inside the sandbox, unless the previous hooks directory has gained a hook since, which needs that terminal run again." ;;
     *) die "$1: $2" ;;
   esac
 }
@@ -1613,7 +1643,11 @@ verify() {
   (cd "$wt" && sh -c "$v")
 }
 # The git hooks, .git/hooks/coddy/: pre-commit and pre-push run githook
-# through this coddy, else one on PATH, else refuse; each other hook the
+# through the coddy start embeds ($exe: CODDY_EXEC, the launcher an adapter
+# keeps pointed at its current install, else this file), never one on PATH,
+# where a sandboxed command could plant one, and refuse when it is gone. Their
+# content is a function of that path and the previous directory alone, so
+# behind a launcher it stays the same across updates. Each other hook the
 # previous directory holds gets a pass-through in sh that never starts coddy,
 # and a name it does not hold gets no file, so a hook git fires often
 # (reference-transaction, on every ref update) costs nothing the project did
@@ -1625,14 +1659,15 @@ verify() {
 # included, is recorded in .git/config as coddy.previousHooksPath whenever it
 # was not this one, so a rerun keeps the record, for githook to hand off to.
 # git runs hooks outside a sandbox, so Claude Code's keeps writes out of
-# .git/hooks and .git/config: what a hook runs lives in one or the other,
-# never where a sandboxed command could rewrite it. start writes a hook, or
+# .git/hooks and .git/config: what a hook runs is named in one or the other
+# and lies outside the root (start refuses $exe otherwise), never where a
+# sandboxed command could rewrite it. start writes a hook, or
 # .git/config, only when it would change, so a rerun with nothing to change
 # passes inside the sandbox.
 hooks() {
   local q="'\''" c d e f g h p o m s new=""
   { [ -L .git/hooks ] || [ -L .git/hooks/coddy ]; } && die ".git/hooks or .git/hooks/coddy is a symlink: coddy writes its git hooks into .git/hooks/coddy, which a sandbox keeps out of an agent's reach. Replace the link with a directory (to keep hooks in the directory it links to, point core.hooksPath there instead), then run /coddy:start $issue again."
-  c="$(cd "${src%/*}" && pwd)/${src##*/}" || die "could not find $src"
+  c=$exe
   [ -d .git/hooks/coddy ] || { e=$(mkdir -p .git/hooks/coddy 2>&1) || nowrite "could not make .git/hooks/coddy" "$e"; }
   d=$(cd .git/hooks/coddy && pwd) || die "cannot enter .git/hooks/coddy"
   # Hook $1 holds $2 unless it does already: written aside under a dot name and
@@ -1661,10 +1696,10 @@ hooks() {
   # directory, under .git/hooks); never this directory again, or it would loop;
   # never coddy's own two by another name (PRE-COMMIT on a case-insensitive file system)
   pass() { case "$1" in pre-commit|pre-push|*.*) return 1 ;; esac; [ -f "$g/$1" ] && [ -x "$g/$1" ] && [ ! "$g" -ef "$d" ] && [ ! "$d/$1" -ef "$d/pre-commit" ] && [ ! "$d/$1" -ef "$d/pre-push" ]; }
-  if [ -n "$p" ]; then o="git config core.hooksPath $(printf %q "$p")"; else o="git config --unset core.hooksPath"; fi
+  if [ -n "$p" ]; then o="set core.hooksPath in .git/config back to $p, the directory it named before coddy"; else o="unset core.hooksPath in .git/config, which named no directory before coddy"; fi
   for h in pre-commit pre-push; do
-    m="coddy: cannot find coddy to check this ${h#pre-}. Run /coddy:start <issue> to rewrite these hooks, skip the check with --no-verify, or turn it off: $o"
-    printf -v s '#!/bin/sh\n# Written by coddy start: coddy githook refuses a commit or push outside a claimed issue branch, then runs the hook core.hooksPath named before.\nc=%s\n[ -x "$c" ] || c=$(command -v coddy) || { printf "%%s\\n" %s >&2; exit 1; }\n# git runs this at the top of the worktree, where coddy finds the root.\nunset CODDY_ROOT\nexec "$c" githook %s "$@"\n' "'${c//\'/$q}'" "'${m//\'/$q}'" "$h"
+    m="coddy: $c, the coddy that checks this ${h#pre-}, is gone. The next Claude Code session puts it back, or one run of coddy's start from your own terminal does. --no-verify skips the check. To turn these hooks off, $o."
+    printf -v s '#!/bin/sh\n# Written by coddy start: coddy githook refuses a commit or push outside a claimed issue branch, then runs the hook core.hooksPath named before.\nc=%s\n[ -x "$c" ] || { printf "%%s\\n" %s >&2; exit 1; }\n# git runs this at the top of the worktree, where coddy finds the root.\nunset CODDY_ROOT\nexec "$c" githook %s "$@"\n' "'${c//\'/$q}'" "'${m//\'/$q}'" "$h"
     put "$h" "$s"
   done
   # Read back as git resolves it, at the root and in the issue's worktree, before
@@ -1694,6 +1729,19 @@ case "$cmd" in
     branch="${3-}"; [ -n "$branch" ] || die "usage: $self $cmd <issue> <branch> [base-issue]"
     [ -n "$src" ] || die "$cmd needs to run from its file, not stdin: the git hooks it installs run coddy by that path"
     [ "$branch" != "$base" ] || die "$base is the default branch, not an issue branch"
+    # The coddy the git hooks run: CODDY_EXEC, the launcher an adapter keeps
+    # pointed at its current install, else this file. git runs them outside
+    # any sandbox, so neither it nor any link on the way to its file may lie
+    # under the root, where a sandboxed command could rewrite it.
+    exe=${CODDY_EXEC-}
+    [ -n "$exe" ] || exe="$(cd "${src%/*}" && pwd)/${src##*/}" || die "could not find $src"
+    case "$exe" in /*) ;; *) die "CODDY_EXEC must be an absolute path, got $exe" ;; esac
+    inproj() { local d=$1; while [ -n "$d" ]; do [ "$d" -ef "$root" ] && return 0; d=${d%/*}; done; return 1; }
+    follow "$exe" inproj; case $? in
+      0) { [ -f "$rp" ] && [ -x "$rp" ]; } || die "$exe is not an executable file, so the git hooks could not run it" ;;
+      2) die "$exe is inside the project at $root, or reaches a file there through a link. git runs its hooks outside any sandbox, so they must not run a file a command in the project can rewrite: run start from a coddy installed outside the project." ;;
+      *) die "could not follow $exe to its file" ;;
+    esac
     # A new branch starts from $base on the remote, or, given a base issue,
     # from that issue's recorded branch as it stands here (pushed or not),
     # which is recorded too and becomes the PR's base in ship.
