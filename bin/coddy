@@ -19,6 +19,7 @@
 #   coddy guard                     PreToolUse hook on Edit/Write (hooks/hooks.json)
 #   coddy snap | trip               Pre/PostToolUse hooks on Bash
 #   coddy githook pre-commit|pre-push   the git hooks start installs under .git/hooks/coddy
+#   coddy link <dir>                point <dir>/coddy at this file, the launcher the git hooks run (CODDY_EXEC); needs no project, prints nothing
 # Inputs, all optional: CODDY_ROOT, where root resolution starts ($PWD
 # without it); CODDY_SESSION and CODDY_PID, the session id and process the
 # lock's owner line records and is compared with (a caller naming none is
@@ -1677,8 +1678,9 @@ verify() {
 # through the coddy start embeds ($exe: CODDY_EXEC, the launcher an adapter
 # keeps pointed at its current install, else this file), never one on PATH,
 # where a sandboxed command could plant one, and refuse when it is gone; they
-# run it under a bash from PATH, and hand it PATH, without the entries that
-# are relative or lie in the repository. Their content is a function of that
+# run it under a bash -p from PATH (no BASH_ENV, no function from the
+# environment), and hand it PATH, without the entries that are relative or
+# lie in the repository. Their content is a function of that
 # path, the root and the previous directory alone, so behind a launcher it
 # stays the same across updates. Each other hook the
 # previous directory holds gets a pass-through in sh that never starts coddy,
@@ -1746,7 +1748,8 @@ unset CODDY_ROOT
 # coddy runs under the first bash on PATH and finds its tools there, past every
 # entry that is relative or lies, physically, in the repository (the checkout
 # at r, this worktree), where a command in the project could plant one. Shell
-# builtins alone until then; the hook before gets PATH as git gave it.
+# builtins alone until then; the hook before gets PATH as git gave it. -p: no
+# BASH_ENV, and no function exported into the environment, reaches coddy.
 r=%s
 t=$(pwd -P) || exit 1
 o() { x=$1; while [ -n "$x" ]; do { [ "$x" -ef "$r" ] || [ "$x" -ef "$t" ]; } && return 0; x=${x%%/*}; done; return 1; }
@@ -1760,7 +1763,7 @@ done
 [ -n "$b" ] || { printf "%%s\\n" %s >&2; exit 1; }
 CODDY_PATH=$PATH PATH=$n
 export CODDY_PATH PATH
-exec "$b" "$c" githook %s "$@"
+exec "$b" -p "$c" githook %s "$@"
 ' "'${c//\'/$q}'" "'${m//\'/$q}'" "'${k//\'/$q}'" "'${n//\'/$q}'" "$h"
     put "$h" "$s"
   done

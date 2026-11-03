@@ -889,6 +889,13 @@ t 0 "githook: with no bash on PATH but in the repository, the hook refuses" test
 t 0 "githook: saying why, in plain text" grep -qF "coddy: no bash on PATH outside the repository at $(cd "$repo" && pwd -P), so $tmp/data/coddy, the coddy that checks this commit, cannot run." <<<"$out"
 t 1 "githook: having run none of them" test -e "$tmp/planted"
 rm -r .git/hooks/pre-commit "$repo/tools"
+# That bash runs with -p, as hooks.json's do: a BASH_ENV file, or a function
+# exported under the name of a command the core runs, would pass the check.
+printf ': > "%s"\nexit 0\n' "$tmp/envran" > "$tmp/benv"
+BASH_ENV="$tmp/benv" t 1 "githook: a BASH_ENV in git's environment does not pass a commit on the default branch" git commit -q --allow-empty -m x
+t 1 "githook: nor is it read" test -e "$tmp/envran"
+t 1 "githook: nor does a git function exported into git's environment" bash -c "git() { : > '$tmp/envran'; }; export -f git; exec \"\$0\" commit -q --allow-empty -m x" "$g"
+t 1 "githook: which the core never runs" test -e "$tmp/envran"
 rm "$tmp/data/coddy"
 PATH="$plant" t 1 "githook: with the launcher gone, the hook refuses" git -C .worktrees/1 commit -q --allow-empty -m x
 PATH="$plant" t 0 "githook: naming it gone" says "$tmp/data/coddy, the coddy that checks this commit, is gone" git -C .worktrees/1 commit -q --allow-empty -m x
