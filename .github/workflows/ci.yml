@@ -16,14 +16,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: install jj
         working-directory: ${{ runner.temp }}
         run: |
           curl -fsSLo jj.tar.gz https://github.com/jj-vcs/jj/releases/download/v0.46.0/jj-v0.46.0-x86_64-unknown-linux-musl.tar.gz
           echo "fce0271158e665ceb82dc66c5eb95b1728649094e9133074f3b5baece345fc08  jj.tar.gz" | sha256sum -c -
           sudo tar -xzf jj.tar.gz -C /usr/local/bin ./jj
+          jj --version
       - run: pip install shellcheck-py==0.11.0.1
-      - run: shellcheck -S warning bin/coddy scripts/*.sh get.sh
+      # the pinned one, not a shellcheck the image has earlier on PATH
+      - run: |
+          shellcheck --version | grep -x 'version: 0.11.0'
+          shellcheck -S warning bin/coddy scripts/*.sh get.sh
       - run: bash scripts/selftest.sh
       - run: bash scripts/selftest-core.sh
       - run: npm install -g @anthropic-ai/claude-code@2.1.317
@@ -33,6 +39,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: parse under /bin/bash
         run: for f in bin/coddy scripts/*.sh get.sh; do /bin/bash -n "$f"; done
       - name: put /bin/bash first on PATH
@@ -45,5 +53,6 @@ jobs:
           curl -fsSLo jj.tar.gz https://github.com/jj-vcs/jj/releases/download/v0.46.0/jj-v0.46.0-aarch64-apple-darwin.tar.gz
           echo "43daa37ce0f9716cdf6fb65a29cbcae74a3160aef048cf3cb3d166d41cb4ab58  jj.tar.gz" | shasum -a 256 -c -
           sudo tar -xzf jj.tar.gz -C /usr/local/bin ./jj
+          jj --version
       - run: bash scripts/selftest.sh
       - run: bash scripts/selftest-core.sh

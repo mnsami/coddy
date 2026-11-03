@@ -1039,7 +1039,7 @@ mkdir -p "$tmp/dl/real/bin" "$tmp/dl/x"; cp "$here/bin/coddy" "$tmp/dl/real/bin/
 t 0 "doctor: through a linked bin/, the real install dir" says "^install: $(cd "$tmp/dl/real" && pwd -P)\$" env CODDY_ROOT="$tmp" "$tmp/dl/x/bin/coddy" doctor
 t 0 "doctor: outside a project, the five install lines alone" test "$(CODDY_ROOT="$tmp" "$here/bin/coddy" doctor | wc -l)" -eq 5
 t 0 "doctor: the bash on PATH" says "^bash: $(command -v bash) [0-9]*\.[0-9]*\.[0-9]*\$" env CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
-mkdir "$tmp/nobash"; for x in sed head uname tr git; do p=$(command -v "$x") && ln -s "$p" "$tmp/nobash/$x"; done
+mkdir "$tmp/nobash"; for x in sed head uname tr git readlink; do p=$(command -v "$x") && ln -s "$p" "$tmp/nobash/$x"; done
 t 0 "doctor: no bash on PATH" says '^bash: missing$' env PATH="$tmp/nobash" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
 t 0 "doctor: and exits 0 for it" env PATH="$tmp/nobash" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
 mkdir "$tmp/c"$'\n'"b"; ln -s "$BASH" "$tmp/c"$'\n'"b/bash"
