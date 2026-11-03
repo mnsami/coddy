@@ -1704,7 +1704,10 @@ hooks() {
   pass() { case "$1" in pre-commit|pre-push|*.*) return 1 ;; esac; [ -f "$g/$1" ] && [ -x "$g/$1" ] && [ ! "$g" -ef "$d" ] && [ ! "$d/$1" -ef "$d/pre-commit" ] && [ ! "$d/$1" -ef "$d/pre-push" ]; }
   if [ -n "$p" ]; then o="set core.hooksPath in .git/config back to $p, the directory it named before coddy"; else o="unset core.hooksPath in .git/config, which named no directory before coddy"; fi
   for h in pre-commit pre-push; do
-    m="coddy: $c, the coddy that checks this ${h#pre-}, is gone. The next Claude Code session puts it back, or one run of coddy's start from your own terminal does. --no-verify skips the check. To turn these hooks off, $o."
+    # What puts it back, in no agent's name, and the same whether $c came from
+    # CODDY_EXEC or not: the terminal run nowrite names passes no CODDY_EXEC,
+    # and its hooks must match a sandboxed rerun's byte for byte.
+    m="coddy: $c, the coddy that checks this ${h#pre-}, is gone. When it is the launcher your agent points at its coddy install as a session starts, a new session puts it back; either way, one run of coddy's start from your own terminal, with a coddy installed outside the project, puts these hooks back. --no-verify skips the check. To turn these hooks off, $o."
     printf -v s '#!/bin/sh\n# Written by coddy start: coddy githook refuses a commit or push outside a claimed issue branch, then runs the hook core.hooksPath named before.\nc=%s\n[ -x "$c" ] || { printf "%%s\\n" %s >&2; exit 1; }\n# git runs this at the top of the worktree, where coddy finds the root.\nunset CODDY_ROOT\nexec "$c" githook %s "$@"\n' "'${c//\'/$q}'" "'${m//\'/$q}'" "$h"
     put "$h" "$s"
   done

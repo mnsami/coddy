@@ -828,7 +828,8 @@ rm "$tmp/moved/coddy"
 PATH="$plant" t 1 "githook: a hook whose coddy is gone refuses, with a coddy on PATH" git -C .worktrees/1 commit -q --allow-empty -m x
 t 1 "githook: running none of them" test -e "$tmp/planted"
 PATH="$plant" t 0 "githook: naming the path gone" says "$tmp/moved/coddy, the coddy that checks this commit, is gone" git -C .worktrees/1 commit -q --allow-empty -m x
-PATH="$plant" t 0 "githook: what puts it back" says "The next Claude Code session puts it back, or one run of coddy's start from your own terminal does" git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$plant" t 0 "githook: what puts it back" says "is gone\. When it is the launcher your agent points at its coddy install as a session starts, a new session puts it back; either way, one run of coddy's start from your own terminal, with a coddy installed outside the project, puts these hooks back\." git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$plant" t 1 "githook: naming no agent, since the core is any agent's" says Claude git -C .worktrees/1 commit -q --allow-empty -m x
 PATH="$plant" t 0 "githook: --no-verify" says '\. --no-verify skips the check' git -C .worktrees/1 commit -q --allow-empty -m x
 PATH="$plant" t 0 "githook: and, none recorded, how to turn it off, in words" says 'unset core.hooksPath in .git/config, which named no directory before coddy\.$' git -C .worktrees/1 commit -q --allow-empty -m x
 PATH="$plant" t 1 "githook: with no command to paste" says 'git config\|/coddy:start' git -C .worktrees/1 commit -q --allow-empty -m x
@@ -846,7 +847,11 @@ t 0 "link: points <dir>/coddy at the coddy it ran, by its real path" test "$(rea
 ino=$(ls -i "$tmp/data/coddy"); "$tmp/v1/coddy" link "$tmp/data"
 t 0 "link: pointing there already, it makes no new link" test "$(ls -i "$tmp/data/coddy")" = "$ino"
 t 0 "link: into a directory that is not there, nothing and exit 0" test -z "$("$tmp/v1/coddy" link "$tmp/nodata" 2>&1)"
+# Hooks an older coddy wrote, by its versioned path, fell back to a coddy on PATH.
+for h in pre-commit pre-push; do sed -i.bak 's/^\[ -x "\$c" \] || {/[ -x "$c" ] || c=$(command -v coddy) || {/' "$hooks/$h"; rm "$hooks/$h.bak"; done
+t 0 "githook: (hooks as an older coddy wrote them, falling back to PATH)" grep -q 'command -v coddy' "$hooks/pre-commit"
 CODDY_EXEC="$tmp/data/coddy" "$tmp/v1/coddy" start 1 feat/1-thing >/dev/null 2>&1
+t 1 "githook: the next start rewrites them, PATH fallback gone" grep -q 'command -v' "$hooks/pre-commit" "$hooks/pre-push"
 t 0 "githook: start writes CODDY_EXEC's path, not its own" grep -qxF "c='$tmp/data/coddy'" "$hooks/pre-commit"
 sums=$(cksum "$hooks"/*; git config --local --list)
 "$tmp/v2/coddy" link "$tmp/data"; rm -r "$tmp/v1"
@@ -854,6 +859,7 @@ t 0 "link: an update repoints it" test "$(readlink "$tmp/data/coddy")" = "$(cd "
 if [ "$(id -u)" != 0 ]; then # root writes anywhere
   chmod a-w "$hooks" .git
   CODDY_EXEC="$tmp/data/coddy" t 0 "githook: after an update, start passes where neither the hooks nor .git/config can be written" "$tmp/v2/coddy" start 1 feat/1-thing
+  t 0 "githook: and so does start run by the launcher's path, the terminal run a sandbox's refusal names" "$tmp/data/coddy" start 1 feat/1-thing
   chmod u+w "$hooks" .git
 fi
 t 0 "githook: and the hooks are byte for byte as they were" test "$(cksum "$hooks"/*; git config --local --list)" = "$sums"
@@ -871,17 +877,18 @@ t 1 "githook: and running none on PATH" test -e "$tmp/planted"
 mkdir "$repo/bin"; cp "$here/bin/coddy" "$repo/bin/"; ln -s "$repo/bin/coddy" "$tmp/inlink"; ln -s "$here/bin/coddy" "$repo/bin/mid"; ln -s "$repo/bin/mid" "$tmp/chain"
 sums=$(cksum "$hooks"/*; git config --local --list)
 t 1 "start run from <root>/bin/coddy is refused" "$repo/bin/coddy" start 1 feat/1-thing
-t 0 "saying why" says 'is inside the project at .*, or a link on the way to its file lies there\. git runs its hooks outside any sandbox' "$repo/bin/coddy" start 1 feat/1-thing
-CODDY_EXEC="$tmp/inlink" t 1 "so is a CODDY_EXEC that resolves to a file there" run start 1 feat/1-thing
-CODDY_EXEC="$tmp/chain" t 1 "and one whose links pass through the project" run start 1 feat/1-thing
-CODDY_EXEC="$tmp/alias/bin/coddy" t 1 "and one through a link to the root" run start 1 feat/1-thing
-CODDY_EXEC=bin/coddy t 1 "and a relative CODDY_EXEC" run start 1 feat/1-thing
+inside='is inside the project at .*, or a link on the way to its file lies there\. git runs its hooks outside any sandbox'
+t 0 "saying why" says "$inside" "$repo/bin/coddy" start 1 feat/1-thing
+CODDY_EXEC="$tmp/inlink" t 0 "so is a CODDY_EXEC that resolves to a file there" says "$inside" run start 1 feat/1-thing
+CODDY_EXEC="$tmp/chain" t 0 "and one whose links pass through the project" says "$inside" run start 1 feat/1-thing
+CODDY_EXEC="$tmp/alias/bin/coddy" t 0 "and one through a link to the root" says "$inside" run start 1 feat/1-thing
+CODDY_EXEC=bin/coddy t 0 "and a relative CODDY_EXEC" says "CODDY_EXEC must be an absolute path" run start 1 feat/1-thing
 # A link to a directory on the way counts too: cd -P passes it unseen, and the
 # hook names the path through it, which a sandboxed command can repoint.
 ln -s "$here/bin" "$repo/lnk"; ln -s "$repo/lnk" "$tmp/dirchain"
-t 1 "start run through a link in the project to a directory outside it is refused" "$repo/lnk/coddy" start 1 feat/1-thing
-CODDY_EXEC="$tmp/dirchain/coddy" t 1 "and a CODDY_EXEC whose directory's links pass through the project" run start 1 feat/1-thing
-CODDY_EXEC="$here/bin/coddy/" t 1 "and one with a trailing slash, which names no file" run start 1 feat/1-thing
+t 0 "start run through a link in the project to a directory outside it is refused" says "$inside" "$repo/lnk/coddy" start 1 feat/1-thing
+CODDY_EXEC="$tmp/dirchain/coddy" t 0 "and a CODDY_EXEC whose directory's links pass through the project" says "$inside" run start 1 feat/1-thing
+CODDY_EXEC="$here/bin/coddy/" t 0 "and one with a trailing slash, which names no file" says "could not follow .* to its file" run start 1 feat/1-thing
 t 0 "having written nothing" test "$(cksum "$hooks"/*; git config --local --list)" = "$sums"
 rm -r "$repo/bin" "$repo/plant" "$repo/lnk" "$tmp/inlink" "$tmp/chain" "$tmp/dirchain"
 git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
