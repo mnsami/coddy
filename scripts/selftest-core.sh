@@ -6,6 +6,8 @@
 # Usage: bash scripts/selftest-core.sh
 set -u
 for v in "${!CLAUDE_@}"; do unset "$v" 2>/dev/null; done; unset CODDY_AGENT_DIR CODDY_EXEC 2>/dev/null
+# macOS ships no timeout: perl's alarm, which the exec keeps, stands in (a run cut short exits 142, not 124)
+command -v timeout >/dev/null || timeout() { perl -e 'alarm shift; exec { $ARGV[0] } @ARGV or exit 127' "$@"; }
 here="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 repo="$tmp/repo"; fail=0
@@ -1040,6 +1042,8 @@ t 0 "doctor: the bash on PATH" says "^bash: $(command -v bash) [0-9]*\.[0-9]*\.[
 mkdir "$tmp/nobash"; for x in sed head uname tr git; do p=$(command -v "$x") && ln -s "$p" "$tmp/nobash/$x"; done
 t 0 "doctor: no bash on PATH" says '^bash: missing$' env PATH="$tmp/nobash" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
 t 0 "doctor: and exits 0 for it" env PATH="$tmp/nobash" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
+mkdir "$tmp/c"$'\n'"b"; ln -s "$BASH" "$tmp/c"$'\n'"b/bash"
+t 0 "doctor: a bash whose path holds a line break, on one line" says "^bash: $tmp/cb/bash [0-9]*\.[0-9]*\.[0-9]*\$" env PATH="$tmp/c"$'\n'"b:$PATH" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
 
 # doctor in a project: a line per check, ok or the problem with its fix; exit 1 on any; writes nothing.
 dp="$tmp/dp"; git init -q --bare "$tmp/dorigin.git"; git clone -q "$tmp/dorigin.git" "$dp" 2>/dev/null
