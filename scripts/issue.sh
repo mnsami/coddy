@@ -13,8 +13,25 @@
 # project dir in the real one. The hooks (guard, snap, trip) take it as it is:
 # they get the real one, and their working directory follows the Bash tool's
 # cd, so held to it a cd out of the project would drop the root.
+# The launcher the git hooks run lives in the plugin's data dir, found by
+# Claude Code's layout: an install at <P>/plugins/cache/<marketplace>/<plugin>/<version>
+# keeps it at <P>/plugins/data/<id>, <id> being <plugin>@<marketplace> with
+# every character but A-Za-z0-9_- made a -. Any other install (--plugin-dir)
+# has none, so it never repoints the launcher an installed coddy keeps. link,
+# the SessionStart hook, which needs no project and whose output is the
+# model's context, points it at this install's bin/coddy, given that dir
+# alone; start has the hooks run it once it is there. An inherited CODDY_EXEC
+# is ignored, as every CODDY_* is.
 for v in "${!GIT_@}"; do case $v in GIT_AUTHOR_*|GIT_COMMITTER_*|GIT_SSH*|GIT_ASKPASS|GIT_TERMINAL_PROMPT) ;; *) unset "$v" ;; esac; done
-case "${1-}" in guard|snap|trip) ;; *)
+unset CODDY_EXEC
+case "${1-}" in link|start|create)
+  d=$(cd -P "${0%/*}/.." 2>/dev/null && pwd -P); d=${d%/*}; id=${d##*/}; d=${d%/*}; id="$id@${d##*/}"; d=${d%/*}
+  case "$d" in */plugins/cache) d="${d%/cache}/data/${id//[!A-Za-z0-9_-]/-}" ;; *) d="" ;; esac
+  if [ "$1" = link ]; then { [ -n "$d" ] && [ -d "$d" ] && [ "$d" -ef "${2-}" ]; } || exit 0
+  elif [ -n "$d" ] && [ -x "$d/coddy" ]; then export CODDY_EXEC="$d/coddy"; fi
+  unset d id ;;
+esac
+case "${1-}" in guard|snap|trip|link) ;; *)
   real=$(case "${CLAUDE_PROJECT_DIR-}" in (/*) cd "$CLAUDE_PROJECT_DIR" 2>/dev/null && pwd -P ;; esac)
   case "$(pwd -P)/" in "${real:-//}"/*) ;; *) CLAUDE_PROJECT_DIR=$PWD ;; esac
   unset real ;;

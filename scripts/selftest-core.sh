@@ -5,7 +5,7 @@
 # under scripts/ and the full lifecycle are selftest.sh's.
 # Usage: bash scripts/selftest-core.sh
 set -u
-unset $(compgen -v CLAUDE_) CODDY_AGENT_DIR 2>/dev/null
+unset $(compgen -v CLAUDE_) CODDY_AGENT_DIR CODDY_EXEC 2>/dev/null
 here="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 repo="$tmp/repo"; fail=0
@@ -21,6 +21,7 @@ t() {
 run() { "$here/bin/coddy" "$@"; } # by its exec bit, as PATH would run it
 as() { CODDY_SESSION=$1 CODDY_PID=$2 run "${@:3}"; }
 says() { "${@:2}" 2>&1 | grep -q "$1"; }
+quiet() { local o; o=$("$@" 2>&1) && [ -z "$o" ]; } # exits 0 and prints nothing
 holds() { read -r a b _ < "$2" && [ "$a $b" = "$1" ]; }
 # guard <path> [session]: the edit hook's payload; another session runs in another process
 guard() { local s=${2-sess-a} p=1; [ "$s" != sess-a ] || p=$$; printf '{"session_id":"%s","tool_input":{"file_path":"%s"}}' "$s" "$1" | CODDY_PID=$p run guard; }
@@ -804,7 +805,7 @@ rm .git/config.lock
 # first start there stops, and says how the user installs the hooks once.
 mkdir "$tmp/eperm"; printf '#!/bin/sh\n[ "$#:$1:$2" != 3:config:core.hooksPath ] || { echo "error: could not lock config file .git/config: Operation not permitted" >&2; exit 255; }\nexec %s "$@"\n' "$(command -v git)" > "$tmp/eperm/git"; chmod +x "$tmp/eperm/git"
 PATH="$tmp/eperm:$PATH" t 1 "githook: start that a sandbox keeps out of .git/config fails" run start 1 feat/1-thing
-PATH="$tmp/eperm:$PATH" t 0 "githook: naming the sandbox and the user's one run from their own terminal" says 'sandbox.*Install them once from your own terminal, not through an agent: cd .* start 1 feat/1-thing\.' run start 1 feat/1-thing
+PATH="$tmp/eperm:$PATH" t 0 "githook: naming the sandbox and the user's one run from their own terminal" says 'sandbox.*Install them once from your own terminal, not through an agent: in .*, run start for issue 1 on branch feat/1-thing with the coddy at .*/coddy\. A rerun then writes nothing' run start 1 feat/1-thing
 run start 1 feat/1-thing >/dev/null 2>&1
 t 0 "githook: none before is recorded as none" sh -c 'v=$(git config --local coddy.previousHooksPath) && [ -z "$v" ]'
 t 1 "githook: under .git/hooks, its coddy directory gets no pass-through" test -e "$hooks/coddy"
@@ -817,19 +818,114 @@ printf '#!/bin/sh\nexit 0\n' > .git/hooks/PRE-COMMIT; chmod +x .git/hooks/PRE-CO
 t 0 "githook: a previous PRE-COMMIT leaves coddy's pre-commit in place" grep -q 'githook pre-commit' "$hooks/pre-commit"
 t 1 "githook: which still refuses a commit on the default branch" git commit -q --allow-empty -m x
 rm .git/hooks/PRE-COMMIT
-# A hook that cannot find the coddy that wrote it uses one on PATH, else refuses.
-mkdir "$tmp/moved" "$tmp/onpath"; cp "$here/bin/coddy" "$tmp/moved/"; ln -s "$here/bin/coddy" "$tmp/onpath/coddy"
+# The hooks run coddy by the path start embeds and nothing else: a coddy on
+# PATH, in the project or not, may be one a sandboxed command planted.
+mkdir "$tmp/moved" "$tmp/onpath" "$repo/plant"; cp "$here/bin/coddy" "$tmp/moved/"
+printf '#!/bin/sh\n: > "%s"\n' "$tmp/planted" > "$tmp/onpath/coddy"; cp "$tmp/onpath/coddy" "$repo/plant/"; chmod +x "$tmp/onpath/coddy" "$repo/plant/coddy"
+plant="$repo/plant:$tmp/onpath:$PATH"
 (cd .worktrees/1 && ../../../moved/coddy start 1 feat/1-thing) >/dev/null 2>&1
 t 0 "githook: start run by a relative path, away from the root, writes that coddy's absolute path" grep -qxF "c='$tmp/moved/coddy'" "$hooks/pre-commit"
 rm "$tmp/moved/coddy"
-PATH="$tmp/nojq" t 1 "githook: a hook that cannot find coddy refuses" git -C .worktrees/1 commit -q --allow-empty -m x
-PATH="$tmp/nojq" t 0 "githook: naming --no-verify" says 'skip the check with --no-verify' git -C .worktrees/1 commit -q --allow-empty -m x
-PATH="$tmp/nojq" t 0 "githook: and, none recorded, how to turn it off" says 'git config --unset core.hooksPath' git -C .worktrees/1 commit -q --allow-empty -m x
-PATH="$tmp/nojq" t 0 "githook: and /coddy:start, which rewrites them" says 'Run /coddy:start <issue> to rewrite these hooks' git -C .worktrees/1 commit -q --allow-empty -m x
-PATH="$tmp/onpath:$PATH" t 0 "githook: one on PATH runs it" git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$plant" t 1 "githook: a hook whose coddy is gone refuses, with a coddy on PATH" git -C .worktrees/1 commit -q --allow-empty -m x
+t 1 "githook: running none of them" test -e "$tmp/planted"
+PATH="$plant" t 0 "githook: naming the path gone" says "$tmp/moved/coddy, the coddy that checks this commit, is gone" git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$plant" t 0 "githook: what puts it back" says "is gone\. When it is the launcher your agent points at its coddy install as a session starts, a new session puts it back; either way, one run of coddy's start from your own terminal, with a coddy installed outside the project, puts these hooks back\." git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$plant" t 1 "githook: naming no agent, since the core is any agent's" says Claude git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$plant" t 0 "githook: --no-verify" says '\. --no-verify skips the check' git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$plant" t 0 "githook: and, none recorded, how to turn it off, in words" says 'unset core.hooksPath in .git/config, which named no directory before coddy\.$' git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$plant" t 1 "githook: with no command to paste" says 'git config\|/coddy:start' git -C .worktrees/1 commit -q --allow-empty -m x
 # The recorded path as recorded: echo in sh would read its backslash as an escape.
 b="$tmp/pr\\ev"; cp "$here/bin/coddy" "$tmp/moved/"; git config core.hooksPath "$b"; "$tmp/moved/coddy" start 1 feat/1-thing >/dev/null 2>&1; rm "$tmp/moved/coddy"
-PATH="$tmp/nojq" t 0 "githook: and, one recorded, how to put it back, backslash and all" sh -c 'git -C .worktrees/1 commit -q --allow-empty -m x 2>&1 | grep -qF -- "$1"' _ "git config core.hooksPath $(printf %q "$b")"
+PATH="$tmp/nojq" t 0 "githook: and, one recorded, how to put it back, backslash and all" sh -c 'git -C .worktrees/1 commit -q --allow-empty -m x 2>&1 | grep -qF -- "$1"' _ "set core.hooksPath in .git/config back to $b, the directory it named before coddy."
+git config --unset core.hooksPath
+# Behind a launcher (CODDY_EXEC, which an adapter's link keeps pointed at its
+# current install) the hooks stay byte for byte the same across updates, so a
+# sandboxed start after one writes nothing, and a commit runs the current coddy.
+mkdir "$tmp/v1" "$tmp/v2" "$tmp/data"; cp "$here/bin/coddy" "$tmp/v1/"
+{ head -1 "$here/bin/coddy"; printf 'echo "$*" >> "%s"\n' "$tmp/v2.log"; tail -n +2 "$here/bin/coddy"; } > "$tmp/v2/coddy"; chmod +x "$tmp/v2/coddy"
+t 0 "link: prints nothing and exits 0" quiet "$tmp/v1/coddy" link "$tmp/data"
+t 0 "link: points <dir>/coddy at the coddy it ran, by its real path" test "$(readlink "$tmp/data/coddy")" = "$(cd "$tmp/v1" && pwd -P)/coddy"
+ino=$(ls -i "$tmp/data/coddy"); "$tmp/v1/coddy" link "$tmp/data"
+t 0 "link: pointing there already, it makes no new link" test "$(ls -i "$tmp/data/coddy")" = "$ino"
+t 0 "link: into a directory that is not there, nothing and exit 0" quiet "$tmp/v1/coddy" link "$tmp/nodata"
+# Hooks an older coddy wrote, by its versioned path, fell back to a coddy on PATH.
+for h in pre-commit pre-push; do sed -i.bak 's/^\[ -x "\$c" \] || {/[ -x "$c" ] || c=$(command -v coddy) || {/' "$hooks/$h"; rm "$hooks/$h.bak"; done
+t 0 "githook: (hooks as an older coddy wrote them, falling back to PATH)" grep -q 'command -v coddy' "$hooks/pre-commit"
+CODDY_EXEC="$tmp/data/coddy" "$tmp/v1/coddy" start 1 feat/1-thing >/dev/null 2>&1
+t 1 "githook: the next start rewrites them, PATH fallback gone" grep -q 'command -v' "$hooks/pre-commit" "$hooks/pre-push"
+t 0 "githook: start writes CODDY_EXEC's path, not its own" grep -qxF "c='$tmp/data/coddy'" "$hooks/pre-commit"
+sums=$(cksum "$hooks"/*; git config --local --list)
+"$tmp/v2/coddy" link "$tmp/data"; rm -r "$tmp/v1"
+t 0 "link: an update repoints it" test "$(readlink "$tmp/data/coddy")" = "$(cd "$tmp/v2" && pwd -P)/coddy"
+if [ "$(id -u)" != 0 ]; then # root writes anywhere
+  chmod a-w "$hooks" .git
+  CODDY_EXEC="$tmp/data/coddy" t 0 "githook: after an update, start passes where neither the hooks nor .git/config can be written" "$tmp/v2/coddy" start 1 feat/1-thing
+  t 0 "githook: and so does start run by the launcher's path, the terminal run a sandbox's refusal names" "$tmp/data/coddy" start 1 feat/1-thing
+  chmod u+w "$hooks" .git
+fi
+t 0 "githook: and the hooks are byte for byte as they were" test "$(cksum "$hooks"/*; git config --local --list)" = "$sums"
+: > "$tmp/v2.log"
+PATH="$tmp/nojq" t 0 "githook: a commit on the claimed branch, with no coddy on PATH, runs the launcher's" git -C .worktrees/1 commit -q --allow-empty -m x
+t 0 "githook: the current coddy, not the one start ran" grep -q '^githook pre-commit' "$tmp/v2.log"
+PATH="$plant" git -C .worktrees/1 commit -q --allow-empty -m x >/dev/null 2>&1
+t 1 "githook: a coddy on PATH, in the project or not, never runs" test -e "$tmp/planted"
+# git runs the hooks outside any sandbox: coddy runs under a bash from PATH,
+# and finds its tools there, past every entry that is relative or lies in the
+# repository (the checkout, the hook's own worktree), where a sandboxed
+# command could plant one; the hook before gets PATH as git gave it.
+g=$(command -v git); mkdir "$tmp/rel" "$repo/tools"
+for x in bash sed git; do printf '#!/bin/sh\n: > "%s"\nexec %s "$@"\n' "$tmp/planted" "$(command -v "$x")" > "$repo/tools/$x"; chmod +x "$repo/tools/$x"; cp "$repo/tools/$x" "$tmp/rel/"; done
+printf '#!/bin/sh\nprintf %%s "$PATH" > "%s"\n' "$tmp/prevpath" > .git/hooks/pre-commit; chmod +x .git/hooks/pre-commit
+: > "$tmp/v2.log"
+PATH="../../../rel:$repo/tools:$PATH" t 0 "githook: a commit with bash, sed and git first on PATH, in the repository or by a relative entry, passes" "$g" -C .worktrees/1 commit -q --allow-empty -m x
+t 0 "githook: having run the launcher's coddy" grep -q '^githook pre-commit' "$tmp/v2.log"
+t 1 "githook: and none of them" test -e "$tmp/planted"
+t 0 "githook: the hook before gets PATH as git gave it" grep -qF ":../../../rel:$repo/tools:" "$tmp/prevpath"
+"$g" worktree add -q --detach "$tmp/w" 2>/dev/null; mkdir "$tmp/w/plant"; cp "$repo/tools/bash" "$repo/tools/sed" "$repo/tools/git" "$tmp/w/plant/"
+PATH="$tmp/w/plant:$PATH" t 0 "githook: a commit in a worktree outside the checkout, with them first on PATH in that worktree, passes" "$g" -C "$tmp/w" commit -q --allow-empty -m x
+t 1 "githook: running none of them either" test -e "$tmp/planted"
+out=$(PATH="$repo/tools" "$g" -C .worktrees/1 commit -q --allow-empty -m x 2>&1); r=$?
+t 0 "githook: with no bash on PATH but in the repository, the hook refuses" test "$r" = 1
+t 0 "githook: saying why, in plain text" grep -qF "coddy: no bash on PATH outside the repository at $(cd "$repo" && pwd -P), so $tmp/data/coddy, the coddy that checks this commit, cannot run." <<<"$out"
+t 1 "githook: having run none of them" test -e "$tmp/planted"
+rm -r .git/hooks/pre-commit "$repo/tools"
+# That bash runs with -p, as hooks.json's do: a BASH_ENV file, or a function
+# exported under the name of a command the core runs, would pass the check.
+printf ': > "%s"\nexit 0\n' "$tmp/envran" > "$tmp/benv"
+BASH_ENV="$tmp/benv" t 1 "githook: a BASH_ENV in git's environment does not pass a commit on the default branch" git commit -q --allow-empty -m x
+t 1 "githook: nor is it read" test -e "$tmp/envran"
+t 1 "githook: nor does a git function exported into git's environment" bash -c "git() { : > '$tmp/envran'; }; export -f git; exec \"\$0\" commit -q --allow-empty -m x" "$g"
+t 1 "githook: which the core never runs" test -e "$tmp/envran"
+rm "$tmp/data/coddy"
+PATH="$plant" t 1 "githook: with the launcher gone, the hook refuses" git -C .worktrees/1 commit -q --allow-empty -m x
+PATH="$plant" t 0 "githook: naming it gone" says "$tmp/data/coddy, the coddy that checks this commit, is gone" git -C .worktrees/1 commit -q --allow-empty -m x
+t 1 "githook: and running none on PATH" test -e "$tmp/planted"
+# start refuses a coddy the project holds, by any path to it: git runs it
+# outside the sandbox, and a sandboxed command can rewrite it.
+mkdir "$repo/bin"; cp "$here/bin/coddy" "$repo/bin/"; ln -s "$repo/bin/coddy" "$tmp/inlink"; ln -s "$here/bin/coddy" "$repo/bin/mid"; ln -s "$repo/bin/mid" "$tmp/chain"
+sums=$(cksum "$hooks"/*; git config --local --list)
+t 1 "start run from <root>/bin/coddy is refused" "$repo/bin/coddy" start 1 feat/1-thing
+inside='is inside the project at .*, or a link on the way to its file lies there\. git runs its hooks outside any sandbox'
+t 0 "saying why" says "$inside" "$repo/bin/coddy" start 1 feat/1-thing
+CODDY_EXEC="$tmp/inlink" t 0 "so is a CODDY_EXEC that resolves to a file there" says "$inside" run start 1 feat/1-thing
+CODDY_EXEC="$tmp/chain" t 0 "and one whose links pass through the project" says "$inside" run start 1 feat/1-thing
+CODDY_EXEC="$tmp/alias/bin/coddy" t 0 "and one through a link to the root" says "$inside" run start 1 feat/1-thing
+CODDY_EXEC=bin/coddy t 0 "and a relative CODDY_EXEC" says "CODDY_EXEC must be an absolute path" run start 1 feat/1-thing
+# A link to a directory on the way counts too: cd -P passes it unseen, and the
+# hook names the path through it, which a sandboxed command can repoint.
+ln -s "$here/bin" "$repo/lnk"; ln -s "$repo/lnk" "$tmp/dirchain"
+t 0 "start run through a link in the project to a directory outside it is refused" says "$inside" "$repo/lnk/coddy" start 1 feat/1-thing
+CODDY_EXEC="$tmp/dirchain/coddy" t 0 "and a CODDY_EXEC whose directory's links pass through the project" says "$inside" run start 1 feat/1-thing
+CODDY_EXEC="$here/bin/coddy/" t 0 "and one with a trailing slash, which names no file" says "could not follow .* to its file" run start 1 feat/1-thing
+# A session's sandbox writes its own directory, which may be a worktree of the
+# repository outside the checkout, or wherever the call began.
+mkdir "$tmp/w/plug"; cp "$here/bin/coddy" "$tmp/w/plug/"
+CODDY_EXEC="$tmp/w/plug/coddy" t 0 "and a CODDY_EXEC in a worktree of the repository outside the checkout" says "$inside" run start 1 feat/1-thing
+mkdir "$tmp/nowtl"; printf '#!/bin/sh\n[ "$1 $2" != "worktree list" ] || exit 1\nexec %s "$@"\n' "$g" > "$tmp/nowtl/git"; chmod +x "$tmp/nowtl/git"
+PATH="$tmp/nowtl:$PATH" CODDY_ROOT="$tmp/w" t 0 "and one where the call began, with git listing no worktree" says "$inside" "$tmp/w/plug/coddy" start 1 feat/1-thing
+t 0 "having written nothing" test "$(cksum "$hooks"/*; git config --local --list)" = "$sums"
+"$g" worktree remove --force "$tmp/w"
+rm -r "$repo/bin" "$repo/plant" "$repo/lnk" "$tmp/inlink" "$tmp/chain" "$tmp/dirchain"
 git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
 # Not onboarded, coddy's check is off.
 pp() { echo "refs/heads/main $d refs/heads/main $d" | "$hooks/pre-push" origin x; }
@@ -973,11 +1069,19 @@ t 0 "doctor: jj missing under worktree: jj" says '^jj: missing (fix: install jj'
 cp "$tmp/dp.yml" "$dp/.coddy.yml"
 prob "core.hooksPath elsewhere" '^hooks: core.hooksPath is /elsewhere' 'git config core.hooksPath /elsewhere' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
 prob "a hook without coddy's header" '^hooks: pre-push is missing or not one coddy start wrote' 'cp .git/hooks/coddy/pre-push "$tmp/pp"; echo "#!/bin/sh" > .git/hooks/coddy/pre-push' 'cp "$tmp/pp" .git/hooks/coddy/pre-push'
-# written quoted as start writes it, and run under a PATH without coddy: the fallback to `command -v coddy` must not hide it
+# written quoted as start writes it, and run with a coddy on PATH, which the hooks never run
 (cd "$dp" && cp .git/hooks/coddy/pre-commit "$tmp/pc" && sed -i.bak "s#^c=.*#c='/nonexistent/coddy'#" .git/hooks/coddy/pre-commit && rm .git/hooks/coddy/pre-commit.bak)
-t 0 "doctor: the recorded coddy path gone" sh -c "PATH=/usr/bin:/bin CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -q '^hooks: pre-commit runs /nonexistent/coddy, which is gone'"
-t 1 "doctor: the recorded coddy path gone exits 1" env PATH=/usr/bin:/bin CODDY_ROOT="$dp" "$here/bin/coddy" doctor
+t 0 "doctor: the recorded coddy path gone, whatever is on PATH" sh -c "PATH='$tmp/onpath:/usr/bin:/bin' CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -qx 'hooks: pre-commit runs /nonexistent/coddy, which is gone (fix: /coddy:start <issue>)'"
+t 1 "doctor: the recorded coddy path gone exits 1" env PATH="$tmp/onpath:/usr/bin:/bin" CODDY_ROOT="$dp" "$here/bin/coddy" doctor
 (cd "$dp" && cp "$tmp/pc" .git/hooks/coddy/pre-commit)
+# A sandboxed start cannot rewrite what git runs outside the sandbox: a hook an
+# older coddy wrote, falling back to a coddy on PATH, or one recording a coddy
+# in the project (claude --plugin-dir . did), is put right from the user's own terminal.
+term="(fix: one run of coddy's start from your own terminal, with a coddy installed outside the project)\$"
+oldhook() { cp .git/hooks/coddy/pre-commit "$tmp/pc"; { sed -n 1,3p "$tmp/pc"; echo '[ -x "$c" ] || c=$(command -v coddy) || exit 1'; sed 1,3d "$tmp/pc"; } > .git/hooks/coddy/pre-commit; }
+prob "a hook falling back to a coddy on PATH" "^hooks: pre-commit falls back to a coddy on PATH, where a command in the project could plant one $term" oldhook 'cp "$tmp/pc" .git/hooks/coddy/pre-commit'
+inhook() { cp .git/hooks/coddy/pre-commit "$tmp/pc"; mkdir bin; cp "$here/bin/coddy" bin/; sed -i.bak "s#^c=.*#c='$PWD/bin/coddy'#" .git/hooks/coddy/pre-commit; rm .git/hooks/coddy/pre-commit.bak; }
+prob "a hook running a coddy in the project" "^hooks: pre-commit runs .*/bin/coddy, which lies in the project or a worktree of it, or is reached through a link there $term" inhook 'cp "$tmp/pc" .git/hooks/coddy/pre-commit; rm -r bin'
 prob "a hook git would skip" '^hooks: pre-push is not executable' 'chmod -x .git/hooks/coddy/pre-push' 'chmod +x .git/hooks/coddy/pre-push'
 prob "hooks not installed" '^hooks: core.hooksPath is not set.*(fix: /coddy:start <issue>)' 'git config --unset core.hooksPath' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
 prob "PR check missing" '^pr_check: .*is missing or not a plain file (fix: copy ' 'rm .github/workflows/coddy.yml' 'cp "$here/templates/coddy.yml" .github/workflows/coddy.yml'

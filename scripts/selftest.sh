@@ -20,6 +20,7 @@ t() {
 run() { CLAUDE_PROJECT_DIR="$repo" bash "$here/scripts/issue.sh" "$@"; }
 as() { CLAUDE_CODE_SESSION_ID=$1 CLAUDE_PID=$2 run "${@:3}"; }
 says() { "${@:2}" 2>&1 | grep -q "$1"; } # the command's output mentions $1
+quiet() { local o; o=$("$@" 2>&1) && [ -z "$o" ]; } # the command exits 0 and prints nothing
 holds() { read -r a b _ < "$2" && [ "$a $b" = "$1" ]; } # the owner line $2 names session and pid $1
 # guard <path> [session] [pid]: the edit hook, as Claude Code calls it; the
 # payload names this run's session unless another is, and none when "" is;
@@ -235,7 +236,7 @@ leg() {
     jj -R ".worktrees/$n" config unset --workspace snapshot.auto-track
     mkdir -p "$tmp/epjj"; printf '#!/bin/sh\ncase " $* " in *" config set "*) printf "Error: Failed to write config file\\nCaused by: Operation not permitted (os error 1)\\n" >&2; exit 1 ;; esac\nexec %s "$@"\n' "$(command -v jj)" > "$tmp/epjj/jj"; chmod +x "$tmp/epjj/jj"
     PATH="$tmp/epjj:$PATH" t 1 "jj: create that a sandbox keeps out of jj's config fails" run create "$n" "feat/$n-thing"
-    PATH="$tmp/epjj:$PATH" t 0 "jj: naming the sandbox and the user's one run from their own terminal" says "sandbox.*from your own terminal, not through an agent: cd .* start $n feat/$n-thing\." run create "$n" "feat/$n-thing"
+    PATH="$tmp/epjj:$PATH" t 0 "jj: naming the sandbox and the user's one run from their own terminal" says "sandbox.*from your own terminal, not through an agent: in .*, run start for issue $n on branch feat/$n-thing with the coddy at .*/coddy\. A rerun then writes nothing" run create "$n" "feat/$n-thing"
     run create "$n" "feat/$n-thing" >/dev/null 2>&1
     head -c 2097152 /dev/zero > ".worktrees/$n/big.bin"; was=$(git ls-remote origin "refs/heads/feat/$n-thing")
     t 0 "jj: a new file over snapshot.max-new-file-size is listed as untracked" says "^'big\.bin'\$" run push "$n" "feat($n): big"
@@ -487,6 +488,9 @@ rm -r .git/coddy/66
 # env can put in its environment
 hook() { local v=$1 p=$2; shift 2; eval "set -- \"\$@\" $(jq -r --arg v "$v" --arg r "$here" 'first(.hooks[][].hooks[] | select(.args[-1]? == $v)) | [.command] + .args | map(split("${CLAUDE_PLUGIN_ROOT}") | join($r)) | @sh' "$here/hooks/hooks.json")"; printf %s "$p" | env CLAUDE_PROJECT_DIR="$repo" "$@"; }
 t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u FUNCNEST -u POSIXLY_CORRECT -u OSTYPE bash -p" jq -e '[.hooks[][].hooks[]] | all(.command == "/usr/bin/env" and .args[:12] == ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "OSTYPE", "bash", "-p"])' "$here/hooks/hooks.json"
+# On startup and resume alone: a /clear or compact in a session still running
+# an install an update replaced would point the launcher back at it.
+t 0 "hooks: SessionStart runs link with the plugin's data dir, on startup and resume alone" jq -e '.hooks.SessionStart | length == 1 and .[0].matcher == "startup|resume" and .[0].hooks[0].args[-3:] == ["${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "link", "${CLAUDE_PLUGIN_DATA}"]' "$here/hooks/hooks.json"
 t 0 "hooks: no hook sets onFailure or timeout" jq -e '[.hooks[][].hooks[]] | all(has("onFailure") or has("timeout") | not)' "$here/hooks/hooks.json"
 # Each under the bash on PATH and under /bin/bash (3.2 on macOS) first on PATH.
 # GREP_OPTIONS and TMOUT are the core's to unset, not hooks.json's: they act
@@ -659,12 +663,35 @@ git -C .worktrees/43 checkout -q feat/43-thing
 cp .claude/coddy.yml "$tmp/conf.yml"; printf 'version: 2\ntracker: github\ndefault_branch: main\n' > .claude/coddy.yml
 t 0 "no worktree key at version 2: create makes a worktree" run create 44 feat/44-thing
 t 0 "no worktree key at version 2: and it is git's, not jj's" sh -c 'test -e .worktrees/44/.git && ! test -e .worktrees/44/.jj'
-git worktree remove --force .worktrees/44; git branch -qD feat/44-thing; rm -f .git/coddy/44.branch; cp "$tmp/conf.yml" .claude/coddy.yml
+git worktree remove --force .worktrees/44; git branch -qD feat/44-thing; rm -f .git/coddy/44.branch
+# Claude Code keeps an install at <P>/plugins/cache/<marketplace>/<plugin>/<version>
+# and its data at <P>/plugins/data/<plugin>-<marketplace>: link points the
+# launcher there at the install's bin/coddy, given that dir alone, and create
+# has the git hooks run it, whatever CODDY_EXEC the shell holds.
+fake="$tmp/plugins/cache/mkt/coddy/9.9.9" data="$tmp/plugins/data/coddy-mkt"
+mkdir -p "$fake/bin" "$fake/scripts" "$data" "$tmp/plugins/data/other"; cp "$here/bin/coddy" "$fake/bin/"; cp "$here/scripts/issue.sh" "$fake/scripts/"
+frun() { CLAUDE_PROJECT_DIR="$repo" bash "$fake/scripts/issue.sh" "$@"; }
+t 0 "link: from an install in no cache layout, nothing and exit 0" quiet run link "$data"
+t 0 "link: and no launcher" test -z "$(ls -A "$data")"
+t 0 "link: given another dir, nothing and exit 0" quiet frun link "$tmp/plugins/data/other"
+t 0 "link: and no launcher there" test -z "$(ls -A "$tmp/plugins/data/other")"
+t 0 "link: given its own data dir, nothing and exit 0" quiet frun link "$data"
+t 0 "link: and the launcher points at the install's bin/coddy" test "$(readlink "$data/coddy")" = "$(cd "$fake/bin" && pwd -P)/coddy"
+CODDY_EXEC=/elsewhere/coddy frun create 46 feat/46-thing >/dev/null 2>&1
+t 0 "create: from that install, the hooks run the launcher, an inherited CODDY_EXEC ignored" grep -qxF "c='$(cd "$data" && pwd -P)/coddy'" .git/hooks/coddy/pre-commit
+CODDY_EXEC="$data/coddy" run create 46 feat/46-thing >/dev/null 2>&1
+t 0 "create: from an install in no cache layout, its own path, an inherited CODDY_EXEC ignored" grep -qxF "c='$here/bin/coddy'" .git/hooks/coddy/pre-commit
+git worktree remove --force .worktrees/46; git branch -qD feat/46-thing; rm -f .git/coddy/46.branch; cp "$tmp/conf.yml" .claude/coddy.yml
 if command -v jj >/dev/null; then
   printf 'tracker: github\nworktree: jj\ndefault_branch: main\n' > .claude/coddy.yml
   t 1 "jj: create refuses a repo that is not jj-backed" run create 41 feat/41-thing
   jj git init --colocate >/dev/null 2>&1; echo '.jj/' >> .git/info/exclude
   leg jj 42
+  # A session's sandbox writes its own directory, which may be a jj workspace
+  # outside the checkout: create refuses a coddy installed there.
+  jj workspace add --name jw "$tmp/jw" >/dev/null 2>&1; mkdir "$tmp/jw/plug"; cp -R "$here/bin" "$here/scripts" "$tmp/jw/plug/"
+  t 0 "jj: create refuses a coddy in a jj workspace outside the checkout" says 'is inside the project at .*, a worktree of it or where this start began' env CLAUDE_PROJECT_DIR="$repo" bash "$tmp/jw/plug/scripts/issue.sh" create 42 feat/42-thing
+  jj workspace forget jw >/dev/null 2>&1; rm -rf "$tmp/jw"
   printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml
   t 0 "no worktree key, no version: create makes a worktree" run create 45 feat/45-thing
   t 0 "no worktree key, no version: and it is jj's, until migrated" test -d .worktrees/45/.jj

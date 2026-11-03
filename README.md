@@ -219,9 +219,16 @@ whichever session claimed it. They refuse people too. A commit on a detached
 Once the check passes, the hook `core.hooksPath` named before runs, or the
 one in `.git/hooks/`. Every other hook that directory holds, a `commit-msg`
 say, gets a pass-through to it, so pointing `core.hooksPath` elsewhere turns
-none of them off. A hook that cannot find coddy refuses and says how to get
-past it: `/coddy:start <issue>`, which rewrites them, `--no-verify`, or the
-command that puts the old `core.hooksPath` back. Their ceilings:
+none of them off. The hooks run coddy through a launcher, a link in the
+plugin's data directory that each Claude Code session points at the current
+install, so an update leaves them as they are; never a `coddy` on `PATH`.
+They run it under a `bash` from `PATH`, and it finds its tools there, past
+every entry that is relative or inside the repository; the old hook gets
+`PATH` as it was. `/coddy:start` refuses to write hooks that would run a
+coddy inside the project or a worktree of it, which a sandboxed command
+could rewrite. A hook whose coddy is gone
+refuses and says, in words, what puts it back, that `--no-verify` skips it
+and how to turn the hooks off. Their ceilings:
 
 - `git commit --no-verify` and `git push --no-verify` skip them, and
   `git -c core.hooksPath=` runs without them.
@@ -234,10 +241,9 @@ command that puts the old `core.hooksPath` back. Their ceilings:
   `/coddy:start` has run, and can replace coddy's own. `/coddy:start` then
   stops on any file there it did not write, and names the old hooks
   directory to move it to; it never deletes or overwrites one.
-- The hooks run coddy by the path `/coddy:start` ran it from, the plugin's
-  versioned directory. Claude Code deletes an old version's directory 14
-  days after an update, and from then a terminal without `coddy` on `PATH`
-  has every commit and push refused until the next `/coddy:start`.
+- An install the launcher does not cover (`claude --plugin-dir`, a coddy
+  from `get.sh`) has the hooks run coddy by the path `/coddy:start` ran it
+  from.
 - The pass-throughs are written when `/coddy:start` runs: a hook added to
   the old directory after that runs from the next `/coddy:start`.
 - `core.hooksPath` is an absolute path, so moving or renaming the checkout
@@ -251,7 +257,10 @@ command that puts the old `core.hooksPath` back. Their ceilings:
   out of `.git/hooks` and `.git/config`, where the hooks and the old
   `core.hooksPath` live. The first `/coddy:start` in a repository stops
   there: run it once from your own terminal, as its message says. Later runs
-  change nothing there and pass inside the sandbox.
+  change nothing there and pass inside the sandbox, unless the old hooks
+  directory has gained a hook since: then the next one stops the same way,
+  until it is run once from your own terminal. So does the first one after
+  upgrading from a coddy whose hooks ran its versioned directory.
 - A merge, cherry-pick or revert runs no `pre-commit`; the push catches it.
 
 **Branch protection.** The backstop for a command that edits, commits and
