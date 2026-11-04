@@ -430,6 +430,12 @@ out=$(printf '{"tool_use_id":"w"}' | CODDY_BUDGET=2 PATH="$tmp/slowh:$PATH" run 
 t 0 "budget: past git status, the notice names the dirty paths it listed" jq -e '.hookSpecificOutput.additionalContext | test("checkout, which has [0-9]+ dirty or untracked paths, within")' <<<"$out"
 t 1 "budget: and no git of its fingerprint is left running" left
 wire trip w 2>/dev/null; rm -r dirty.txt "$tmp/slowh"
+# A member of its group that ignores TERM gets KILL once the job is gone.
+mkdir "$tmp/slowt"; sed 's/ merge-base "\*) / merge-base "*) trap "" TERM; /' "$tmp/slow/git" > "$tmp/slowt/git"; chmod +x "$tmp/slowt/git"
+: > "$tmp/slow/pids"; printf '{"tool_use_id":"w"}' | CODDY_BUDGET=2 PATH="$tmp/slowt:$PATH" run snap >/dev/null
+t 0 "budget: a TERM-ignoring git was started" test -s "$tmp/slow/pids"
+t 1 "budget: and is gone once snap returns" left
+wire trip w 2>/dev/null; rm -r "$tmp/slowt"
 # The admin dirs' check (admin) has half the budget, from the hook's start:
 # past it snap refuses every command, in either guard mode, naming
 # .git/worktrees, with no record left. A budget of 0 stands in for more

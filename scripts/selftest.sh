@@ -799,6 +799,42 @@ wire trip w 2>/dev/null
 echo a > other.txt; echo b > "$(printf 'z\n9999999 1 1:other.txt')"
 tripped 2 "tripwire: a newline in a path forges no other path's line" 'echo c > other.txt'
 rm other.txt z?9999999*
+# hash-object stops at the first path it cannot hash: one unreadable, one
+# starting with a quote, which it reads as quoted, and one ending in a CR,
+# which it strips, go by their stat instead, and so does each from the
+# first it still fails on, so none hides a later file's change.
+for e in a0 '"x' "$(printf 'a\r')"; do
+  echo a > "$e"; echo b > z.txt; [ "$e" != a0 ] || chmod 000 a0
+  wire snap w; echo c > z.txt; wire trip w 2>"$tmp/trip.err"; got=$?
+  t 0 "tripwire: a change after an unhashable path trips: ${#e} bytes" test "$got" = 2
+  t 0 "tripwire: and the report names the later file: ${#e} bytes" grep -q 'main checkout: z\.txt\.' "$tmp/trip.err"
+  rm -f "$e" z.txt
+done
+mkdir "$tmp/hof"; printf '#!/bin/sh\ncase " $* " in *" hash-object "*) chmod 000 a0 ;; esac\nexec "%s" "$@"\n' "$(command -v git)" > "$tmp/hof/git"; chmod +x "$tmp/hof/git"
+echo a > a0; echo b > z.txt
+PATH="$tmp/hof:$PATH" wire snap w; chmod 644 a0; echo c > z.txt; PATH="$tmp/hof:$PATH" wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: a change after a path hash-object fails on trips" test "$got" = 2
+t 0 "tripwire: and the report names the later file" grep -q 'main checkout: .*z\.txt\.' "$tmp/trip.err"
+rm -rf a0 z.txt "$tmp/hof"
+# trip records each path as snap did, so staging a file or one going away
+# moves no other between hashed and big: past the 32 MiB.
+mkdir r1; seq -f 'r1/b%02g' 0 32 | xargs perl -e 'for (@ARGV) { open my $f, ">", $_ or die; truncate $f, 1048576 or die }'
+tripped 0 "tripwire: staging one of 33 1 MiB files moves none of the others" 'git add r1/b32'
+git rm -q --cached r1/b32; perl -e 'open my $f, ">", "r1/a.bin" or die; truncate $f, 1048576 or die'
+tripped 0 "tripwire: nor does one of them going away" 'rm r1/a.bin'
+wire snap w; printf x >> r1/b31; wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: a change to the last of them still trips" test "$got" = 2
+t 0 "tripwire: and the report names it" grep -q 'main checkout: r1/b31\.' "$tmp/trip.err"
+rm -r r1
+# A stat that gives no line for a dirty file leaves it unchecked: snap says
+# the command runs unchecked and trip reports it.
+mkdir "$tmp/nostat"; printf '#!/bin/sh\nexit 1\n' > "$tmp/nostat/stat"; chmod +x "$tmp/nostat/stat"
+echo a > z.txt; out=$(PATH="$tmp/nostat:$PATH" wire snap w)
+t 0 "tripwire: with no working stat, snap says the command runs unchecked" jq -e '.hookSpecificOutput.additionalContext | contains("since stat gave no size")' <<<"$out"
+echo b > z.txt; PATH="$tmp/nostat:$PATH" wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: and trip reports it" test "$got" = 2
+t 0 "tripwire: saying so" grep -q 'ran unchecked: .*since stat gave no size' "$tmp/trip.err"
+rm -r z.txt "$tmp/nostat"
 # HEAD leaving the default branch is a change too, even for a pushed commit
 # with nothing dirty. A detached HEAD on the default branch's own history is
 # where jj leaves a synced checkout, so that one is quiet.

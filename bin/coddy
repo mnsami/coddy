@@ -1250,8 +1250,17 @@ out() {
 # where %.9Z gives it), read in one pass in the order it prints, so the cost
 # grows with the paths alone, a path holding a newline left out of it and
 # hashed, since its stat line would read as another path's, and forge that
-# one's. The count of dirty paths goes to fd 5 once git status has listed
-# them. A dirty path that is not clean is printed
+# one's. hash-object stops at the first path it cannot hash, so one it
+# would misread (a leading quote, a trailing CR) or cannot read goes by its
+# stat, and so does each from the first it still fails on. Each verdict,
+# h or b, goes to fd 6 with its path; trip reads snap's back from $vf, so
+# a path snap hashed is hashed again while it is 1 MiB at most, one it
+# recorded by its stat stays so, and the 32 MiB holds for the rest alone:
+# staging a file, or one going away, moves no other between the two. A
+# still-plain dirty file stat gives no line for makes the run unchecked
+# (the line "unchecked stat"), which both hooks report. The count of dirty
+# paths goes to fd 5 once git status has listed them. A dirty path that is
+# not clean is printed
 # quoted (q), so none spans two lines. A submodule shows as one gone line
 # once its commit leaves the one recorded for it, and not again while it
 # stays off it; never for its work tree (--ignore-submodules=dirty): git
@@ -1321,18 +1330,30 @@ snap() {
   if [[ $(stat -L -f %Fc / 2>/dev/null) =~ ^[0-9]+\.[0-9]+$ ]]; then sf=(-f '%z %Fc %i:%N')
   elif [[ $(stat -L -c %.9Z / 2>/dev/null) =~ ^[0-9]+\.[0-9]+$ ]]; then sf=(-c '%s %.9Z %i:%n')
   else sf=(-c '%s %Z %i:%n'); fi
-  k=0 small=() tot=0
-  while IFS= read -r l; do
-    z=${l%% *}; case "$z" in ''|*[!0-9]*) continue ;; esac
-    p=${l#*:}
-    if [ "$z" -le 1048576 ] && [ "$((tot + z))" -le 33554432 ]; then tot=$((tot + z)) small[k]=$p k=$((k+1))
-    else m=${l%%:*}; clean "$p" || p=$(q "$p"); printf '%s big:%s\n' "$p" "${m// /:}"; fi
-  done < <([ "$n" = 0 ] || printf '%s\0' "${files[@]}" | LC_ALL=C xargs -0 stat -L "${sf[@]}" -- 2>/dev/null)
-  for p in ${nl[@]+"${nl[@]}"}; do small[k]=$p; k=$((k+1)); done
+  k=0 small=() tot=0 l=""
+  for p in ${files[@]+"${files[@]}"}; do
+    [ -n "$l" ] || IFS= read -r l <&7 || l=:
+    h=${l%%:*}; m=${h#? }; z=${m%% *}
+    if [ "${l#*:}" != "$p" ] || case "$z" in ''|*[!0-9]*) true ;; *) false ;; esac; then
+      [ ! -f "$p" ] || { echo unchecked stat; return 0; }
+      clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"; continue
+    fi
+    l="" v=${h%% *}
+    case "$p" in \"*|*$'\r') v=b ;; esac; [ -r "$p" ] || v=b
+    if [ "$v" != b ] && [ "$z" -le 1048576 ] && { [ "$v" = h ] || [ "$((tot + z))" -le 33554432 ]; }; then tot=$((tot + z)) small[k]="$m:$p" k=$((k+1))
+    else big "$p" "$m"; fi
+  done 7< <([ "$n" = 0 ] || printf '%s\0' "${files[@]}" | LC_ALL=C xargs -0 stat -L "${sf[@]}" -- 2>/dev/null |
+    vf=$vf awk 'BEGIN { while ((getline r < ENVIRON["vf"]) > 0) v[substr(r, 3)] = substr(r, 1, 1) }
+      { k = substr($0, index($0, ":") + 1); print ((k in v) ? v[k] : "-") " " $0 }')
+  for p in ${nl[@]+"${nl[@]}"}; do small[k]=":$p"; k=$((k+1)); done
   [ "$k" -gt 0 ] || return 0
-  printf '%s\n' "${small[@]}" | git hash-object --stdin-paths 2>/dev/null |
-    { i=0; while IFS= read -r hash; do p=${small[i]}; clean "$p" || p=$(q "$p"); printf '%s %s\n' "$p" "$hash"; i=$((i+1)); done; }
+  printf '%s\n' "${small[@]#*:}" | git hash-object --stdin-paths 2>/dev/null |
+    { i=0; while IFS= read -r hash; do r=${small[i]}; p=${r#*:}; [ -z "${r%%:*}" ] || printf 'h %s\n' "$p" >&6; clean "$p" || p=$(q "$p"); printf '%s %s\n' "$p" "$hash"; i=$((i+1)); done
+      while [ "$i" -lt "$k" ]; do r=${small[i]}; i=$((i+1)); [ -z "${r%%:*}" ] || big "${r#*:}" "${r%%:*}"; done; }
 }
+# Dirty file $1 recorded by its stat $2 (size, ctime, inode) rather than
+# read, and snap's verdict on it on fd 6 (fp).
+big() { local p=$1; printf 'b %s\n' "$p" >&6; clean "$p" || p=$(q "$p"); printf '%s big:%s\n' "$p" "${2// /:}"; }
 
 if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # Seconds from here the fingerprint may run (CODDY_BUDGET, a whole number,
@@ -1368,19 +1389,23 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # and opens nothing. No subshell but that readlink: four tests per admin
   # dir, in both hooks. Its cost grows with the entries there, which a
   # sandboxed command can make, so past adb seconds from the hook's start it
-  # stops and says so in st, which refuses the same way.
+  # stops and says so in st, which refuses the same way. The entries are
+  # read as find streams them, each held to the clock, every name but . and
+  # .. (dot names included), a link to a directory followed as a glob's
+  # trailing slash follows it.
   admin() {
     local d f p
     [ -n "$C" ] || return 0
-    for d in "$C"/worktrees/*/ "$C"/worktrees/.[!.]*/ "$C"/worktrees/..?*/; do
-      [ ! -d "$d" ] || [ "$SECONDS" -lt "$adb" ] || {
+    while IFS= read -r -d '' d; do
+      [ "$SECONDS" -lt "$adb" ] || {
         st="$(q "$C/worktrees") holds more entries than coddy can check in $adb seconds before a shell command, so coddy refuses every command until you remove, by hand, the entries there that no worktree uses."; return 1; }
+      [ -d "$d" ] || continue
       for f in gitdir HEAD locked commondir; do
-        p=$d$f
+        p=$d/$f
         [ -f "$p" ] || { [ ! -e "$p" ] && { [ ! -L "$p" ] || { [ "$f" = HEAD ] && [[ $(readlink "$p" 2>/dev/null) == refs/* ]]; }; }; } || {
           st="$(q "$p") is not a plain file, and git worktree list, which coddy runs before and after every shell command, would wait on it or misread it, so coddy refuses every command until you remove it, or replace it with a plain file, by hand."; return 1; }
       done
-    done
+    done < <(find -H "$C/worktrees" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
   }
   # The fingerprint (snap), sorted, into file $1, within the budget: a
   # process group of its own, polled, and killed whole, git included, once
@@ -1389,15 +1414,19 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # hook returns with none of it left; status 3 then, else sort's. Polled in
   # bash's own job table (lj), never by its pid, which another process may
   # hold once bash has reaped the job: a signal goes to the group only while
-  # bash lists the job as running.
+  # bash lists the job as running, or while the group has a member, which
+  # keeps its id from reuse (KILL, once TERM ended the job but not a member
+  # that ignores it). The launch's stderr goes nowhere: under set -m the
+  # child may report a setpgid it lost to the parent's; the fingerprint's
+  # data is on its other fds.
   lj() { [[ $'\n'$(jobs -rp)$'\n' == *$'\n'"$j"$'\n'* ]]; }
   fp() {
     local j i s
-    set -m; { snap | LC_ALL=C sort -u > "$1"; } & j=$!; set +m
+    { set -m; { snap | LC_ALL=C sort -u > "$1"; } & j=$!; set +m; } 2>/dev/null
     while lj; do
       if [ "$SECONDS" -ge "$fpb" ]; then
         for s in TERM KILL; do
-          lj || break
+          lj || kill -0 -- "-$j" || break
           kill -"$s" -- "-$j"; i=0
           while { lj || kill -0 -- "-$j"; } && [ "$i" -lt 20 ]; do sleep 0.05 || sleep 1; i=$((i+1)); done
         done
@@ -1411,7 +1440,9 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # character), without jq.
   ctx() { printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$*"; }
   tl="usually thousands of dirty or untracked files; ignored ones cost nothing"
-  seen="" nowt=""
+  sx="stat gave no size, change time and inode for one of its dirty files"
+  ut="so this command runs unchecked: what it changes there, and a worktree it makes, go unreported, though a change to the config is still put back."
+  seen="" nowt="" vf=/dev/null
   case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
   file="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
   # Both config paths are kept, present or not: a .coddy.yml the command
@@ -1453,14 +1484,16 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # Over its budget the fingerprint is an unchecked record: the command
     # runs, and the agent is told it goes unchecked (un, in every note),
     # with the count of dirty paths git status gave, when it got that far
-    # (on fd 5, into $file.n).
-    fp "$file" 3>"$file.wt" 4>/dev/null 5>"$file.n"; r=$?
+    # (on fd 5, into $file.n). So is one holding "unchecked stat", for a
+    # dirty file stat gave no line for. Its verdicts go to $file.v, for trip.
+    fp "$file" 3>"$file.wt" 4>/dev/null 5>"$file.n" 6>"$file.v"; r=$?
     if [ "$r" = 3 ]; then
       rm -f "$file"; echo unchecked > "$file" || ok=""
       nd=""; [ ! -f "$file.n" ] || nd=$(head -c 20 "$file.n")
       case "$nd" in ''|*[!0-9]*) nd="whose dirty or untracked paths git status had not finished listing" ;; *) nd="which has $nd dirty or untracked paths" ;; esac
-      un="coddy could not fingerprint the main checkout, $nd, within $fpb seconds ($tl), so this command runs unchecked: what it changes there, and a worktree it makes, go unreported, though a change to the config is still put back."
-    elif [ "$r" != 0 ]; then ok=""; fi
+      un="coddy could not fingerprint the main checkout, $nd, within $fpb seconds ($tl), $ut"
+    elif [ "$r" != 0 ]; then ok=""
+    elif grep -qx 'unchecked stat' "$file"; then un="coddy could not fingerprint the main checkout, since $sx, $ut"; fi
     [ -n "$ok" ] || rm -f "$file" "$file".*
     # A git worktree add or jj workspace add that would make a worktree
     # outside coddy's (coddywt) is refused before it runs, read from the
@@ -1584,10 +1617,13 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # The snapshot goes, and trip's own files, its config copies too unless one is kept.
   drop() { rm -f "$file" ${now:+"$now"}; [ "$lab" = /dev/null ] || rm -f "$lab"; [ -n "$keep" ] || rm -f "$file".*; }
   grep -qx unchecked "$file" && { drop; die "${msg}that command ran unchecked: the main checkout took more than $fpb seconds to fingerprint before it ran ($tl), so what it changed there, and a worktree it made, could not be seen. $ck"; }
+  grep -qx 'unchecked stat' "$file" && { drop; die "${msg}that command ran unchecked: the main checkout could not be fingerprinted before it ran, since $sx, so what it changed there, and a worktree it made, could not be seen. $ck"; }
   [ ! -f "$file.wt" ] || seen=$'\n'$(cat "$file.wt")$'\n'
+  [ ! -f "$file.v" ] || vf=$file.v
   lab=$(mktemp 2>/dev/null) || lab=/dev/null
   now=$(mktemp 2>/dev/null) || { now=""; drop; die "${msg}no temporary file could be made, so what that command changed in the main checkout could not be checked. $ck"; }
-  fp "$now" 3>/dev/null 4>"$lab" 5>/dev/null || [ $? != 3 ] || { drop; die "${msg}the main checkout took more than $fpb seconds to fingerprint after that command ran ($tl), so what it changed there could not be checked. $ck"; }
+  fp "$now" 3>/dev/null 4>"$lab" 5>/dev/null 6>/dev/null || [ $? != 3 ] || { drop; die "${msg}the main checkout took more than $fpb seconds to fingerprint after that command ran ($tl), so what it changed there could not be checked. $ck"; }
+  ! grep -qx 'unchecked stat' "$now" || { drop; die "${msg}the main checkout could not be fingerprinted after that command ran, since $sx, so what it changed there could not be checked. $ck"; }
   new=$(LC_ALL=C comm -13 "$file" "$now")
   added="" wts=""
   while IFS= read -r l; do

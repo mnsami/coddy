@@ -163,8 +163,9 @@ When the hooks keep refusing, there are three ways out: run the command
 from your own terminal, disable the plugin
 (`claude plugin disable coddy@coddy`), or start a session with every hook
 off (`claude --settings '{"disableAllHooks": true}'`). On native Windows,
-or a host without `bash` or `/usr/bin/env`, the hooks cannot start and
-refuse every edit and shell command, so disable the plugin there.
+or a host without `bash` or `/usr/bin/env`, the hooks cannot start, which
+from Claude Code 2.1.295 refuses every edit and shell command, so disable
+the plugin there.
 
 **Edit guard.** A hook rejects every file edit Claude attempts outside
 `.worktrees/<issue>/`. Inside, it rejects edits until `/coddy:start` has
@@ -190,10 +191,11 @@ tripwire's worktree and push checks before a command read the key.
 
 **Shell tripwire.** Shell commands cannot be checked in advance. So a second
 hook compares the main checkout before and after each one, and tells Claude
-to undo any change it left there. A file over 1 MiB, and any once 32 MiB
-have been read, is compared by its size, inode and change time rather than
-read, so one rewritten in place to the same size within the change time's
-resolution is not seen. Changes
+to undo any change it left there. A file over 1 MiB, or one whose hashing
+would take the total read past 32 MiB, in `git status` order, is compared
+by its size, inode and change time rather than read, and after the command
+a path is compared the way it was before, so one rewritten in place to the
+same size within the change time's resolution is not seen. Changes
 inside a submodule's work tree in the main checkout are not seen, and a
 submodule is seen once, when it leaves the commit recorded for it, not
 again while it stays off it.
