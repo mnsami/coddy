@@ -37,7 +37,7 @@ snapfile="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1
 # rooted <dir> [VAR=value...]: status (or $verb) run from that directory prints the project root
 rooted() { d=$1; shift; (cd "$d" && env "$@" "$here/bin/coddy" "${verb-status}" | grep -qx "root: $repo"); }
 # A PATH with everything the guard needs but jq.
-mkdir "$tmp/nojq"; for x in bash sh sed awk cat grep git cmp ps sort comm tr cut cksum mkdir cp rm head; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
+mkdir "$tmp/nojq"; for x in bash sh sed awk cat grep git cmp ps sort comm tr cut cksum mkdir cp rm head sleep stat xargs; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
 
 git init -q --bare "$tmp/origin.git"
 git clone -q "$tmp/origin.git" "$repo" 2>/dev/null
@@ -304,6 +304,13 @@ for v in "$tmp/victim" "$tmp/nothing"; do
   t 2 "snapshot: and trip reports it lost: ${v##*/}" wire trip w
   rm -f "$snapfile" "$snapfile".*
 done
+# A record that fails drops the others too: a link planted at the
+# fingerprint's alone leaves no copy of the config behind.
+printf '#!/bin/sh\nln -s "%s" "%s.wt" 2>/dev/null\nexec "%s" "$@"\n' "$tmp/nothing" "$snapfile" "$(command -v head)" > "$tmp/plant/head"
+PATH="$tmp/plant:$PATH" wire snap w 2>/dev/null
+none() { for f in "$snapfile"*; do [ ! -e "$f" ] && [ ! -L "$f" ] || return 1; done; }
+t 0 "snapshot: a record that fails leaves none of the others" none
+t 2 "snapshot: and trip reports it lost" wire trip w
 rm -r "$tmp/plant" "$tmp/victim"
 tripped 2 "config: retargeting the link trips, the same content behind it" 'ln -sf "$tmp/else" .coddy.yml'
 t 1 "config: and the link is gone" test -L .coddy.yml
@@ -346,6 +353,47 @@ CODDY_AGENT_DIR=.claude tripped 0 "config: changing the legacy file next to a li
 t 0 "config: and the change stands" grep -q '^verify: true$' .claude/coddy.yml
 CODDY_AGENT_DIR=.claude tripped 0 "config: deleting the legacy file next to a live .coddy.yml is quiet" 'rm .claude/coddy.yml'
 t 1 "config: and it is not restored" test -e .claude/coddy.yml
+# So snap records its kind alone: a sparse 1 TiB one stalls no snap.
+dd if=/dev/null of=.claude/coddy.yml bs=1048576 seek=1048576 count=0 2>/dev/null
+t 0 "config: a sparse 1 TiB legacy file next to a live .coddy.yml does not stall snap" timeout 10 sh -c "printf '{\"tool_use_id\":\"w\"}' | '$here/bin/coddy' snap"
+t 0 "config: which records its kind" test "$(cat "$snapfile..claude_coddy.yml.kind")" = file
+t 1 "config: and no copy of it" test -e "$snapfile..claude_coddy.yml"
+t 0 "config: and trip lets it go" wire trip w
+rm .claude/coddy.yml
+# A copy holds 64 KiB and a byte at most, so a .coddy.yml past 64 KiB cannot
+# be put back: every trip reports it as changed and leaves it as it is.
+{ cat "$tmp/conf.orig"; head -c 66000 /dev/zero | tr '\0' '#'; echo; } > .coddy.yml; cp .coddy.yml "$tmp/conf.big"
+report "config: a .coddy.yml over 64 KiB is reported as changed, by a command that left it alone too" 'true'
+t 0 "config: that report says why" grep -q '.coddy.yml is over 64 KiB, more than coddy keeps a copy of' <<<"$out"
+t 0 "config: and it is left as it is" cmp -s .coddy.yml "$tmp/conf.big"
+cp "$tmp/conf.orig" .coddy.yml
+# The fingerprint has a budget (CODDY_BUDGET seconds, which the shims
+# ignore): past it, its git is killed, snap lets the command run and tells
+# the agent it goes unchecked, trip reports the command, and the config lock
+# still holds. A git that sleeps on merge-base, the fingerprint's first git
+# call (SECONDS counts whole seconds, so a budget of 2 may end after 1),
+# stands in for a huge checkout. It records its own pid and its sleep's, to
+# show none outlives the hook.
+mkdir "$tmp/slow"; printf '#!/bin/sh\ncase " $* " in *" merge-base "*) echo $$ >> "%s"; sleep 60 & echo $! >> "%s"; wait ;; esac\nexec "%s" "$@"\n' "$tmp/slow/pids" "$tmp/slow/pids" "$(command -v git)" > "$tmp/slow/git"; chmod +x "$tmp/slow/git"
+slow() { : > "$tmp/slow/pids"; printf '{"tool_use_id":"w"}' | CODDY_BUDGET=2 PATH="$tmp/slow:$PATH" run "$1"; }
+left() { [ -s "$tmp/slow/pids" ] || return 0; while read -r p; do ! kill -0 "$p" 2>/dev/null || return 0; done < "$tmp/slow/pids"; return 1; }
+SECONDS=0; out=$(slow snap); r=$?
+t 0 "budget: snap past it lets the command run, within seconds" test "$r:$((SECONDS <= 8))" = 0:1
+t 0 "budget: telling the agent it goes unchecked" jq -e '.hookSpecificOutput.additionalContext | contains("so this command runs unchecked")' <<<"$out"
+t 0 "budget: its snapshot says so" grep -qx unchecked "$snapfile"
+t 1 "budget: and no git of its fingerprint is left running" left
+rm .coddy.yml; out=$(wire trip w 2>&1); r=$?
+t 0 "budget: trip reports a command whose snapshot is unchecked" test "$r" = 2
+t 0 "budget: saying so" grep -q 'that command ran unchecked' <<<"$out"
+t 0 "budget: and the config lock still puts back a deleted .coddy.yml" same .coddy.yml
+tripped 0 "budget: the next command is checked afresh" 'true'
+wire snap w; rm .coddy.yml
+SECONDS=0; out=$(slow trip 2>&1); r=$?
+t 0 "budget: trip past it reports the command, within seconds" test "$r:$((SECONDS <= 8))" = 2:1
+t 0 "budget: saying it could not be checked" grep -q 'to fingerprint after that command ran' <<<"$out"
+t 0 "budget: and the config lock still puts back a deleted .coddy.yml" same .coddy.yml
+t 1 "budget: and no git of its fingerprint is left running" left
+t 0 "budget: nor any snapshot record" none
 # A file git cannot read in its place is a change like any other.
 report "config: an unreadable file in its place trips" 'echo "guard: warn" > .coddy.yml && chmod 000 .coddy.yml'
 t 0 "config: and is restored" same .coddy.yml
@@ -578,7 +626,7 @@ TZ=Asia/Tokyo t 0 "and status from there shows the owner running" says '^owners:
 rm -r .git/coddy/1; run claim 1 >/dev/null 2>&1
 # A path or cwd over 4096 bytes is refused before any work on it, in both
 # modes: reading one takes time quadratic in its length, and a hook that
-# outlasts its timeout lets the edit through.
+# outlasts its timeout lets the edit through before Claude Code 2.1.295.
 over="$repo/$(printf './%.0s' $(seq 2050))README.md"
 under="$repo/.worktrees/1/"; under="$under$(printf './%.0s' $(seq $(( (4096 - ${#under} - 5) / 2 ))))a.txt"
 cp .coddy.yml "$tmp/conf.yml"

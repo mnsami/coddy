@@ -60,10 +60,11 @@ the skills as Markdown from `~/.coddy/skills/`, starting with
 The plugin keeps its own copy and does not use `~/.coddy`.
 
 coddy runs on macOS, Linux and WSL. Native Windows (Git Bash, MSYS2,
-Cygwin) is not supported: under Claude Code the hooks do not start there,
-so nothing is guarded, and where the edit guard does run (the core called
-another way) it refuses every edit. `/coddy:onboard` stops and
-`coddy doctor` exits 1.
+Cygwin) is not supported: under Claude Code the hooks cannot start there,
+which from Claude Code 2.1.295 on refuses every edit and shell command, so
+disable the plugin there (before 2.1.295 nothing is guarded). Where the
+edit guard does run (the core called another way) it refuses every edit.
+`/coddy:onboard` stops and `coddy doctor` exits 1.
 
 You also need:
 
@@ -149,10 +150,21 @@ Six layers. The first three are Claude Code hooks, live in every onboarded
 project; the fourth is a pair of git hooks that `/coddy:start` installs.
 
 The edit guard and the check before each shell command block a call by
-exiting 2, and coddy turns any other exit of theirs into a 2. So a coddy
-crash refuses every edit and every shell command, under `guard: warn` too,
-until the plugin is updated, reinstalled or disabled. A hook that times out
-or cannot start still lets the call through.
+exiting 2, and coddy turns any other exit of theirs into a 2. With Claude
+Code 2.1.295 or later they also block when they time out (10 seconds for
+the edit guard, 60 for the shell check) or cannot start; an older Claude
+Code lets that call through. So a coddy crash or a hook that hangs refuses
+every edit and every shell command, under `guard: warn` too, until the
+plugin is updated, reinstalled or disabled. The shell check gives its
+fingerprint of the main checkout 20 seconds: past that the command runs,
+and Claude is told before and after it that it went unchecked.
+
+When the hooks keep refusing, there are three ways out: run the command
+from your own terminal, disable the plugin
+(`claude plugin disable coddy@coddy`), or start a session with every hook
+off (`claude --settings '{"disableAllHooks": true}'`). On native Windows,
+or a host without `bash` or `/usr/bin/env`, the hooks cannot start and
+refuse every edit and shell command, so disable the plugin there.
 
 **Edit guard.** A hook rejects every file edit Claude attempts outside
 `.worktrees/<issue>/`. Inside, it rejects edits until `/coddy:start` has
@@ -178,9 +190,12 @@ tripwire's worktree and push checks before a command read the key.
 
 **Shell tripwire.** Shell commands cannot be checked in advance. So a second
 hook compares the main checkout before and after each one, and tells Claude
-to undo any change it left there. Changes inside a submodule's work tree in
-the main checkout are not seen, and a submodule is seen once, when it leaves
-the commit recorded for it, not again while it stays off it.
+to undo any change it left there. A file over 1 MiB is compared by its
+size, inode and change time rather than read, so one rewritten in place to
+the same size within the change time's resolution is not seen. Changes
+inside a submodule's work tree in the main checkout are not seen, and a
+submodule is seen once, when it leaves the commit recorded for it, not
+again while it stays off it.
 It also lists every git worktree and jj workspace outside
 `.worktrees/<issue>/` and `.claude/worktrees/`, and reports a new one,
 however the command made it: its path, whether the command made it or moved,
@@ -218,7 +233,8 @@ reaches the file, a symlink from a worktree included. A change that came
 through git, a pull of a shared config or a checkout, is undone too, since
 nothing on disk tells it from one a command forged: the message sends Claude
 to `/coddy:config`, which shows you the diff against `HEAD` and writes it
-only when you say so.
+only when you say so. A config over 64 KiB is more than coddy keeps a copy
+of: every shell command reports it as changed and leaves it as it is.
 
 **Git hooks.** `/coddy:start` points git's `core.hooksPath` at
 `.git/hooks/coddy/`. Its `pre-commit` and `pre-push` refuse a commit on the

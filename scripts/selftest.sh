@@ -56,7 +56,7 @@ chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log"
 # A ps that is not there, as in a container image without procps: on PATH first when a case asks.
 mkdir "$tmp/nops"; printf '#!/bin/sh\nexit 127\n' > "$tmp/nops/ps"; chmod +x "$tmp/nops/ps"
 # A PATH with everything snap needs but jq.
-mkdir "$tmp/nojq"; for x in bash sed awk cat grep git cmp sort comm tr cut cksum mkdir cp rm head; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
+mkdir "$tmp/nojq"; for x in bash sed awk cat grep git cmp sort comm tr cut cksum mkdir cp rm head sleep stat xargs; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
 # A jq that fails whatever it is asked: on PATH first when a case asks.
 mkdir "$tmp/badjq"; printf '#!/bin/sh\nexit 1\n' > "$tmp/badjq/jq"; chmod +x "$tmp/badjq/jq"
 # kept <what>: sweep leaves worktree $p alone
@@ -491,7 +491,10 @@ t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u
 # On startup and resume alone: a /clear or compact in a session still running
 # an install an update replaced would point the launcher back at it.
 t 0 "hooks: SessionStart runs link with the plugin's data dir, on startup and resume alone" jq -e '.hooks.SessionStart | length == 1 and .[0].matcher == "startup|resume" and .[0].hooks[0].args[-3:] == ["${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "link", "${CLAUDE_PLUGIN_DATA}"]' "$here/hooks/hooks.json"
-t 0 "hooks: no hook sets onFailure or timeout" jq -e '[.hooks[][].hooks[]] | all(has("onFailure") or has("timeout") | not)' "$here/hooks/hooks.json"
+# guard and snap block on a failure, a timeout or a hook that cannot start
+# included (Claude Code 2.1.295 or later); trip and link set neither.
+t 0 "hooks: guard and snap block on a failure, with a 10 s and a 60 s timeout" jq -e '[.hooks.PreToolUse[].hooks[] | [.args[-1], .onFailure, .timeout]] == [["guard", "block", 10], ["snap", "block", 60]]' "$here/hooks/hooks.json"
+t 0 "hooks: trip and link set no onFailure or timeout" jq -e '[.hooks.SessionStart, .hooks.PostToolUse, .hooks.PostToolUseFailure | .[].hooks[]] | length == 3 and all(has("onFailure") or has("timeout") | not)' "$here/hooks/hooks.json"
 # A hook blocks only on exit 2, so the shim makes every other exit of guard
 # or snap a 2 with a message, a core it cannot read included, and a coddy
 # crash blocks the call; trip keeps its own.
@@ -745,6 +748,22 @@ for i in $(seq 1000); do echo "$i" > "many/$i.txt"; done
 t 0 "tripwire: 1000 dirty files are hashed by one hash-object" test "$(wc -l < "$tmp/hashes" | tr -d ' ')" = 1
 t 0 "tripwire: and each is in the snapshot" test "$(grep -c '^many/.* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/coddy-snap-*-many)" = 1000
 wire trip many 2>/dev/null; rm -r many
+# A dirty file over 1 MiB is not read: its line holds its size, ctime and
+# inode, so a sparse 14 GiB one costs what a small one does, and one
+# rewritten in place to the same size still trips.
+dd if=/dev/null of=huge.bin bs=1048576 seek=14336 count=0 2>/dev/null
+SECONDS=0; wire snap big
+t 0 "tripwire: a sparse 14 GiB untracked file is fingerprinted within seconds" test "$SECONDS" -le 5
+t 0 "tripwire: as its size, ctime and inode, unread" grep -q '^huge\.bin big:15032385536:[0-9.]*:[0-9]*$' "${TMPDIR:-/tmp}"/coddy-snap-*-big
+SECONDS=0; wire trip big; got=$?
+t 0 "tripwire: and trip, quiet while it stands, within seconds too" test "$got:$((SECONDS <= 5))" = 0:1
+rm huge.bin; dd if=/dev/zero of=two.bin bs=1048576 count=2 2>/dev/null
+tripped 0 "tripwire: quiet for a 2 MiB file left alone" 'true'
+wire snap w; printf x | dd of=two.bin bs=1 seek=4096 conv=notrunc 2>/dev/null
+wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: a 2 MiB file rewritten in place to the same size trips" test "$got" = 2
+t 0 "tripwire: and the report names its path alone" grep -q 'main checkout: two\.bin\.' "$tmp/trip.err"
+rm two.bin
 # HEAD leaving the default branch is a change too, even for a pushed commit
 # with nothing dirty. A detached HEAD on the default branch's own history is
 # where jj leaves a synced checkout, so that one is quiet.
