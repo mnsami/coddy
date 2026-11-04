@@ -1148,15 +1148,34 @@ t 2 "worktree admin: a HEAD link whose text starts with refs/ and reaches a FIFO
 t 0 "worktree admin: and named" named "worktrees/${ad##*/}/HEAD"
 rm "$ad/HEAD" "$ad/adm.fifo"; mv "$tmp/adm.head" "$ad/HEAD"
 # trip refusing an admin dir still reports the main checkout's own change,
-# the worktrees left unchecked, so removing the entry later hides nothing.
+# git worktree list left unrun, which it says.
 for c in mkdir mkfifo; do
   wire snap w; echo evil >> README.md; "$c" "$ad/locked"
   t 2 "worktree admin: trip refuses a $c locked next to a dirty README.md at once" timed tripadm
   t 0 "worktree admin: and names it: $c" named "worktrees/${ad##*/}/locked"
   t 0 "worktree admin: and reports README.md: $c" grep -qF 'that command changed the main checkout: README.md.' "$tmp/adm.err"
-  t 0 "worktree admin: and says the worktrees went unchecked: $c" grep -qF 'could not be checked for that command' "$tmp/adm.err"
+  t 0 "worktree admin: and says the git worktrees went unlisted: $c" grep -qF 'The git worktrees could not be listed for that command' "$tmp/adm.err"
   rm -rf "$ad/locked"; git checkout -q README.md
 done
+# And a worktree the command made, which the next snap would record as
+# there before: a git worktree by its admin dir, one snap did not record,
+# no file in it read, and a jj workspace as ever. One from before the
+# command is not named; one it moved is not either (a ceiling).
+wn=${wo%/*}/admn
+wire snap w; git worktree add -q --detach "$wn" >/dev/null 2>&1; an=$(cd "$(git -C "$wn" rev-parse --absolute-git-dir)" && pwd -P); ln -s "$tmp/adm.none" "$an/locked"
+t 2 "worktree admin: trip refuses a dangling locked left by a command that made a git worktree" timed tripadm
+t 0 "worktree admin: and names it" named "worktrees/admn/locked"
+t 0 "worktree admin: and names that worktree's admin dir, made" grep -qF "git worktree whose admin dir is '$an', made (check what it holds before removing it with git worktree remove)" "$tmp/adm.err"
+t 1 "worktree admin: and not the one from before the command" grep -qF "worktrees/${ad##*/}', made" "$tmp/adm.err"
+rm "$an/locked"; git worktree remove --force "$wn"
+if command -v jj >/dev/null; then
+  wj=${wo%/*}/admj
+  wire snap w; (jj workspace add --name admj "$wj" && ln -s "$tmp/adm.none" "$ad/locked") >/dev/null 2>&1
+  t 2 "worktree admin: trip refuses a dangling locked left by a command that made a jj workspace" timed tripadm
+  t 0 "worktree admin: and names it: jj" named "worktrees/${ad##*/}/locked"
+  t 0 "worktree admin: and names that jj workspace, made" grep -qF "jj workspace 'admj' at '$wj', made (check what it holds before removing it with jj workspace forget)" "$tmp/adm.err"
+  rm "$ad/locked"; jj workspace forget admj >/dev/null 2>&1; rm -rf "$wj"; git worktree prune
+fi
 # A session opened in a bare repository nested one level into the project
 # roots at the project, where git worktree list runs: the root's own .git
 # is checked, not the bare repository.
