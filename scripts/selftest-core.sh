@@ -551,6 +551,11 @@ t 0 "root: from CODDY_ROOT naming a worktree" rooted / CODDY_ROOT="$repo/.worktr
 t 1 "ship refuses before the claim" run ship 1
 t 0 "claim" run claim 1
 t 0 "the lock names CODDY_SESSION and CODDY_PID" holds "sess-a $$" .git/coddy/1/owner
+# Then the start: local, as 0.6.0's started prints it in C and compares it,
+# and UTC, the one this coddy compares.
+lstart=$(LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_")} 1')
+ustart=$(TZ=UTC0 LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}')
+t 0 "and the process's start, local as 0.6.0 compares it, then UTC" grep -qx "sess-a $$ $lstart $ustart" .git/coddy/1/owner
 t 1 "another session's claim is refused" as sess-b 1 claim 1
 t 0 "that refusal names the owner" says "session sess-a" as sess-b 1 claim 1
 t 0 "the owner's process re-claims under another session id" as sess-b $$ claim 1
@@ -648,6 +653,7 @@ t 2 "guard: the owner's process under a new id is refused a link to the main che
 t 0 "guard: and the owner line is left as it was" cmp -s "$tmp/own" .git/coddy/1/owner
 t 0 "guard: an edit it is allowed" guard "$repo/.worktrees/1/a.txt"
 t 0 "guard: moves the owner line to it" holds "sess-a $$" .git/coddy/1/owner
+t 0 "guard: with both starts" grep -qx "sess-a $$ $lstart $ustart" .git/coddy/1/owner
 t 2 "guard: blocks a relative path against a cwd named the owner's id and a newline" run guard < <(printf '{"session_id":"sess-a","cwd":"%s","tool_input":{"file_path":"x"}}' "$repo/.worktrees/1\\n")
 rm .worktrees/1/rd .worktrees/1/d .worktrees/1/dd .worktrees/1/L .worktrees/1/M .worktrees/1/nl; rmdir $'.worktrees/1\n'
 rm .worktrees/1/E .worktrees/1/E2 .worktrees/1/E7 .worktrees/1/lng .worktrees/1/la .worktrees/1/L2; rm -r .git/coddy/2; rmdir .worktrees/2 .worktrees/7
@@ -660,6 +666,7 @@ if [ -n "$de" ]; then
   fresh() { rm -r .git/coddy/1; LC_ALL=$de run claim 1 >/dev/null 2>&1; cp .git/coddy/1/owner "$tmp/own"; }
   newsid() { run guard < <(printf '{"session_id":"sess-c","tool_input":{"file_path":"%s"}}' "$repo/.worktrees/1/a.txt"); }
   fresh
+  t 0 "under $de: claim writes both starts in C" grep -qx "sess-a $$ $lstart $ustart" "$tmp/own"
   LC_ALL=$de t 0 "under $de: guard allows the owner's edit" guard "$repo/.worktrees/1/a.txt"
   t 0 "under $de: and leaves the owner line as claim wrote it" cmp -s "$tmp/own" .git/coddy/1/owner
   LC_ALL=$de t 0 "under $de: status from another session shows the owner running" says '^owners: 1=sess-a (running)' as sess-b 1 status
@@ -669,7 +676,7 @@ if [ -n "$de" ]; then
   printf 'sess-a %s %s\n' $$ "$(LC_ALL=$de ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_")} 1')" > .git/coddy/1/owner
   LC_ALL=C t 0 "an owner line holding a start written under $de: status shows its live pid running" says '^owners: 1=sess-a (running)' as sess-b 1 status
   LC_ALL=C t 0 "and guard allows the owner's process under a new session id (/clear)" newsid
-  LC_ALL=C t 0 "and rewrites the owner line in the C format" grep -qx "sess-c $$ $(TZ=UTC0 LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}')" .git/coddy/1/owner
+  LC_ALL=C t 0 "and rewrites the owner line in the C format, local start then UTC" grep -qx "sess-c $$ $lstart $ustart" .git/coddy/1/owner
   rm -r .git/coddy/1; run claim 1 >/dev/null 2>&1
 else
   echo "skip a claim under another locale: de_DE.UTF-8 not installed"
