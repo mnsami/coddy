@@ -5,7 +5,9 @@
 # under scripts/ and the full lifecycle are selftest.sh's.
 # Usage: bash scripts/selftest-core.sh
 set -u
-unset $(compgen -v CLAUDE_) CODDY_AGENT_DIR CODDY_EXEC 2>/dev/null
+for v in "${!CLAUDE_@}"; do unset "$v" 2>/dev/null; done; unset CODDY_AGENT_DIR CODDY_EXEC 2>/dev/null
+# macOS ships no timeout: perl's alarm, which the exec keeps, stands in (a run cut short exits 142, not 124)
+command -v timeout >/dev/null || timeout() { perl -e 'alarm shift; exec { $ARGV[0] } @ARGV or exit 127' "$@"; }
 here="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 repo="$tmp/repo"; fail=0
@@ -925,7 +927,7 @@ mkdir "$tmp/nowtl"; printf '#!/bin/sh\n[ "$1 $2" != "worktree list" ] || exit 1\
 PATH="$tmp/nowtl:$PATH" CODDY_ROOT="$tmp/w" t 0 "and one where the call began, with git listing no worktree" says "$inside" "$tmp/w/plug/coddy" start 1 feat/1-thing
 t 0 "having written nothing" test "$(cksum "$hooks"/*; git config --local --list)" = "$sums"
 "$g" worktree remove --force "$tmp/w"
-rm -r "$repo/bin" "$repo/plant" "$repo/lnk" "$tmp/inlink" "$tmp/chain" "$tmp/dirchain"
+rm -r "${repo:?}/bin" "$repo/plant" "$repo/lnk" "$tmp/inlink" "$tmp/chain" "$tmp/dirchain"
 git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
 # Not onboarded, coddy's check is off.
 pp() { echo "refs/heads/main $d refs/heads/main $d" | "$hooks/pre-push" origin x; }
@@ -1035,7 +1037,16 @@ t 1 "doctor: and no unbound variable" says 'unbound' env -u HOME -u CODDY_HOME C
 t 0 "doctor: a CDPATH does not move it" sh -c "cd '$here' && CDPATH='$gh' HOME='$gh' CODDY_ROOT='$tmp' bash bin/coddy doctor | grep -qx 'install: $(cd "$here" && pwd -P)'"
 mkdir -p "$tmp/dl/real/bin" "$tmp/dl/x"; cp "$here/bin/coddy" "$tmp/dl/real/bin/"; ln -s ../real/bin "$tmp/dl/x/bin"
 t 0 "doctor: through a linked bin/, the real install dir" says "^install: $(cd "$tmp/dl/real" && pwd -P)\$" env CODDY_ROOT="$tmp" "$tmp/dl/x/bin/coddy" doctor
-t 0 "doctor: outside a project, the four install lines alone" test "$(CODDY_ROOT="$tmp" "$here/bin/coddy" doctor | wc -l)" -eq 4
+t 0 "doctor: outside a project, the five install lines alone" test "$(CODDY_ROOT="$tmp" "$here/bin/coddy" doctor | wc -l)" -eq 5
+t 0 "doctor: the bash on PATH" says "^bash: $(command -v bash) [0-9]*\.[0-9]*\.[0-9]*\$" env CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
+mkdir "$tmp/nobash"; for x in sed head uname tr git readlink; do p=$(command -v "$x") && ln -s "$p" "$tmp/nobash/$x"; done
+t 0 "doctor: no bash on PATH" says '^bash: missing$' env PATH="$tmp/nobash" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
+t 0 "doctor: and exits 0 for it" env PATH="$tmp/nobash" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
+mkdir "$tmp/c"$'\n'"b"; ln -s "$BASH" "$tmp/c"$'\n'"b/bash"
+t 0 "doctor: a bash whose path holds a line break, on one line" says "^bash: $tmp/cb/bash [0-9]*\.[0-9]*\.[0-9]*\$" env PATH="$tmp/c"$'\n'"b:$PATH" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
+t 0 "doctor: a function named bash is not the bash on PATH" says "^bash: $(command -v bash) [0-9]*\.[0-9]*\.[0-9]*\$" env 'BASH_FUNC_bash%%=() { echo 9.9.9; }' CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
+mkdir "$tmp/fakebash"; printf '#!/bin/sh\necho ..\n' > "$tmp/fakebash/bash"; chmod +x "$tmp/fakebash/bash"
+t 0 "doctor: a bash that prints no version reads unknown" says "^bash: $tmp/fakebash/bash unknown\$" env PATH="$tmp/fakebash:$PATH" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
 
 # doctor in a project: a line per check, ok or the problem with its fix; exit 1 on any; writes nothing.
 dp="$tmp/dp"; git init -q --bare "$tmp/dorigin.git"; git clone -q "$tmp/dorigin.git" "$dp" 2>/dev/null

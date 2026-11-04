@@ -555,7 +555,9 @@ for v in block warn; do
   # A path still read where the payload names one: a NotebookEdit's, and a
   # relative one against the payload's cwd. Allowed and silent, or refused.
   t 0 "guard: $v reads a NotebookEdit's notebook_path" test -z "$(raw "{\"tool_input\":{\"notebook_path\":\"$repo/.claude/n.ipynb\"}}" 2>&1 || echo refused)"
-  t 0 "guard: $v reads a relative path against the payload's cwd" test -z "$(raw "{\"cwd\":\"$repo/.claude\",\"tool_input\":{\"file_path\":\"n.md\"}}" 2>&1 || echo refused)"
+  # built outside the $( ), where bash 3.2 brace-expands {a,b} once its \" are read as quotes
+  pl="{\"cwd\":\"$repo/.claude\",\"tool_input\":{\"file_path\":\"n.md\"}}"
+  t 0 "guard: $v reads a relative path against the payload's cwd" test -z "$(raw "$pl" 2>&1 || echo refused)"
   # Native Windows paths, which nothing reads as Windows does (a drive
   # letter, a drive-relative C:x, a backslash, a UNC or device path written
   # with forward slashes), and a cwd that is not absolute, a non-string one
@@ -1233,7 +1235,7 @@ sf="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-w"
 git worktree add -q --detach .worktrees/83; cp .worktrees/83/.git "$tmp/g83"
 { printf 'gitdir: /a/b'; head -c 4000000 /dev/zero | tr '\0' x; } > .worktrees/83/.git
 t 0 "tripwire: a 4 MB .git in a worktree stalls no snap" prompt wire snap w
-t 0 "tripwire: and is recorded no further than 1024 characters" test $(wc -c < "$sf.wt") -lt 65536
+t 0 "tripwire: and is recorded no further than 1024 characters" test "$(wc -c < "$sf.wt")" -lt 65536
 t 0 "tripwire: nor trip" prompt wire trip w
 cp "$tmp/g83" .worktrees/83/.git; git worktree remove --force .worktrees/83
 # A dirty path holding line breaks is printed quoted, on one line: one built
@@ -1467,7 +1469,8 @@ git remote set-url origin "$tmp/origin.git"
 sed '1,/run: |/d; s/^          //' "$here/templates/coddy.yml" > "$tmp/check.sh"
 # check <GH_LINKED> [VAR=value...]: every env name is its own value unless
 # overridden, so BASE and DEFAULT differ: a stacked PR unless both are set.
-check() { GH_LINKED="$1" env $(sed -n 's/^      \([A-Z_]*\): .*/\1=\1/p' "$here/templates/coddy.yml") "${@:2}" bash -e "$tmp/check.sh"; }
+IFS=$'\n' read -rd '' -a envs < <(sed -n 's/^      \([A-Z_]*\): .*/\1=\1/p' "$here/templates/coddy.yml")
+check() { GH_LINKED="$1" env "${envs[@]}" "${@:2}" bash -e "$tmp/check.sh"; }
 t 0 "pr check: an open, assigned linked issue passes" check "12 OPEN 1"
 t 0 "pr check: the run block hands env's owner, repo and PR to gh" grep -q -- '-f owner=OWNER -f repo=REPO -F pr=PR' "$GH_LOG"
 t 1 "pr check: no linked issue fails" check ""
