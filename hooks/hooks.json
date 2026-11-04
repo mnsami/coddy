@@ -12,13 +12,13 @@
       {
         "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
-          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "OSTYPE", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "guard"] }
+          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "OSTYPE", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "guard"], "timeout": 10, "onFailure": "block" }
         ]
       },
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "OSTYPE", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "snap"] }
+          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "OSTYPE", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "snap"], "timeout": 60, "onFailure": "block" }
         ]
       }
     ],

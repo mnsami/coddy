@@ -491,7 +491,26 @@ t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u
 # On startup and resume alone: a /clear or compact in a session still running
 # an install an update replaced would point the launcher back at it.
 t 0 "hooks: SessionStart runs link with the plugin's data dir, on startup and resume alone" jq -e '.hooks.SessionStart | length == 1 and .[0].matcher == "startup|resume" and .[0].hooks[0].args[-3:] == ["${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "link", "${CLAUDE_PLUGIN_DATA}"]' "$here/hooks/hooks.json"
-t 0 "hooks: no hook sets onFailure or timeout" jq -e '[.hooks[][].hooks[]] | all(has("onFailure") or has("timeout") | not)' "$here/hooks/hooks.json"
+# guard and snap fail closed: a failure, a timeout (guard 10 s, snap 60 s)
+# or a hook that cannot start blocks the call; trip and link set neither key.
+t 0 "hooks: guard blocks on failure after 10 s, snap after 60 s, and trip and link set neither key" jq -e '[.hooks[][].hooks[] | [first(.args[] | select(IN("guard", "snap", "trip", "link"))), .onFailure, .timeout]] | sort == [["guard", "block", 10], ["link", null, null], ["snap", "block", 60], ["trip", null, null], ["trip", null, null]]' "$here/hooks/hooks.json"
+# Under onFailure: block any exit of guard or snap but 0 or 2 blocks the
+# call with no reason given, so the shim makes every other one a 2 with a
+# message, a core it cannot read included; trip keeps its own.
+mkdir -p "$tmp/fk/scripts" "$tmp/fk/bin"; cp "$here/scripts/issue.sh" "$tmp/fk/scripts/"
+fk() { printf '{}' | "$1" -p "$tmp/fk/scripts/issue.sh" "$2" 2>"$tmp/fk.err"; }
+for sh in bash /bin/bash; do
+  for c in 'exit 1' 'set -u; echo "$nope"' missing; do
+    rm -f "$tmp/fk/bin/coddy"; [ "$c" = missing ] || echo "$c" > "$tmp/fk/bin/coddy"
+    for v in guard snap; do
+      t 2 "hooks: $v exits 2 on a core that ends $c, under $sh" fk "$sh" "$v"
+      t 0 "hooks: and says so: $v, $c, under $sh" grep -q "coddy: the $v hook failed (exit [0-9]*), so the call is refused" "$tmp/fk.err"
+    done
+    t 1 "hooks: trip keeps its own exit on a core that ends $c, under $sh" sh -c 'fk() { printf "{}" | "$1" -p "$2" trip; }; fk "$1" "$2"; r=$?; [ "$r" = 0 ] || [ "$r" = 2 ]' - "$sh" "$tmp/fk/scripts/issue.sh"
+  done
+  for c in 0 2; do echo "exit $c" > "$tmp/fk/bin/coddy"; for v in guard snap; do t "$c" "hooks: $v keeps exit $c, under $sh" fk "$sh" "$v"; t 0 "hooks: and adds nothing: $v $c, under $sh" test ! -s "$tmp/fk.err"; done; done
+done
+rm -rf "$tmp/fk"
 # Each under the bash on PATH and under /bin/bash (3.2 on macOS) first on PATH.
 # GREP_OPTIONS and TMOUT are the core's to unset, not hooks.json's: they act
 # only once it runs a grep (BSD grep honours it) or a read (bash 5 takes a
@@ -1073,6 +1092,43 @@ for cd in ../.evilgit "$tmp/evil/.git"; do
 done
 rm -rf .evilgit "$tmp/evil/.coddy.yml"; git worktree remove --force .worktrees/82
 tripped 0 "commondir: removed, the hooks are back" 'true'
+# git worktree list, which the fingerprint runs, reads gitdir, HEAD, locked
+# and commondir in every admin dir under .git/worktrees/, a dot-named one
+# included, and waits on a FIFO there for good: snap refuses every command,
+# and trip the one that left it, at once, in either guard mode, trip after
+# putting the config back. Anything else that is no plain file, links
+# followed, is refused too; a plain file, through a link or not, or none,
+# passes.
+snapadm() { wire snap w 2>"$tmp/adm.err"; }
+tripadm() { wire trip w 2>"$tmp/adm.err"; }
+named() { grep -qF "$1' is not a plain file" "$tmp/adm.err"; }
+cp .claude/coddy.yml "$tmp/conf.adm"; git worktree add -q --detach "$wo"; ad=$(git -C "$wo" rev-parse --absolute-git-dir)
+for v in block warn; do
+  { grep -v '^guard:' "$tmp/conf.adm"; echo "guard: $v"; } > .claude/coddy.yml; cp .claude/coddy.yml "$tmp/conf.mode"
+  for f in gitdir HEAD locked commondir; do
+    rm -f "$tmp/adm.save"; wire snap w
+    rm .claude/coddy.yml; [ ! -e "$ad/$f" ] || mv "$ad/$f" "$tmp/adm.save"; mkfifo "$ad/$f"
+    t 2 "worktree admin: trip refuses a FIFO at $f at once, guard: $v" timed tripadm
+    t 0 "worktree admin: and names it: $f, guard: $v" named "worktrees/${ad##*/}/$f"
+    t 0 "worktree admin: after putting the config back: $f, guard: $v" cmp -s .claude/coddy.yml "$tmp/conf.mode"
+    t 2 "worktree admin: snap refuses every command after it at once: $f, guard: $v" timed snapadm
+    t 0 "worktree admin: and names it to snap: $f, guard: $v" named "worktrees/${ad##*/}/$f"
+    rm "$ad/$f"; [ ! -e "$tmp/adm.save" ] || mv "$tmp/adm.save" "$ad/$f"
+  done
+done
+cp "$tmp/conf.adm" .claude/coddy.yml
+mkdir .git/worktrees/.x; mkfifo .git/worktrees/.x/gitdir
+t 2 "worktree admin: a FIFO in a dot-named admin dir is refused at once" timed snapadm
+t 0 "worktree admin: and named" named "worktrees/.x/gitdir"
+rm -r .git/worktrees/.x; mkfifo "$tmp/adm.fifo"; echo why > "$tmp/adm.why"
+for c in "mkdir '$ad/locked'" "ln -s '$tmp/adm.fifo' '$ad/locked'" "ln -s '$tmp/adm.none' '$ad/locked'"; do
+  eval "$c"; t 2 "worktree admin: snap refuses a locked that is no plain file: $c" timed snapadm
+  t 0 "worktree admin: and names it: $c" named "worktrees/${ad##*/}/locked"; rm -rf "$ad/locked"
+done
+for c in "cp '$tmp/adm.why' '$ad/locked'" "ln -s '$tmp/adm.why' '$ad/locked'" true; do
+  eval "$c"; tripped 0 "worktree admin: a plain locked, through a link or not, or none, passes: $c" 'true'; rm -f "$ad/locked"
+done
+rm -f "$tmp/adm.fifo" "$tmp/adm.why"; git worktree remove --force "$wo"
 # The hooks find the checkout's git dir the way git does, without git: past a
 # .git directory that is no repository (an empty one under .worktrees/<id>
 # or a subdirectory, which git walks past to the commondir it would

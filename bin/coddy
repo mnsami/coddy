@@ -502,9 +502,9 @@ if [ "${1-}" = guard ]; then
   # (LC_ALL, LC_CTYPE or LANG, which an env can set) a path ending in a lead
   # byte takes the x put after it below as a trail byte, and ${f%x} keeps it.
   export LC_ALL=C
-  # Seconds the walk below (phys) may take, from here, well inside any hook
-  # timeout: a cancelled hook lets the edit through. Reset, not read, as an
-  # environment can set SECONDS.
+  # Seconds the walk below (phys) may take, from here, well inside the hook's
+  # 10-second timeout, past which the edit is blocked with no reason given.
+  # Reset, not read, as an environment can set SECONDS.
   budget=5 SECONDS=0
   [ -f "$conf" ] || exit 0
   code=2 # exit 2 is what blocks the tool call
@@ -525,9 +525,9 @@ if [ "${1-}" = guard ]; then
   f=${f%x} cwd=${cwd%x}
   [ -n "$f" ] || die "the edit guard could not read a path from the hook payload"
   # Reading a path below takes time quadratic in its length, and a hook that
-  # outlasts its timeout lets the edit through, so one longer than any path
-  # a kernel opens (4096 bytes) is refused first, in warn mode too. That
-  # bounds the path's length; $budget bounds the walk's time.
+  # outlasts its timeout blocks the edit only then, with no reason given, so
+  # one longer than any path a kernel opens (4096 bytes) is refused first, in
+  # warn mode too. That bounds the path's length; $budget bounds the walk's time.
   long() { [ "${#1}" -gt 4096 ]; }
   ! long "$f" && ! long "$cwd" || die "the edit guard refuses a path or cwd longer than 4096 bytes"
   # Where bash itself runs on native Windows ($OSTYPE msys or cygwin, a
@@ -1311,6 +1311,20 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # The git common dir the root was resolved from, physical, read past each
   # side's onboarding gate. seen is trip's alone (out).
   common() { C=$({ [ -n "$common" ] && cd "$dir" && cd "$common" && pwd -P; } 2>/dev/null); }
+  # git worktree list, which the fingerprint runs, reads gitdir, HEAD, locked
+  # and commondir in every admin dir under $C/worktrees/, a dot-named one
+  # included, and waits for good on a FIFO there: one that is no plain file,
+  # links followed (kind), is named in st, and the hook refuses, in either
+  # guard mode. None there is fine.
+  admin() {
+    local d f
+    [ -n "$C" ] || return 0
+    for d in "$C"/worktrees/*/ "$C"/worktrees/.[!.]*/ "$C"/worktrees/..?*/; do for f in gitdir HEAD locked commondir; do
+      case "$(kind "$d$f")" in file|absent) ;; *)
+        st="$(q "$d$f") is not a plain file, and git worktree list, which coddy runs before and after every shell command, would wait on it or misread it, so coddy refuses every command until you remove it, or replace it with a plain file, by hand."; return 1 ;;
+      esac
+    done; done
+  }
   seen=""
   case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
   file="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
@@ -1331,6 +1345,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     [ -f "$conf" ] || { echo NOT_ONBOARDED > "$file" || rm -f "$file"; exit 0; }
     oddly
     common
+    admin || { code=2; die "$st"; }
     b=$(cfg default_branch); b="${b:-main}" ok=1
     for c in .coddy.yml "$legacy"; do
       p="$root/$c" s="$file.${c//\//_}"
@@ -1432,6 +1447,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   [ -z "$msg" ] || msg="${msg}If that came from git (a pull or checkout), accept it with /coddy:config; other settings change there too, and leaving the workflow is for the user to do by hand. "
   confpath
   [ -z "$odd" ] || { rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*; oddly "$msg"; }
+  admin || { rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*; die "$msg$st"; }
   # Only lines that are new count, so undoing a change never trips the wire.
   # Every line is unique by design, so a repeat is no new line: git lists a
   # worktree twice once a command copies its admin dir. A new line is a

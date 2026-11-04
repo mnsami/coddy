@@ -69,6 +69,10 @@ You also need:
 
 - bash 3.2 or later. The hooks run the first `bash` on Claude Code's `PATH`
   (on macOS that may be `/bin/bash`, 3.2); `coddy doctor` prints which one.
+- Claude Code 2.1.295 or later, for hooks that fail closed: the edit guard
+  and the check before each shell command block the call when they fail,
+  time out (10 and 60 seconds) or cannot start. Older versions ignore
+  `onFailure`, so a hook that fails or times out lets the call through.
 - `jq`. The edit guard needs it and blocks every edit without a working one.
 - Optionally `jj` ([Jujutsu](https://jj-vcs.github.io)), for `worktree: jj`;
   `worktree: git`, the default, needs nothing more. `/coddy:onboard`

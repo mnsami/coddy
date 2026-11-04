@@ -22,6 +22,11 @@
 # model's context, points it at this install's bin/coddy, given that dir
 # alone; start has the hooks run it once it is there. An inherited CODDY_EXEC
 # is ignored, as every CODDY_* is.
+# guard and snap run with onFailure: block (hooks/hooks.json), so any exit
+# but 0 or 2 blocks the call with no reason given: here it becomes a 2 with
+# a message, a core that cannot be read included. trip and link keep theirs.
+# shellcheck disable=SC2154 # c is the trap's own
+case "${1-}" in guard|snap) trap 'c=$?; [ "$c" = 0 ] || [ "$c" = 2 ] || { echo "coddy: the '"$1"' hook failed (exit $c), so the call is refused." >&2; exit 2; }' EXIT ;; esac
 for v in "${!GIT_@}"; do case $v in GIT_AUTHOR_*|GIT_COMMITTER_*|GIT_SSH*|GIT_ASKPASS|GIT_TERMINAL_PROMPT) ;; *) unset "$v" ;; esac; done
 unset CODDY_EXEC
 case "${1-}" in link|start|create)
