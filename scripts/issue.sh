@@ -24,9 +24,11 @@
 # is ignored, as every CODDY_* is.
 # guard and snap run with onFailure: block (hooks/hooks.json), so any exit
 # but 0 or 2 blocks the call with no reason given: here it becomes a 2 with
-# a message, a core that cannot be read included. trip and link keep theirs.
+# a message, a core that cannot be read included, which names what to do in
+# plain text: on any Claude Code it blocks every such call until coddy is
+# fixed or turned off. trip and link keep theirs.
 # shellcheck disable=SC2154 # c is the trap's own
-case "${1-}" in guard|snap) trap 'c=$?; [ "$c" = 0 ] || [ "$c" = 2 ] || { echo "coddy: the '"$1"' hook failed (exit $c), so the call is refused." >&2; exit 2; }' EXIT ;; esac
+case "${1-}" in guard|snap) trap 'c=$?; [ "$c" = 0 ] || [ "$c" = 2 ] || { echo "coddy: the '"$1"' hook failed (exit $c), so the call is refused. The failure lies in coddy, not in the call (its error, if any, is above), and every such call is refused until the user updates or reinstalls the coddy plugin, or disables it." >&2; exit 2; }' EXIT ;; esac
 for v in "${!GIT_@}"; do case $v in GIT_AUTHOR_*|GIT_COMMITTER_*|GIT_SSH*|GIT_ASKPASS|GIT_TERMINAL_PROMPT) ;; *) unset "$v" ;; esac; done
 unset CODDY_EXEC
 case "${1-}" in link|start|create)

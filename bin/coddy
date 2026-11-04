@@ -1309,8 +1309,11 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   id=$(sed -n 's/.*"tool_use_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
   R=$(cd "$root" 2>/dev/null && pwd -P)
   # The git common dir the root was resolved from, physical, read past each
-  # side's onboarding gate. seen is trip's alone (out).
-  common() { C=$({ [ -n "$common" ] && cd "$dir" && cd "$common" && pwd -P; } 2>/dev/null); }
+  # side's onboarding gate; the root's own .git when git found none from the
+  # start (a garbage .git file in the subdirectory or worktree the session
+  # opened in), since git worktree list still runs at the root. seen is
+  # trip's alone (out).
+  common() { C=$({ { [ -n "$common" ] && cd "$dir" && cd "$common"; } || cd "$R/.git"; } 2>/dev/null && pwd -P); }
   # git worktree list, which the fingerprint runs, reads gitdir, HEAD, locked
   # and commondir in every admin dir under $C/worktrees/, a dot-named one
   # included, and waits for good on a FIFO there: one that is no plain file,

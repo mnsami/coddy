@@ -505,6 +505,7 @@ for sh in bash /bin/bash; do
     for v in guard snap; do
       t 2 "hooks: $v exits 2 on a core that ends $c, under $sh" fk "$sh" "$v"
       t 0 "hooks: and says so: $v, $c, under $sh" grep -q "coddy: the $v hook failed (exit [0-9]*), so the call is refused" "$tmp/fk.err"
+      t 0 "hooks: and names what to do, in plain text: $v, $c, under $sh" grep -q "until the user updates or reinstalls the coddy plugin, or disables it\.$" "$tmp/fk.err"
     done
     t 1 "hooks: trip keeps its own exit on a core that ends $c, under $sh" sh -c 'fk() { printf "{}" | "$1" -p "$2" trip; }; fk "$1" "$2"; r=$?; [ "$r" = 0 ] || [ "$r" = 2 ]' - "$sh" "$tmp/fk/scripts/issue.sh"
   done
@@ -1120,7 +1121,17 @@ cp "$tmp/conf.adm" .claude/coddy.yml
 mkdir .git/worktrees/.x; mkfifo .git/worktrees/.x/gitdir
 t 2 "worktree admin: a FIFO in a dot-named admin dir is refused at once" timed snapadm
 t 0 "worktree admin: and named" named "worktrees/.x/gitdir"
-rm -r .git/worktrees/.x; mkfifo "$tmp/adm.fifo"; echo why > "$tmp/adm.why"
+rm -r .git/worktrees/.x
+# A session opened in a subdirectory whose .git is a garbage file: git finds
+# no common dir from there, while git worktree list still runs at the root,
+# so the root's own .git is checked.
+subadm() { printf '{"tool_use_id":"w"}' | CLAUDE_PROJECT_DIR="$repo/adm.sub" bash "$here/scripts/issue.sh" "$1" 2>"$tmp/adm.err"; }
+mkdir adm.sub; echo junk > adm.sub/.git; subadm snap; mkdir .git/worktrees/admx; mkfifo .git/worktrees/admx/gitdir
+t 2 "worktree admin: trip from a subdirectory whose .git is garbage refuses a FIFO at once" timed subadm trip
+t 0 "worktree admin: and names it" named "worktrees/admx/gitdir"
+t 2 "worktree admin: and so does snap" timed subadm snap
+t 0 "worktree admin: and names it to snap" named "worktrees/admx/gitdir"
+rm -r .git/worktrees/admx adm.sub; mkfifo "$tmp/adm.fifo"; echo why > "$tmp/adm.why"
 for c in "mkdir '$ad/locked'" "ln -s '$tmp/adm.fifo' '$ad/locked'" "ln -s '$tmp/adm.none' '$ad/locked'"; do
   eval "$c"; t 2 "worktree admin: snap refuses a locked that is no plain file: $c" timed snapadm
   t 0 "worktree admin: and names it: $c" named "worktrees/${ad##*/}/locked"; rm -rf "$ad/locked"

@@ -72,7 +72,9 @@ You also need:
 - Claude Code 2.1.295 or later, for hooks that fail closed: the edit guard
   and the check before each shell command block the call when they fail,
   time out (10 and 60 seconds) or cannot start. Older versions ignore
-  `onFailure`, so a hook that fails or times out lets the call through.
+  `onFailure`, so a hook that times out or cannot start lets the call
+  through; one that fails still blocks it, since coddy turns that exit
+  into a refusal.
 - `jq`. The edit guard needs it and blocks every edit without a working one.
 - Optionally `jj` ([Jujutsu](https://jj-vcs.github.io)), for `worktree: jj`;
   `worktree: git`, the default, needs nothing more. `/coddy:onboard`
