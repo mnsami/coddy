@@ -148,6 +148,12 @@ resolved on the way in is not, so remove that worktree by hand.
 Six layers. The first three are Claude Code hooks, live in every onboarded
 project; the fourth is a pair of git hooks that `/coddy:start` installs.
 
+The edit guard and the check before each shell command block a call by
+exiting 2, and coddy turns any other exit of theirs into a 2. So a coddy
+crash refuses every edit and every shell command, under `guard: warn` too,
+until the plugin is updated, reinstalled or disabled. A hook that times out
+or cannot start still lets the call through.
+
 **Edit guard.** A hook rejects every file edit Claude attempts outside
 `.worktrees/<issue>/`. Inside, it rejects edits until `/coddy:start` has
 claimed that issue. `.claude/` stays editable, except Claude Code's own
@@ -166,7 +172,8 @@ taken over on its own.
 
 `guard: warn` turns the rejection into a notice. The edit goes through, and
 Claude is told it landed outside a claimed worktree, or in one another
-session claimed, and which command to run. Of the other layers, only the
+session claimed, and which command to run. A coddy crash is no rejection:
+it still refuses the edit, as above. Of the other layers, only the
 tripwire's worktree and push checks before a command read the key.
 
 **Shell tripwire.** Shell commands cannot be checked in advance. So a second

@@ -492,6 +492,24 @@ t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u
 # an install an update replaced would point the launcher back at it.
 t 0 "hooks: SessionStart runs link with the plugin's data dir, on startup and resume alone" jq -e '.hooks.SessionStart | length == 1 and .[0].matcher == "startup|resume" and .[0].hooks[0].args[-3:] == ["${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "link", "${CLAUDE_PLUGIN_DATA}"]' "$here/hooks/hooks.json"
 t 0 "hooks: no hook sets onFailure or timeout" jq -e '[.hooks[][].hooks[]] | all(has("onFailure") or has("timeout") | not)' "$here/hooks/hooks.json"
+# A hook blocks only on exit 2, so the shim makes every other exit of guard
+# or snap a 2 with a message, a core it cannot read included, and a coddy
+# crash blocks the call; trip keeps its own.
+mkdir -p "$tmp/fk/scripts" "$tmp/fk/bin"; cp "$here/scripts/issue.sh" "$tmp/fk/scripts/"
+fk() { printf '{}' | "$1" -p "$tmp/fk/scripts/issue.sh" "$2" 2>"$tmp/fk.err"; }
+for sh in bash /bin/bash; do
+  for c in 'exit 1' 'set -u; echo "$nope"' missing; do
+    rm -f "$tmp/fk/bin/coddy"; [ "$c" = missing ] || echo "$c" > "$tmp/fk/bin/coddy"
+    for v in guard snap; do
+      t 2 "hooks: $v exits 2 on a core that ends $c, under $sh" fk "$sh" "$v"
+      t 0 "hooks: and says so: $v, $c, under $sh" grep -q "coddy: the $v hook failed (exit [0-9]*), so the call is refused" "$tmp/fk.err"
+      t 0 "hooks: and names what to do, in plain text: $v, $c, under $sh" grep -q "until the user updates or reinstalls the coddy plugin, or disables it\.$" "$tmp/fk.err"
+    done
+    t 1 "hooks: trip keeps its own exit on a core that ends $c, under $sh" sh -c 'fk() { printf "{}" | "$1" -p "$2" trip; }; fk "$1" "$2"; r=$?; [ "$r" = 0 ] || [ "$r" = 2 ]' - "$sh" "$tmp/fk/scripts/issue.sh"
+  done
+  for c in 0 2; do echo "exit $c" > "$tmp/fk/bin/coddy"; for v in guard snap; do t "$c" "hooks: $v keeps exit $c, under $sh" fk "$sh" "$v"; t 0 "hooks: and adds nothing: $v $c, under $sh" test ! -s "$tmp/fk.err"; done; done
+done
+rm -rf "$tmp/fk"
 # Each under the bash on PATH and under /bin/bash (3.2 on macOS) first on PATH.
 # GREP_OPTIONS and TMOUT are the core's to unset, not hooks.json's: they act
 # only once it runs a grep (BSD grep honours it) or a read (bash 5 takes a
@@ -1073,6 +1091,102 @@ for cd in ../.evilgit "$tmp/evil/.git"; do
 done
 rm -rf .evilgit "$tmp/evil/.coddy.yml"; git worktree remove --force .worktrees/82
 tripped 0 "commondir: removed, the hooks are back" 'true'
+# git worktree list, which the fingerprint runs, reads gitdir, HEAD, locked
+# and commondir in every admin dir under .git/worktrees/, a dot-named one
+# included, and waits on a FIFO there for good: snap refuses every command,
+# and trip the one that left it, at once, in either guard mode, trip after
+# putting the config back. Anything else that is no plain file, links
+# followed, is refused too; a plain file, through a link or not, or none,
+# passes.
+snapadm() { wire snap w 2>"$tmp/adm.err"; }
+tripadm() { wire trip w 2>"$tmp/adm.err"; }
+named() { grep -qF "$1' is not a plain file" "$tmp/adm.err"; }
+cp .claude/coddy.yml "$tmp/conf.adm"; git worktree add -q --detach "$wo"; ad=$(git -C "$wo" rev-parse --absolute-git-dir)
+for v in block warn; do
+  { grep -v '^guard:' "$tmp/conf.adm"; echo "guard: $v"; } > .claude/coddy.yml; cp .claude/coddy.yml "$tmp/conf.mode"
+  for f in gitdir HEAD locked commondir; do
+    rm -f "$tmp/adm.save"; wire snap w
+    rm .claude/coddy.yml; [ ! -e "$ad/$f" ] || mv "$ad/$f" "$tmp/adm.save"; mkfifo "$ad/$f"
+    t 2 "worktree admin: trip refuses a FIFO at $f at once, guard: $v" timed tripadm
+    t 0 "worktree admin: and names it: $f, guard: $v" named "worktrees/${ad##*/}/$f"
+    t 0 "worktree admin: after putting the config back: $f, guard: $v" cmp -s .claude/coddy.yml "$tmp/conf.mode"
+    t 2 "worktree admin: snap refuses every command after it at once: $f, guard: $v" timed snapadm
+    t 0 "worktree admin: and names it to snap: $f, guard: $v" named "worktrees/${ad##*/}/$f"
+    rm "$ad/$f"; [ ! -e "$tmp/adm.save" ] || mv "$tmp/adm.save" "$ad/$f"
+  done
+done
+cp "$tmp/conf.adm" .claude/coddy.yml
+mkdir .git/worktrees/.x; mkfifo .git/worktrees/.x/gitdir
+t 2 "worktree admin: a FIFO in a dot-named admin dir is refused at once" timed snapadm
+t 0 "worktree admin: and named" named "worktrees/.x/gitdir"
+rm -r .git/worktrees/.x
+# A session opened in a subdirectory whose .git is a garbage file: git finds
+# no common dir from there, while git worktree list still runs at the root,
+# so the root's own .git is checked.
+subadm() { printf '{"tool_use_id":"w"}' | CLAUDE_PROJECT_DIR="$repo/adm.sub" bash "$here/scripts/issue.sh" "$1" 2>"$tmp/adm.err"; }
+mkdir adm.sub; echo junk > adm.sub/.git; subadm snap; mkdir .git/worktrees/admx; mkfifo .git/worktrees/admx/gitdir
+t 2 "worktree admin: trip from a subdirectory whose .git is garbage refuses a FIFO at once" timed subadm trip
+t 0 "worktree admin: and names it" named "worktrees/admx/gitdir"
+t 2 "worktree admin: and so does snap" timed subadm snap
+t 0 "worktree admin: and names it to snap" named "worktrees/admx/gitdir"
+rm -r .git/worktrees/admx adm.sub; mkfifo "$tmp/adm.fifo"; echo why > "$tmp/adm.why"
+for c in "mkdir '$ad/locked'" "ln -s '$tmp/adm.fifo' '$ad/locked'" "ln -s '$tmp/adm.none' '$ad/locked'"; do
+  eval "$c"; t 2 "worktree admin: snap refuses a locked that is no plain file: $c" timed snapadm
+  t 0 "worktree admin: and names it: $c" named "worktrees/${ad##*/}/locked"; rm -rf "$ad/locked"
+done
+for c in "cp '$tmp/adm.why' '$ad/locked'" "ln -s '$tmp/adm.why' '$ad/locked'" true; do
+  eval "$c"; tripped 0 "worktree admin: a plain locked, through a link or not, or none, passes: $c" 'true'; rm -f "$ad/locked"
+done
+# A HEAD link reaching nothing whose text starts with refs/, as git writes
+# it under core.preferSymlinkRefs, is read as that ref and opened by no
+# one: it passes. One that reaches a FIFO, no ref by its text, git opens
+# and waits on: refused.
+mv "$ad/HEAD" "$tmp/adm.head"; ln -s refs/heads/main "$ad/HEAD"
+tripped 0 "worktree admin: a HEAD link to a ref, as core.preferSymlinkRefs writes it, passes" 'true'
+rm "$ad/HEAD"; mkdir -p "$ad/refs"; mkfifo "$ad/adm.fifo"; ln -s refs/../adm.fifo "$ad/HEAD"
+t 2 "worktree admin: a HEAD link whose text starts with refs/ and reaches a FIFO is refused at once" timed snapadm
+t 0 "worktree admin: and named" named "worktrees/${ad##*/}/HEAD"
+rm "$ad/HEAD" "$ad/adm.fifo"; mv "$tmp/adm.head" "$ad/HEAD"
+# trip refusing an admin dir still reports the main checkout's own change,
+# git worktree list left unrun, which it says.
+for c in mkdir mkfifo; do
+  wire snap w; echo evil >> README.md; "$c" "$ad/locked"
+  t 2 "worktree admin: trip refuses a $c locked next to a dirty README.md at once" timed tripadm
+  t 0 "worktree admin: and names it: $c" named "worktrees/${ad##*/}/locked"
+  t 0 "worktree admin: and reports README.md: $c" grep -qF 'that command changed the main checkout: README.md.' "$tmp/adm.err"
+  t 0 "worktree admin: and says the git worktrees went unlisted: $c" grep -qF 'The git worktrees could not be listed for that command' "$tmp/adm.err"
+  rm -rf "$ad/locked"; git checkout -q README.md
+done
+# And a worktree the command made, which the next snap would record as
+# there before: a git worktree by its admin dir, one snap did not record,
+# no file in it read, and a jj workspace as ever. One from before the
+# command is not named; one it moved is not either (a ceiling).
+wn=${wo%/*}/admn
+wire snap w; git worktree add -q --detach "$wn" >/dev/null 2>&1; an=$(cd "$(git -C "$wn" rev-parse --absolute-git-dir)" && pwd -P); ln -s "$tmp/adm.none" "$an/locked"
+t 2 "worktree admin: trip refuses a dangling locked left by a command that made a git worktree" timed tripadm
+t 0 "worktree admin: and names it" named "worktrees/admn/locked"
+t 0 "worktree admin: and names that worktree's admin dir, made" grep -qF "git worktree whose admin dir is '$an', made (check what it holds before removing it with git worktree remove)" "$tmp/adm.err"
+t 1 "worktree admin: and not the one from before the command" grep -qF "worktrees/${ad##*/}', made" "$tmp/adm.err"
+rm "$an/locked"; git worktree remove --force "$wn"
+if command -v jj >/dev/null; then
+  wj=${wo%/*}/admj
+  wire snap w; (jj workspace add --name admj "$wj" && ln -s "$tmp/adm.none" "$ad/locked") >/dev/null 2>&1
+  t 2 "worktree admin: trip refuses a dangling locked left by a command that made a jj workspace" timed tripadm
+  t 0 "worktree admin: and names it: jj" named "worktrees/${ad##*/}/locked"
+  t 0 "worktree admin: and names that jj workspace, made" grep -qF "jj workspace 'admj' at '$wj', made (check what it holds before removing it with jj workspace forget)" "$tmp/adm.err"
+  rm "$ad/locked"; jj workspace forget admj >/dev/null 2>&1; rm -rf "$wj"; git worktree prune
+fi
+# A session opened in a bare repository nested one level into the project
+# roots at the project, where git worktree list runs: the root's own .git
+# is checked, not the bare repository.
+bareadm() { printf '{"tool_use_id":"w"}' | CLAUDE_PROJECT_DIR="$repo/adm.bare" bash "$here/scripts/issue.sh" "$1" 2>"$tmp/adm.err"; }
+git init -q --bare adm.bare; bareadm snap; mkfifo "$ad/locked"
+t 2 "worktree admin: trip from a bare repository nested in the project refuses a FIFO in the root's .git at once" timed bareadm trip
+t 0 "worktree admin: and names it" named "worktrees/${ad##*/}/locked"
+t 2 "worktree admin: and so does snap" timed bareadm snap
+t 0 "worktree admin: and names it to snap" named "worktrees/${ad##*/}/locked"
+rm "$ad/locked"; rm -rf adm.bare
+rm -f "$tmp/adm.fifo" "$tmp/adm.why"; git worktree remove --force "$wo"
 # The hooks find the checkout's git dir the way git does, without git: past a
 # .git directory that is no repository (an empty one under .worktrees/<id>
 # or a subdirectory, which git walks past to the commondir it would

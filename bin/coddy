@@ -1249,6 +1249,9 @@ out() {
 # from the common dir, so one whose directory is gone is there too) and
 # every jj workspace's name (one jj lists with no path included), coddy's
 # and the root's included. trip passes them back as $seen (out).
+# Under nowt (trip, an admin file that is no plain file) git lists no
+# worktree: each admin dir, globbed as admin globs them, whose id snap did
+# not record is named made by that dir's path, and no file in it is read.
 snap() {
   cd "$root" 2>/dev/null || return 0
   git merge-base --is-ancestor "refs/heads/$b" "refs/remotes/origin/$b" 2>/dev/null ||
@@ -1266,8 +1269,9 @@ snap() {
     r=${p#"$R"}
     [ "$r" != "$p" ] && clean "$r" && { [ -z "$r" ] || { coddywt "$p" && real "$p"; }; } ||
       out "git worktree at $(q "$p") (git worktree remove)" "$k" "$g"
-  done < <(gitwts)
-  [ -z "$C" ] || for d in "$C"/worktrees/*/; do [ ! -d "$d" ] || { d=${d%/}; printf 'git %q\n' "${d##*/}" >&3; }; done
+  done < <([ -n "$nowt" ] || gitwts)
+  [ -z "$C" ] || for d in "$C"/worktrees/*/ "$C"/worktrees/.[!.]*/ "$C"/worktrees/..?*/; do [ ! -d "$d" ] || { d=${d%/}; printf -v g 'git %q' "${d##*/}"; echo "$g" >&3
+    [ -z "$nowt" ] || [[ $seen == *$'\n'"$g"$'\n'* ]] || out "git worktree whose admin dir is $(q "$d") (git worktree remove)" "$g" ""; }; done
   # No colour or pager, whatever the config says. One listing: each name,
   # then its root when jj gives one. The root is matched in its escaped
   # form, J.
@@ -1308,10 +1312,32 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   in=$(cat)
   id=$(sed -n 's/.*"tool_use_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
   R=$(cd "$root" 2>/dev/null && pwd -P)
-  # The git common dir the root was resolved from, physical, read past each
-  # side's onboarding gate. seen is trip's alone (out).
-  common() { C=$({ [ -n "$common" ] && cd "$dir" && cd "$common" && pwd -P; } 2>/dev/null); }
-  seen=""
+  # The common dir git worktree list reads, physical, read past each side's
+  # onboarding gate: it runs at the root, whose .git is, past oddly, a real
+  # directory with no commondir, whatever directory the session opened in
+  # (a subdirectory whose .git is garbage, a bare repository nested in the
+  # project). seen and nowt are trip's alone (out, snap).
+  common() { C=$(cd "$R/.git" 2>/dev/null && pwd -P); }
+  # git worktree list, which the fingerprint runs, reads gitdir, HEAD, locked
+  # and commondir in every admin dir under $C/worktrees/, a dot-named one
+  # included, and waits for good on a FIFO there: one that is no plain file,
+  # links followed, is named in st, and the hook refuses, in either guard
+  # mode, trip after the fingerprint without git worktree list (nowt),
+  # which reads no file in an admin dir. None there is fine, and so is a
+  # HEAD that is a link reaching nothing whose text starts with refs/, as
+  # git writes it under core.preferSymlinkRefs: git reads it as that ref
+  # and opens nothing. No subshell but that readlink: four tests per admin
+  # dir, in both hooks.
+  admin() {
+    local d f p
+    [ -n "$C" ] || return 0
+    for d in "$C"/worktrees/*/ "$C"/worktrees/.[!.]*/ "$C"/worktrees/..?*/; do for f in gitdir HEAD locked commondir; do
+      p=$d$f
+      [ -f "$p" ] || { [ ! -e "$p" ] && { [ ! -L "$p" ] || { [ "$f" = HEAD ] && [[ $(readlink "$p" 2>/dev/null) == refs/* ]]; }; }; } || {
+        st="$(q "$p") is not a plain file, and git worktree list, which coddy runs before and after every shell command, would wait on it or misread it, so coddy refuses every command until you remove it, or replace it with a plain file, by hand."; return 1; }
+    done; done
+  }
+  seen="" nowt=""
   case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
   file="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
   # Both config paths are kept, present or not: a .coddy.yml the command
@@ -1331,6 +1357,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     [ -f "$conf" ] || { echo NOT_ONBOARDED > "$file" || rm -f "$file"; exit 0; }
     oddly
     common
+    admin || { code=2; die "$st"; }
     b=$(cfg default_branch); b="${b:-main}" ok=1
     for c in .coddy.yml "$legacy"; do
       p="$root/$c" s="$file.${c//\//_}"
@@ -1432,6 +1459,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   [ -z "$msg" ] || msg="${msg}If that came from git (a pull or checkout), accept it with /coddy:config; other settings change there too, and leaving the workflow is for the user to do by hand. "
   confpath
   [ -z "$odd" ] || { rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*; oddly "$msg"; }
+  admin || { msg="$msg$st The git worktrees could not be listed for that command, so one it made is named by its admin dir alone, and one it moved, renamed or re-created is not named: check by hand. " nowt=1; }
   # Only lines that are new count, so undoing a change never trips the wire.
   # Every line is unique by design, so a repeat is no new line: git lists a
   # worktree twice once a command copies its admin dir. A new line is a
