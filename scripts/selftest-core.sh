@@ -578,7 +578,7 @@ TZ=Asia/Tokyo t 0 "and status from there shows the owner running" says '^owners:
 rm -r .git/coddy/1; run claim 1 >/dev/null 2>&1
 # A path or cwd over 4096 bytes is refused before any work on it, in both
 # modes: reading one takes time quadratic in its length, and a hook that
-# outlasts its timeout blocks the edit only then, with no reason given.
+# outlasts its timeout lets the edit through.
 over="$repo/$(printf './%.0s' $(seq 2050))README.md"
 under="$repo/.worktrees/1/"; under="$under$(printf './%.0s' $(seq $(( (4096 - ${#under} - 5) / 2 ))))a.txt"
 cp .coddy.yml "$tmp/conf.yml"

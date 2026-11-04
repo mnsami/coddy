@@ -491,12 +491,10 @@ t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u
 # On startup and resume alone: a /clear or compact in a session still running
 # an install an update replaced would point the launcher back at it.
 t 0 "hooks: SessionStart runs link with the plugin's data dir, on startup and resume alone" jq -e '.hooks.SessionStart | length == 1 and .[0].matcher == "startup|resume" and .[0].hooks[0].args[-3:] == ["${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "link", "${CLAUDE_PLUGIN_DATA}"]' "$here/hooks/hooks.json"
-# guard and snap fail closed: a failure, a timeout (guard 10 s, snap 60 s)
-# or a hook that cannot start blocks the call; trip and link set neither key.
-t 0 "hooks: guard blocks on failure after 10 s, snap after 60 s, and trip and link set neither key" jq -e '[.hooks[][].hooks[] | [first(.args[] | select(IN("guard", "snap", "trip", "link"))), .onFailure, .timeout]] | sort == [["guard", "block", 10], ["link", null, null], ["snap", "block", 60], ["trip", null, null], ["trip", null, null]]' "$here/hooks/hooks.json"
-# Under onFailure: block any exit of guard or snap but 0 or 2 blocks the
-# call with no reason given, so the shim makes every other one a 2 with a
-# message, a core it cannot read included; trip keeps its own.
+t 0 "hooks: no hook sets onFailure or timeout" jq -e '[.hooks[][].hooks[]] | all(has("onFailure") or has("timeout") | not)' "$here/hooks/hooks.json"
+# A hook blocks only on exit 2, so the shim makes every other exit of guard
+# or snap a 2 with a message, a core it cannot read included, and a coddy
+# crash blocks the call; trip keeps its own.
 mkdir -p "$tmp/fk/scripts" "$tmp/fk/bin"; cp "$here/scripts/issue.sh" "$tmp/fk/scripts/"
 fk() { printf '{}' | "$1" -p "$tmp/fk/scripts/issue.sh" "$2" 2>"$tmp/fk.err"; }
 for sh in bash /bin/bash; do

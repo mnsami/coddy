@@ -502,9 +502,9 @@ if [ "${1-}" = guard ]; then
   # (LC_ALL, LC_CTYPE or LANG, which an env can set) a path ending in a lead
   # byte takes the x put after it below as a trail byte, and ${f%x} keeps it.
   export LC_ALL=C
-  # Seconds the walk below (phys) may take, from here, well inside the hook's
-  # 10-second timeout, past which the edit is blocked with no reason given.
-  # Reset, not read, as an environment can set SECONDS.
+  # Seconds the walk below (phys) may take, from here, well inside any hook
+  # timeout: a cancelled hook lets the edit through. Reset, not read, as an
+  # environment can set SECONDS.
   budget=5 SECONDS=0
   [ -f "$conf" ] || exit 0
   code=2 # exit 2 is what blocks the tool call
@@ -525,9 +525,9 @@ if [ "${1-}" = guard ]; then
   f=${f%x} cwd=${cwd%x}
   [ -n "$f" ] || die "the edit guard could not read a path from the hook payload"
   # Reading a path below takes time quadratic in its length, and a hook that
-  # outlasts its timeout blocks the edit only then, with no reason given, so
-  # one longer than any path a kernel opens (4096 bytes) is refused first, in
-  # warn mode too. That bounds the path's length; $budget bounds the walk's time.
+  # outlasts its timeout lets the edit through, so one longer than any path
+  # a kernel opens (4096 bytes) is refused first, in warn mode too. That
+  # bounds the path's length; $budget bounds the walk's time.
   long() { [ "${#1}" -gt 4096 ]; }
   ! long "$f" && ! long "$cwd" || die "the edit guard refuses a path or cwd longer than 4096 bytes"
   # Where bash itself runs on native Windows ($OSTYPE msys or cygwin, a
