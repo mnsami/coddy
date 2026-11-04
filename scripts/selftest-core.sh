@@ -267,6 +267,11 @@ t 0 "warn: and spelled through .." asks "$repo/sub/../.coddy.yml"
 t 0 "warn: and through .. after a link out of the project" asks "$repo/lnk/../.coddy.yml"
 rm lnk
 t 0 "warn: guard lets the main checkout through" guard "$repo/README.md"
+# un, snap's unchecked notice, is the core's own: one in the environment (a
+# settings env) reaches no guard notice.
+out=$(un=XYZ guard "$repo/README.md")
+t 0 "warn: guard's notice says the edit was let through" grep -q 'was let through' <<<"$out"
+t 1 "warn: and carries no un from the environment" grep -q XYZ <<<"$out"
 PATH="$tmp/nojq" t 2 "warn: guard without jq fails closed" guard "$repo/.coddy.yml"
 sed -i.bak '/^guard:/d' .coddy.yml && rm .coddy.yml.bak
 wire snap flow
@@ -360,13 +365,36 @@ t 0 "config: which records its kind" test "$(cat "$snapfile..claude_coddy.yml.ki
 t 1 "config: and no copy of it" test -e "$snapfile..claude_coddy.yml"
 t 0 "config: and trip lets it go" wire trip w
 rm .claude/coddy.yml
-# A copy holds 64 KiB and a byte at most, so a .coddy.yml past 64 KiB cannot
-# be put back: every trip reports it as changed and leaves it as it is.
+# A copy holds 64 KiB and a byte at most, so a .coddy.yml past 64 KiB could
+# not be put back: snap refuses every command while it is, in either guard
+# mode, naming /coddy:config, its size read from 64 KiB and a byte at most,
+# so a sparse 1 TiB one is refused at once.
 { cat "$tmp/conf.orig"; head -c 66000 /dev/zero | tr '\0' '#'; echo; } > .coddy.yml; cp .coddy.yml "$tmp/conf.big"
-report "config: a .coddy.yml over 64 KiB is reported as changed, by a command that left it alone too" 'true'
+t 2 "config: snap refuses every command while .coddy.yml is over 64 KiB" wire snap w
+t 0 "config: naming /coddy:config" says '.coddy.yml is over 64 KiB, .*with /coddy:config' wire snap w
+t 0 "config: and leaving no record" none
+echo 'guard: warn' >> .coddy.yml
+t 2 "config: under guard: warn too" wire snap w
+dd if=/dev/null of=.coddy.yml bs=1048576 seek=1048576 count=0 2>/dev/null
+t 2 "config: a sparse 1 TiB .coddy.yml is refused at once" timeout 10 sh -c "printf '{\"tool_use_id\":\"w\"}' | '$here/bin/coddy' snap"
+cp "$tmp/conf.orig" .coddy.yml
+tripped 0 "config: brought back under 64 KiB, commands run as before" 'true'
+# One that grows past it between snap's check and its copy is cut short:
+# trip reports it as changed and leaves it as it is. A stub head grows it on
+# its second read of 64 KiB and a byte, the copy.
+mkdir "$tmp/grow"; cat > "$tmp/grow/head" <<EOF
+#!/bin/sh
+if [ "\$*" = "-c 65537 -- $repo/.coddy.yml" ]; then
+  if [ -e "$tmp/grow/n" ]; then cat "$tmp/conf.big" > "$repo/.coddy.yml"; else : > "$tmp/grow/n"; fi
+fi
+exec "$(command -v head)" "\$@"
+EOF
+chmod +x "$tmp/grow/head"
+PATH="$tmp/grow:$PATH" wire snap w; out=$(wire trip w 2>&1); r=$?
+t 0 "config: one grown past 64 KiB after snap's check is reported as changed" test "$r" = 2
 t 0 "config: that report says why" grep -q '.coddy.yml is over 64 KiB, more than coddy keeps a copy of' <<<"$out"
 t 0 "config: and it is left as it is" cmp -s .coddy.yml "$tmp/conf.big"
-cp "$tmp/conf.orig" .coddy.yml
+cp "$tmp/conf.orig" .coddy.yml; rm -r "$tmp/grow"
 # The fingerprint has a budget (CODDY_BUDGET seconds, which the shims
 # ignore): past it, its git is killed, snap lets the command run and tells
 # the agent it goes unchecked, trip reports the command, and the config lock
@@ -394,6 +422,28 @@ t 0 "budget: saying it could not be checked" grep -q 'to fingerprint after that 
 t 0 "budget: and the config lock still puts back a deleted .coddy.yml" same .coddy.yml
 t 1 "budget: and no git of its fingerprint is left running" left
 t 0 "budget: nor any snapshot record" none
+# Past git status the notice names how many dirty paths it listed: a git
+# that sleeps on hash-object, the fingerprint's last call.
+mkdir "$tmp/slowh"; sed 's/ merge-base / hash-object /' "$tmp/slow/git" > "$tmp/slowh/git"; chmod +x "$tmp/slowh/git"
+echo a > dirty.txt; : > "$tmp/slow/pids"
+out=$(printf '{"tool_use_id":"w"}' | CODDY_BUDGET=2 PATH="$tmp/slowh:$PATH" run snap)
+t 0 "budget: past git status, the notice names the dirty paths it listed" jq -e '.hookSpecificOutput.additionalContext | test("checkout, which has [0-9]+ dirty or untracked paths, within")' <<<"$out"
+t 1 "budget: and no git of its fingerprint is left running" left
+wire trip w 2>/dev/null; rm -r dirty.txt "$tmp/slowh"
+# The admin dirs' check (admin) has half the budget, from the hook's start:
+# past it snap refuses every command, in either guard mode, naming
+# .git/worktrees, with no record left. A budget of 0 stands in for more
+# entries than it checks in 10 seconds.
+mkdir -p .git/worktrees/many
+adm() { printf '{"tool_use_id":"w"}' | CODDY_BUDGET=0 run snap; }
+t 2 "budget: snap refuses once the admin dirs take more than half of it" adm
+t 0 "budget: naming .git/worktrees, to clear by hand" says "/.git/worktrees' holds more entries than coddy can check in 0 seconds before a shell command, so coddy refuses every command until you remove, by hand" adm
+t 0 "budget: leaving no record" none
+echo 'guard: warn' >> .coddy.yml
+t 2 "budget: under guard: warn too" adm
+cp "$tmp/conf.orig" .coddy.yml
+tripped 0 "budget: within it, the same admin dir passes" 'true'
+rm -r .git/worktrees
 # A file git cannot read in its place is a change like any other.
 report "config: an unreadable file in its place trips" 'echo "guard: warn" > .coddy.yml && chmod 000 .coddy.yml'
 t 0 "config: and is restored" same .coddy.yml
@@ -1110,7 +1160,7 @@ mkdir -p "$dp/.github/workflows"; cp "$here/templates/coddy.yml" "$dp/.github/wo
 awk '/^   <!-- coddy:begin -->$/,/^   <!-- coddy:end -->$/' "$here/skills/onboard/SKILL.md" | sed 's/^   //' > "$dp/AGENTS.md"
 t 0 "doctor: onboarded, started, PR check and AGENTS.md in place: all ok" dd doctor
 PATH="$tmp/mingw:$PATH" t 1 "doctor: all ok under MINGW still exits 1" dd doctor
-t 1 "doctor: and no check line that is not ok" sh -c "CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -E '^(config|worktree|default_branch|jq|git|jj|hooks|pr_check|agents_md): ' | grep -v ': ok'"
+t 1 "doctor: and no check line that is not ok" sh -c "CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -E '^(config|worktree|default_branch|jq|git|jj|hooks|worktrees|pr_check|agents_md): ' | grep -v ': ok'"
 before=$( (cd "$dp" && cat .git/config; git for-each-ref; find . -path ./.git -prune -o -path ./.worktrees -prune -o -type f -print | sort | xargs cksum) )
 dd doctor >/dev/null 2>&1
 t 0 "doctor: changes nothing" test "$before" = "$( (cd "$dp" && cat .git/config; git for-each-ref; find . -path ./.git -prune -o -path ./.worktrees -prune -o -type f -print | sort | xargs cksum) )"
@@ -1127,6 +1177,7 @@ ln -s "$(command -v jq)" "$tmp/nojqd/jq"
 t 0 "doctor: jj missing under worktree: jj" says '^jj: missing (fix: install jj' env PATH="$tmp/nojqd" CODDY_ROOT="$dp" "$BASH" "$here/bin/coddy" doctor
 cp "$tmp/dp.yml" "$dp/.coddy.yml"
 prob "core.hooksPath elsewhere" '^hooks: core.hooksPath is /elsewhere' 'git config core.hooksPath /elsewhere' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
+prob "more entries under .git/worktrees than the shell hooks check in time" '^worktrees: .git/worktrees holds more than 10000 entries' 'cd .git/worktrees && seq -f "zz%g" 10000 | xargs mkdir' 'cd .git/worktrees && seq -f "zz%g" 10000 | xargs rmdir'
 prob "a hook without coddy's header" '^hooks: pre-push is missing or not one coddy start wrote' 'cp .git/hooks/coddy/pre-push "$tmp/pp"; echo "#!/bin/sh" > .git/hooks/coddy/pre-push' 'cp "$tmp/pp" .git/hooks/coddy/pre-push'
 # written quoted as start writes it, and run with a coddy on PATH, which the hooks never run
 (cd "$dp" && cp .git/hooks/coddy/pre-commit "$tmp/pc" && sed -i.bak "s#^c=.*#c='/nonexistent/coddy'#" .git/hooks/coddy/pre-commit && rm .git/hooks/coddy/pre-commit.bak)

@@ -56,7 +56,7 @@ It clones `main` into `~/.coddy` (a rerun fast-forwards it, and stops on
 local changes to tracked files), links `coddy` into `~/.local/bin` and
 prints the line to add when that is not on your `PATH`. Your agent reads
 the skills as Markdown from `~/.coddy/skills/`, starting with
-`onboard/SKILL.md`. `coddy doctor` says which install a `coddy` runs from and, inside a project, what is missing or off (config, tools, git hooks, PR check, `AGENTS.md`), each with its fix; it exits 1 on any problem and changes nothing.
+`onboard/SKILL.md`. `coddy doctor` says which install a `coddy` runs from and, inside a project, what is missing or off (config, tools, git hooks, `.git/worktrees`, PR check, `AGENTS.md`), each with its fix; it exits 1 on any problem and changes nothing.
 The plugin keeps its own copy and does not use `~/.coddy`.
 
 coddy runs on macOS, Linux and WSL. Native Windows (Git Bash, MSYS2,
@@ -190,9 +190,10 @@ tripwire's worktree and push checks before a command read the key.
 
 **Shell tripwire.** Shell commands cannot be checked in advance. So a second
 hook compares the main checkout before and after each one, and tells Claude
-to undo any change it left there. A file over 1 MiB is compared by its
-size, inode and change time rather than read, so one rewritten in place to
-the same size within the change time's resolution is not seen. Changes
+to undo any change it left there. A file over 1 MiB, and any once 32 MiB
+have been read, is compared by its size, inode and change time rather than
+read, so one rewritten in place to the same size within the change time's
+resolution is not seen. Changes
 inside a submodule's work tree in the main checkout are not seen, and a
 submodule is seen once, when it leaves the commit recorded for it, not
 again while it stays off it.
@@ -207,7 +208,10 @@ The report gives no command to paste. Every path and name in it is in single
 quotes, with backslashes and control characters escaped, so none can pass
 for a second entry. A worktree moved out of `.worktrees/<issue>/` (by `mv`
 or `git worktree move`) or reached there through a link counts as outside:
-the command that moves or deletes a worktree there trips once.
+the command that moves or deletes a worktree there trips once. When
+`.git/worktrees` holds more entries than coddy can check in 10 seconds,
+every shell command is refused until you remove the ones no worktree uses
+(`git worktree prune` drops those whose worktree is gone).
 
 Before a command runs, the hook reads its text for a `git worktree add` or
 `jj workspace add` that would put a worktree anywhere else, and refuses it,
@@ -234,7 +238,8 @@ through git, a pull of a shared config or a checkout, is undone too, since
 nothing on disk tells it from one a command forged: the message sends Claude
 to `/coddy:config`, which shows you the diff against `HEAD` and writes it
 only when you say so. A config over 64 KiB is more than coddy keeps a copy
-of: every shell command reports it as changed and leaves it as it is.
+of, so every shell command is refused until `/coddy:config` brings it under
+that.
 
 **Git hooks.** `/coddy:start` points git's `core.hooksPath` at
 `.git/hooks/coddy/`. Its `pre-commit` and `pre-push` refuse a commit on the

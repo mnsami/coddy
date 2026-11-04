@@ -56,7 +56,7 @@ chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log"
 # A ps that is not there, as in a container image without procps: on PATH first when a case asks.
 mkdir "$tmp/nops"; printf '#!/bin/sh\nexit 127\n' > "$tmp/nops/ps"; chmod +x "$tmp/nops/ps"
 # A PATH with everything snap needs but jq.
-mkdir "$tmp/nojq"; for x in bash sed awk cat grep git cmp sort comm tr cut cksum mkdir cp rm head sleep stat xargs; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
+mkdir "$tmp/nojq"; for x in bash sed awk cat grep git cmp sort comm tr cut cksum mkdir cp rm head sleep stat xargs wc; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
 # A jq that fails whatever it is asked: on PATH first when a case asks.
 mkdir "$tmp/badjq"; printf '#!/bin/sh\nexit 1\n' > "$tmp/badjq/jq"; chmod +x "$tmp/badjq/jq"
 # kept <what>: sweep leaves worktree $p alone
@@ -774,6 +774,21 @@ wire trip big 2>/dev/null; rm mib.bin mib1.bin
 head -c 1048577 /dev/zero > mib1.bin; : > %Fc; wire snap big
 t 0 "tripwire: a file named %Fc in the root leaves a big file unread" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}"/coddy-snap-*-big
 wire trip big 2>/dev/null; rm mib1.bin %Fc
+# Past 32 MiB hashed in all a file up to 1 MiB is recorded as a big one, so
+# 8000 sparse 1 MiB untracked files cost what their paths do, not 8 GiB
+# read, and one recorded so, rewritten in place to the same size, still trips.
+mkdir sp; seq -f 'sp/f%04g' 0 7999 | xargs perl -e 'for (@ARGV) { open my $f, ">", $_ or die; truncate $f, 1048576 or die }'
+wire snap big
+t 1 "tripwire: 8000 sparse 1 MiB untracked files are fingerprinted within the budget" grep -qx unchecked "${TMPDIR:-/tmp}"/coddy-snap-*-big
+got=$(grep -c '^sp/f[0-9]* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/coddy-snap-*-big)
+t 0 "tripwire: no more than 32 MiB of them hashed" test "$got" -ge 1 -a "$got" -le 32
+t 0 "tripwire: the rest by size, ctime and inode" grep -q '^sp/f7999 big:1048576:' "${TMPDIR:-/tmp}"/coddy-snap-*-big
+wire trip big 2>/dev/null
+wire snap w; printf x | dd of=sp/f7999 bs=1 seek=4096 conv=notrunc 2>/dev/null
+wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: one of those rewritten in place to the same size trips" test "$got" = 2
+t 0 "tripwire: and the report names its path alone" grep -q 'main checkout: sp/f7999\.' "$tmp/trip.err"
+rm -r sp
 # The fingerprint's budget is the core's alone: a CODDY_BUDGET a settings env
 # hands the hook is dropped, so 0 runs no command unchecked.
 CODDY_BUDGET=0 wire snap w >/dev/null
