@@ -1266,12 +1266,12 @@ snap() {
     r=${p#"$R"}
     [ "$r" != "$p" ] && clean "$r" && { [ -z "$r" ] || { coddywt "$p" && real "$p"; }; } ||
       out "git worktree at $(q "$p") (git worktree remove)" "$k" "$g"
-  done < <(gitwts)
-  [ -z "$C" ] || for d in "$C"/worktrees/*/; do [ ! -d "$d" ] || { d=${d%/}; printf 'git %q\n' "${d##*/}" >&3; }; done
+  done < <([ -n "$nowt" ] || gitwts)
+  [ -n "$nowt" ] || [ -z "$C" ] || for d in "$C"/worktrees/*/; do [ ! -d "$d" ] || { d=${d%/}; printf 'git %q\n' "${d##*/}" >&3; }; done
   # No colour or pager, whatever the config says. One listing: each name,
   # then its root when jj gives one. The root is matched in its escaped
   # form, J.
-  [ ! -d .jj ] || { J=$(json "$R"); while IFS=$'\t' read -r w p; do
+  [ -n "$nowt" ] || [ ! -d .jj ] || { J=$(json "$R"); while IFS=$'\t' read -r w p; do
     [[ $w != \"*\" ]] || echo "jj ${w:1:${#w}-2}" >&3
     [ -n "$p" ] || continue
     [[ $p == \"*\" && $w == \"*\" ]] || { out "jj workspace $(q "$w") at $(q "$p") (jj workspace forget)" "jj $w" "path $p"; continue; }
@@ -1308,18 +1308,19 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   in=$(cat)
   id=$(sed -n 's/.*"tool_use_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
   R=$(cd "$root" 2>/dev/null && pwd -P)
-  # The git common dir the root was resolved from, physical, read past each
-  # side's onboarding gate; the root's own .git when git found none from the
-  # start (a garbage .git file in the subdirectory or worktree the session
-  # opened in), since git worktree list still runs at the root. seen is
-  # trip's alone (out).
-  common() { C=$({ { [ -n "$common" ] && cd "$dir" && cd "$common"; } || cd "$R/.git"; } 2>/dev/null && pwd -P); }
+  # The common dir git worktree list reads, physical, read past each side's
+  # onboarding gate: it runs at the root, whose .git is, past oddly, a real
+  # directory with no commondir, whatever directory the session opened in
+  # (a subdirectory whose .git is garbage, a bare repository nested in the
+  # project). seen and nowt are trip's alone (out, snap).
+  common() { C=$(cd "$R/.git" 2>/dev/null && pwd -P); }
   # git worktree list, which the fingerprint runs, reads gitdir, HEAD, locked
   # and commondir in every admin dir under $C/worktrees/, a dot-named one
   # included, and waits for good on a FIFO there: one that is no plain file,
   # links followed, is named in st, and the hook refuses, in either guard
-  # mode. None there is fine, and so is a HEAD that is a link reaching
-  # nothing whose text starts with refs/, as git writes it under
+  # mode, trip after the fingerprint without the worktrees (nowt), which
+  # reads no admin dir. None there is fine, and so is a HEAD that is a link
+  # reaching nothing whose text starts with refs/, as git writes it under
   # core.preferSymlinkRefs: git reads it as that ref and opens nothing. No
   # subshell but that readlink: four tests per admin dir, in both hooks.
   admin() {
@@ -1331,7 +1332,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
         st="$(q "$p") is not a plain file, and git worktree list, which coddy runs before and after every shell command, would wait on it or misread it, so coddy refuses every command until you remove it, or replace it with a plain file, by hand."; return 1; }
     done; done
   }
-  seen=""
+  seen="" nowt=""
   case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
   file="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
   # Both config paths are kept, present or not: a .coddy.yml the command
@@ -1453,7 +1454,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   [ -z "$msg" ] || msg="${msg}If that came from git (a pull or checkout), accept it with /coddy:config; other settings change there too, and leaving the workflow is for the user to do by hand. "
   confpath
   [ -z "$odd" ] || { rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*; oddly "$msg"; }
-  admin || { rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*; die "$msg$st"; }
+  admin || { msg="$msg$st The worktrees outside .worktrees/<issue>/ could not be checked for that command, so check by hand for one it made. " nowt=1; }
   # Only lines that are new count, so undoing a change never trips the wire.
   # Every line is unique by design, so a repeat is no new line: git lists a
   # worktree twice once a command copies its admin dir. A new line is a

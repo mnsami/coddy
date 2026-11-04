@@ -1149,6 +1149,26 @@ rm "$ad/HEAD"; mkdir -p "$ad/refs"; mkfifo "$ad/adm.fifo"; ln -s refs/../adm.fif
 t 2 "worktree admin: a HEAD link whose text starts with refs/ and reaches a FIFO is refused at once" timed snapadm
 t 0 "worktree admin: and named" named "worktrees/${ad##*/}/HEAD"
 rm "$ad/HEAD" "$ad/adm.fifo"; mv "$tmp/adm.head" "$ad/HEAD"
+# trip refusing an admin dir still reports the main checkout's own change,
+# the worktrees left unchecked, so removing the entry later hides nothing.
+for c in mkdir mkfifo; do
+  wire snap w; echo evil >> README.md; "$c" "$ad/locked"
+  t 2 "worktree admin: trip refuses a $c locked next to a dirty README.md at once" timed tripadm
+  t 0 "worktree admin: and names it: $c" named "worktrees/${ad##*/}/locked"
+  t 0 "worktree admin: and reports README.md: $c" grep -qF 'that command changed the main checkout: README.md.' "$tmp/adm.err"
+  t 0 "worktree admin: and says the worktrees went unchecked: $c" grep -qF 'could not be checked for that command' "$tmp/adm.err"
+  rm -rf "$ad/locked"; git checkout -q README.md
+done
+# A session opened in a bare repository nested one level into the project
+# roots at the project, where git worktree list runs: the root's own .git
+# is checked, not the bare repository.
+bareadm() { printf '{"tool_use_id":"w"}' | CLAUDE_PROJECT_DIR="$repo/adm.bare" bash "$here/scripts/issue.sh" "$1" 2>"$tmp/adm.err"; }
+git init -q --bare adm.bare; bareadm snap; mkfifo "$ad/locked"
+t 2 "worktree admin: trip from a bare repository nested in the project refuses a FIFO in the root's .git at once" timed bareadm trip
+t 0 "worktree admin: and names it" named "worktrees/${ad##*/}/locked"
+t 2 "worktree admin: and so does snap" timed bareadm snap
+t 0 "worktree admin: and names it to snap" named "worktrees/${ad##*/}/locked"
+rm "$ad/locked"; rm -rf adm.bare
 rm -f "$tmp/adm.fifo" "$tmp/adm.why"; git worktree remove --force "$wo"
 # The hooks find the checkout's git dir the way git does, without git: past a
 # .git directory that is no repository (an empty one under .worktrees/<id>
