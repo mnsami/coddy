@@ -1314,15 +1314,18 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # git worktree list, which the fingerprint runs, reads gitdir, HEAD, locked
   # and commondir in every admin dir under $C/worktrees/, a dot-named one
   # included, and waits for good on a FIFO there: one that is no plain file,
-  # links followed (kind), is named in st, and the hook refuses, in either
-  # guard mode. None there is fine.
+  # links followed, is named in st, and the hook refuses, in either guard
+  # mode. None there is fine, and so is a HEAD that is a link reaching
+  # nothing whose text starts with refs/, as git writes it under
+  # core.preferSymlinkRefs: git reads it as that ref and opens nothing. No
+  # subshell but that readlink: four tests per admin dir, in both hooks.
   admin() {
-    local d f
+    local d f p
     [ -n "$C" ] || return 0
     for d in "$C"/worktrees/*/ "$C"/worktrees/.[!.]*/ "$C"/worktrees/..?*/; do for f in gitdir HEAD locked commondir; do
-      case "$(kind "$d$f")" in file|absent) ;; *)
-        st="$(q "$d$f") is not a plain file, and git worktree list, which coddy runs before and after every shell command, would wait on it or misread it, so coddy refuses every command until you remove it, or replace it with a plain file, by hand."; return 1 ;;
-      esac
+      p=$d$f
+      [ -f "$p" ] || { [ ! -e "$p" ] && { [ ! -L "$p" ] || { [ "$f" = HEAD ] && [[ $(readlink "$p" 2>/dev/null) == refs/* ]]; }; }; } || {
+        st="$(q "$p") is not a plain file, and git worktree list, which coddy runs before and after every shell command, would wait on it or misread it, so coddy refuses every command until you remove it, or replace it with a plain file, by hand."; return 1; }
     done; done
   }
   seen=""

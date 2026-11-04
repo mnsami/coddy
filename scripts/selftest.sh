@@ -1128,6 +1128,16 @@ done
 for c in "cp '$tmp/adm.why' '$ad/locked'" "ln -s '$tmp/adm.why' '$ad/locked'" true; do
   eval "$c"; tripped 0 "worktree admin: a plain locked, through a link or not, or none, passes: $c" 'true'; rm -f "$ad/locked"
 done
+# A HEAD link reaching nothing whose text starts with refs/, as git writes
+# it under core.preferSymlinkRefs, is read as that ref and opened by no
+# one: it passes. One that reaches a FIFO, no ref by its text, git opens
+# and waits on: refused.
+mv "$ad/HEAD" "$tmp/adm.head"; ln -s refs/heads/main "$ad/HEAD"
+tripped 0 "worktree admin: a HEAD link to a ref, as core.preferSymlinkRefs writes it, passes" 'true'
+rm "$ad/HEAD"; mkdir -p "$ad/refs"; mkfifo "$ad/adm.fifo"; ln -s refs/../adm.fifo "$ad/HEAD"
+t 2 "worktree admin: a HEAD link whose text starts with refs/ and reaches a FIFO is refused at once" timed snapadm
+t 0 "worktree admin: and named" named "worktrees/${ad##*/}/HEAD"
+rm "$ad/HEAD" "$ad/adm.fifo"; mv "$tmp/adm.head" "$ad/HEAD"
 rm -f "$tmp/adm.fifo" "$tmp/adm.why"; git worktree remove --force "$wo"
 # The hooks find the checkout's git dir the way git does, without git: past a
 # .git directory that is no repository (an empty one under .worktrees/<id>
