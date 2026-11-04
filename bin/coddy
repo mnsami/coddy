@@ -1243,7 +1243,9 @@ out() {
 # its line ends in big:<size>:<ctime>:<inode>, one word as a hash is, so
 # trip's report drops it the same way, from one stat of every dirty file
 # (stat's flavour probed once: BSD's -f, GNU's or BusyBox's -c, ctime to the
-# nanosecond where %.9Z gives it). A dirty path that is not clean is printed
+# nanosecond where %.9Z gives it), a path holding a newline left out of it
+# and hashed, since its stat line would read as another path's, and
+# forge that one's. A dirty path that is not clean is printed
 # quoted (q), so none spans two lines. A submodule shows as one gone line
 # once its commit leaves the one recorded for it, and not again while it
 # stays off it; never for its work tree (--ignore-submodules=dirty): git
@@ -1290,7 +1292,7 @@ snap() {
     [ "$r" != "$pi" ] && clean "$r$wi" && { [ -z "$r" ] || { coddywt "$R$r" && real "$R$r"; }; } ||
       out "jj workspace $(q "$wi") at $(q "$pi") (jj workspace forget)" "jj $wi" "path $pi"
   done < <(jj --no-pager workspace list --ignore-working-copy --color=never -T 'stringify(name).escape_json() ++ if(root, "\t" ++ stringify(root).escape_json()) ++ "\n"' 2>/dev/null); }
-  files=() n=0
+  files=() n=0 sts=() ns=0
   while IFS= read -r -d '' e; do
     # A staged rename or copy carries its source in the next field: a rename's
     # source then reads as gone.
@@ -1301,14 +1303,15 @@ snap() {
       # HEAD, and that is not the command's change to undo.
       case "$p" in .coddy.yml|"$legacy") continue ;; esac
       [ -z "${CODDY_AGENT_DIR-}" ] || case "$p" in "$CODDY_AGENT_DIR"/*) continue ;; esac
-      if [ -f "$p" ]; then files[n]="$p"; n=$((n+1)); else clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"; fi
+      if [ -f "$p" ]; then files[n]="$p"; n=$((n+1)); case "$p" in *$'\n'*) ;; *) sts[ns]=$p; ns=$((ns+1)) ;; esac
+      else clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"; fi
     done
   done < <(git status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null)
   [ "$n" -gt 0 ] || return 0
   if stat -L -f %Fc / >/dev/null 2>&1; then sf=(-f '%z %Fc %i:%N')
   elif [[ $(stat -L -c %.9Z / 2>/dev/null) =~ ^[0-9]+\.[0-9]+$ ]]; then sf=(-c '%s %.9Z %i:%n')
   else sf=(-c '%s %Z %i:%n'); fi
-  big=$(printf '%s\0' "${files[@]}" | LC_ALL=C xargs -0 stat -L "${sf[@]}" -- 2>/dev/null |
+  big=""; [ "$ns" = 0 ] || big=$(printf '%s\0' "${sts[@]}" | LC_ALL=C xargs -0 stat -L "${sf[@]}" -- 2>/dev/null |
     awk '{ i = index($0, ":"); split(substr($0, 1, i - 1), a, " ") } i && a[1] + 0 > 1048576')
   if [ -n "$big" ]; then
     bs=$'\n'

@@ -764,6 +764,21 @@ wire trip w 2>"$tmp/trip.err"; got=$?
 t 0 "tripwire: a 2 MiB file rewritten in place to the same size trips" test "$got" = 2
 t 0 "tripwire: and the report names its path alone" grep -q 'main checkout: two\.bin\.' "$tmp/trip.err"
 rm two.bin
+# Exactly 1 MiB is hashed; a byte more is not read.
+head -c 1048576 /dev/zero > mib.bin; head -c 1048577 /dev/zero > mib1.bin; wire snap big
+t 0 "tripwire: a file of exactly 1 MiB is hashed" grep -q '^mib\.bin [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/coddy-snap-*-big
+t 0 "tripwire: one a byte over is not read" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}"/coddy-snap-*-big
+wire trip big 2>/dev/null; rm mib.bin mib1.bin
+# The fingerprint's budget is the core's alone: a CODDY_BUDGET a settings env
+# hands the hook is dropped, so 0 runs no command unchecked.
+CODDY_BUDGET=0 wire snap w >/dev/null
+t 1 "tripwire: an inherited CODDY_BUDGET is ignored" grep -qx unchecked "${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-w"
+wire trip w 2>/dev/null
+# A path holding a newline is left out of the stat, where its second line
+# would read as another path's stat line and hide that path's change.
+echo a > other.txt; echo b > "$(printf 'z\n9999999 1 1:other.txt')"
+tripped 2 "tripwire: a newline in a path forges no other path's line" 'echo c > other.txt'
+rm other.txt z?9999999*
 # HEAD leaving the default branch is a change too, even for a pushed commit
 # with nothing dirty. A detached HEAD on the default branch's own history is
 # where jj leaves a synced checkout, so that one is quiet.
