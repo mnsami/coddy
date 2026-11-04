@@ -56,6 +56,9 @@ set -u
 # every read (bash 5 takes a fraction of a second) and a GREP_OPTIONS would
 # rewrite every grep (BSD grep honours it), each leaving a hook to pass.
 unset CDPATH TMOUT GREP_OPTIONS
+# snap's unchecked notice, which note hands on: none until snap sets it,
+# whatever the environment holds (a settings env reaches every hook).
+un=""
 
 # The target of link $1, an x after it. readlink -n prints it as it is; a
 # readlink without -n (BusyBox's, built without FEATURE_READLINK_FOLLOW)
@@ -410,8 +413,9 @@ myline() { echo "$me ${CODDY_PID-} $(started "${CODDY_PID-}")"; }
 # is never read. Not named jq, so command -v jq still finds the real one.
 jqh() { HOME=/dev/null jq "$@"; }
 # Hook context for the agent, as Claude Code reads it: no permissionDecision,
-# so the usual permission flow still applies.
-note() { jqh -cn --arg m "$*" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $m}}'; }
+# so the usual permission flow still applies. snap's unchecked notice, un,
+# goes in every one.
+note() { jqh -cn --arg m "$*${un:+ $un}" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $m}}'; }
 # guard: warn lets the $1 (edit, command) through and hands the agent die's
 # message as context instead.
 warnmode() { [ "$(cfg guard)" = warn ] || return 0; wm=$1; die() { note "coddy warning, the $wm was let through (guard: warn): $*"; exit 0; }; }
@@ -502,9 +506,9 @@ if [ "${1-}" = guard ]; then
   # (LC_ALL, LC_CTYPE or LANG, which an env can set) a path ending in a lead
   # byte takes the x put after it below as a trail byte, and ${f%x} keeps it.
   export LC_ALL=C
-  # Seconds the walk below (phys) may take, from here, well inside any hook
-  # timeout: a cancelled hook lets the edit through. Reset, not read, as an
-  # environment can set SECONDS.
+  # Seconds the walk below (phys) may take, from here, well inside the hook's
+  # 10 s timeout, past which a Claude Code before 2.1.295 lets the edit
+  # through. Reset, not read, as an environment can set SECONDS.
   budget=5 SECONDS=0
   [ -f "$conf" ] || exit 0
   code=2 # exit 2 is what blocks the tool call
@@ -525,8 +529,9 @@ if [ "${1-}" = guard ]; then
   f=${f%x} cwd=${cwd%x}
   [ -n "$f" ] || die "the edit guard could not read a path from the hook payload"
   # Reading a path below takes time quadratic in its length, and a hook that
-  # outlasts its timeout lets the edit through, so one longer than any path
-  # a kernel opens (4096 bytes) is refused first, in warn mode too. That
+  # outlasts its timeout lets the edit through before Claude Code 2.1.295, so
+  # one longer than any path a kernel opens (4096 bytes) is refused first, in
+  # warn mode too. That
   # bounds the path's length; $budget bounds the walk's time.
   long() { [ "${#1}" -gt 4096 ]; }
   ! long "$f" && ! long "$cwd" || die "the edit guard refuses a path or cwd longer than 4096 bytes"
@@ -1236,8 +1241,26 @@ out() {
 # spelled (as jj escapes it, J), and only what follows it, when it holds no
 # control character, quote or backslash (clean), is held to the test before
 # an entry is skipped as the root or coddy's own. No line is a command.
-# Every dirty file is hashed by one git hash-object; a path holding a newline
-# is misread by --stdin-paths. A dirty path that is not clean is printed
+# Every dirty file up to 1 MiB is hashed by one git hash-object, until 32
+# MiB have been, in git status order; a path holding a newline is misread by
+# --stdin-paths. One over 1 MiB, or past the 32, is not read: its line ends
+# in big:<size>:<ctime>:<inode>, one word as a hash is, so trip's report
+# drops it the same way, from one stat of every dirty file (stat's flavour
+# probed once: BSD's -f, GNU's or BusyBox's -c, ctime to the nanosecond
+# where %.9Z gives it), read in one pass in the order it prints, so the cost
+# grows with the paths alone, a path holding a newline left out of it and
+# hashed, since its stat line would read as another path's, and forge that
+# one's. hash-object stops at the first path it cannot hash, so one it
+# would misread (a leading quote, a trailing CR) or cannot read goes by its
+# stat, and so does each from the first it still fails on. Each verdict,
+# h or b, goes to fd 6 with its path; trip reads snap's back from $vf, so
+# a path snap hashed is hashed again while it is 1 MiB at most, one it
+# recorded by its stat stays so, and the 32 MiB holds for the rest alone:
+# staging a file, or one going away, moves no other between the two. A
+# still-plain dirty file stat gives no line for makes the run unchecked
+# (the line "unchecked stat"), which both hooks report. The count of dirty
+# paths goes to fd 5 once git status has listed them. A dirty path that is
+# not clean is printed
 # quoted (q), so none spans two lines. A submodule shows as one gone line
 # once its commit leaves the one recorded for it, and not again while it
 # stays off it; never for its work tree (--ignore-submodules=dirty): git
@@ -1284,7 +1307,7 @@ snap() {
     [ "$r" != "$pi" ] && clean "$r$wi" && { [ -z "$r" ] || { coddywt "$R$r" && real "$R$r"; }; } ||
       out "jj workspace $(q "$wi") at $(q "$pi") (jj workspace forget)" "jj $wi" "path $pi"
   done < <(jj --no-pager workspace list --ignore-working-copy --color=never -T 'stringify(name).escape_json() ++ if(root, "\t" ++ stringify(root).escape_json()) ++ "\n"' 2>/dev/null); }
-  files=() n=0
+  files=() n=0 nl=() nn=0 dp=0
   while IFS= read -r -d '' e; do
     # A staged rename or copy carries its source in the next field: a rename's
     # source then reads as gone.
@@ -1295,15 +1318,52 @@ snap() {
       # HEAD, and that is not the command's change to undo.
       case "$p" in .coddy.yml|"$legacy") continue ;; esac
       [ -z "${CODDY_AGENT_DIR-}" ] || case "$p" in "$CODDY_AGENT_DIR"/*) continue ;; esac
-      if [ -f "$p" ]; then files[n]="$p"; n=$((n+1)); else clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"; fi
+      dp=$((dp+1))
+      if [ ! -f "$p" ]; then clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"
+      else case "$p" in *$'\n'*) nl[nn]=$p; nn=$((nn+1)) ;; *) files[n]=$p; n=$((n+1)) ;; esac; fi
     done
   done < <(git status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null)
-  [ "$n" -gt 0 ] || return 0
-  printf '%s\n' "${files[@]}" | git hash-object --stdin-paths 2>/dev/null |
-    { i=0; while IFS= read -r hash; do p=${files[i]}; clean "$p" || p=$(q "$p"); printf '%s %s\n' "$p" "$hash"; i=$((i+1)); done; }
+  { echo "$dp" >&5; } 2>/dev/null
+  [ "$((n + nn))" -gt 0 ] || return 0
+  # By what it prints, not its exit: GNU's stat takes -f for a flag and
+  # stats %Fc too, which a file of that name in the root lets pass.
+  if [[ $(stat -L -f %Fc / 2>/dev/null) =~ ^[0-9]+\.[0-9]+$ ]]; then sf=(-f '%z %Fc %i:%N')
+  elif [[ $(stat -L -c %.9Z / 2>/dev/null) =~ ^[0-9]+\.[0-9]+$ ]]; then sf=(-c '%s %.9Z %i:%n')
+  else sf=(-c '%s %Z %i:%n'); fi
+  k=0 small=() tot=0 l=""
+  for p in ${files[@]+"${files[@]}"}; do
+    [ -n "$l" ] || IFS= read -r l <&7 || l=:
+    h=${l%%:*}; m=${h#? }; z=${m%% *}
+    if [ "${l#*:}" != "$p" ] || case "$z" in ''|*[!0-9]*) true ;; *) false ;; esac; then
+      [ ! -f "$p" ] || { echo unchecked stat; return 0; }
+      clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"; continue
+    fi
+    l="" v=${h%% *}
+    case "$p" in \"*|*$'\r') v=b ;; esac; [ -r "$p" ] || v=b
+    if [ "$v" != b ] && [ "$z" -le 1048576 ] && { [ "$v" = h ] || [ "$((tot + z))" -le 33554432 ]; }; then tot=$((tot + z)) small[k]="$m:$p" k=$((k+1))
+    else big "$p" "$m"; fi
+  done 7< <([ "$n" = 0 ] || printf '%s\0' "${files[@]}" | LC_ALL=C xargs -0 stat -L "${sf[@]}" -- 2>/dev/null |
+    vf=$vf awk 'BEGIN { while ((getline r < ENVIRON["vf"]) > 0) v[substr(r, 3)] = substr(r, 1, 1) }
+      { k = substr($0, index($0, ":") + 1); print ((k in v) ? v[k] : "-") " " $0 }')
+  for p in ${nl[@]+"${nl[@]}"}; do small[k]=":$p"; k=$((k+1)); done
+  [ "$k" -gt 0 ] || return 0
+  printf '%s\n' "${small[@]#*:}" | git hash-object --stdin-paths 2>/dev/null |
+    { i=0; while IFS= read -r hash; do r=${small[i]}; p=${r#*:}; [ -z "${r%%:*}" ] || printf 'h %s\n' "$p" >&6; clean "$p" || p=$(q "$p"); printf '%s %s\n' "$p" "$hash"; i=$((i+1)); done
+      while [ "$i" -lt "$k" ]; do r=${small[i]}; i=$((i+1)); [ -z "${r%%:*}" ] || big "${r#*:}" "${r%%:*}"; done; }
 }
+# Dirty file $1 recorded by its stat $2 (size, ctime, inode) rather than
+# read, and snap's verdict on it on fd 6 (fp).
+big() { local p=$1; printf 'b %s\n' "$p" >&6; clean "$p" || p=$(q "$p"); printf '%s big:%s\n' "$p" "${2// /:}"; }
 
 if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
+  # Seconds from here the fingerprint may run (CODDY_BUDGET, a whole number,
+  # else 20): well inside snap's 60 s timeout, which blocks the command, with
+  # all else snap does bounded. The admin dirs' check (admin) may take the
+  # first half of them, adb. Reset, not read, as an environment can set
+  # SECONDS.
+  fpb=20 SECONDS=0
+  case "${CODDY_BUDGET-}" in ''|*[!0-9]*) ;; *) [ "${#CODDY_BUDGET}" -gt 4 ] || fpb=$CODDY_BUDGET ;; esac
+  adb=$((10#$fpb / 2))
   # The snapshot is named by the tool use; an id that is not a plain word
   # reads as none, so it cannot name a path outside TMPDIR. Read without jq:
   # onboard installs jq inside one command, so snap runs without it and trip
@@ -1327,17 +1387,62 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # HEAD that is a link reaching nothing whose text starts with refs/, as
   # git writes it under core.preferSymlinkRefs: git reads it as that ref
   # and opens nothing. No subshell but that readlink: four tests per admin
-  # dir, in both hooks.
+  # dir, in both hooks. Its cost grows with the entries there, which a
+  # sandboxed command can make, so past adb seconds from the hook's start it
+  # stops and says so in st, which refuses the same way. The entries are
+  # read as find streams them, each held to the clock, every name but . and
+  # .. (dot names included), a link to a directory followed as a glob's
+  # trailing slash follows it.
   admin() {
     local d f p
     [ -n "$C" ] || return 0
-    for d in "$C"/worktrees/*/ "$C"/worktrees/.[!.]*/ "$C"/worktrees/..?*/; do for f in gitdir HEAD locked commondir; do
-      p=$d$f
-      [ -f "$p" ] || { [ ! -e "$p" ] && { [ ! -L "$p" ] || { [ "$f" = HEAD ] && [[ $(readlink "$p" 2>/dev/null) == refs/* ]]; }; }; } || {
-        st="$(q "$p") is not a plain file, and git worktree list, which coddy runs before and after every shell command, would wait on it or misread it, so coddy refuses every command until you remove it, or replace it with a plain file, by hand."; return 1; }
-    done; done
+    while IFS= read -r -d '' d; do
+      [ "$SECONDS" -lt "$adb" ] || {
+        st="$(q "$C/worktrees") holds more entries than coddy can check in $adb seconds before a shell command, so coddy refuses every command until you remove, by hand, the entries there that no worktree uses."; return 1; }
+      [ -d "$d" ] || continue
+      for f in gitdir HEAD locked commondir; do
+        p=$d/$f
+        [ -f "$p" ] || { [ ! -e "$p" ] && { [ ! -L "$p" ] || { [ "$f" = HEAD ] && [[ $(readlink "$p" 2>/dev/null) == refs/* ]]; }; }; } || {
+          st="$(q "$p") is not a plain file, and git worktree list, which coddy runs before and after every shell command, would wait on it or misread it, so coddy refuses every command until you remove it, or replace it with a plain file, by hand."; return 1; }
+      done
+    done < <(find -H "$C/worktrees" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
   }
-  seen="" nowt=""
+  # The fingerprint (snap), sorted, into file $1, within the budget: a
+  # process group of its own, polled, and killed whole, git included, once
+  # the budget has run out (TERM first, so git drops its locks, then KILL),
+  # each signal followed for up to a second until the group is gone, so the
+  # hook returns with none of it left; status 3 then, else sort's. Polled in
+  # bash's own job table (lj), never by its pid, which another process may
+  # hold once bash has reaped the job: a signal goes to the group only while
+  # bash lists the job as running, or while the group has a member, which
+  # keeps its id from reuse (KILL, once TERM ended the job but not a member
+  # that ignores it). The launch's stderr goes nowhere: under set -m the
+  # child may report a setpgid it lost to the parent's; the fingerprint's
+  # data is on its other fds.
+  lj() { [[ $'\n'$(jobs -rp)$'\n' == *$'\n'"$j"$'\n'* ]]; }
+  fp() {
+    local j i s
+    { set -m; { snap | LC_ALL=C sort -u > "$1"; } & j=$!; set +m; } 2>/dev/null
+    while lj; do
+      if [ "$SECONDS" -ge "$fpb" ]; then
+        for s in TERM KILL; do
+          lj || kill -0 -- "-$j" || break
+          kill -"$s" -- "-$j"; i=0
+          while { lj || kill -0 -- "-$j"; } && [ "$i" -lt 20 ]; do sleep 0.05 || sleep 1; i=$((i+1)); done
+        done
+        wait "$j"; return 3
+      fi 2>/dev/null
+      { sleep 0.05 || sleep 1; } 2>/dev/null
+    done
+    wait "$j"
+  }
+  # Hook context of fixed text alone (no quote, backslash or control
+  # character), without jq.
+  ctx() { printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$*"; }
+  tl="usually thousands of dirty or untracked files; ignored ones cost nothing"
+  sx="stat gave no size, change time and inode for one of its dirty files"
+  ut="so this command runs unchecked: what it changes there, and a worktree it makes, go unreported, though a change to the config is still put back."
+  seen="" nowt="" vf=/dev/null
   case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
   file="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
   # Both config paths are kept, present or not: a .coddy.yml the command
@@ -1345,6 +1450,13 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # kind is recorded, with a copy of a file and the target of a link, so a
   # record the command removed is told from a path that was absent. A
   # config the user keeps as a link is kept as its content and its target.
+  # The legacy file next to a live .coddy.yml is ignored, and let go: its
+  # kind alone. A copy holds no more than 64 KiB and a byte, so a huge or
+  # sparse one stalls no hook there. A live config over 64 KiB could not be
+  # put back, so snap refuses every command while it is (in either guard
+  # mode, the Edit tool, which guard holds, left to bring it under); one cut
+  # short all the same grew past that between snap's check and its copy,
+  # and trip reports it as changed and leaves it as it is.
   if [ "$1" = snap ]; then
     # A snapshot before every command, so trip can tell a command that
     # removed it from one run outside the workflow: NOT_ONBOARDED alone where
@@ -1355,16 +1467,34 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # the snapshot, which trip reports as lost.
     set -C; rm -f "$file" "$file".*
     [ -f "$conf" ] || { echo NOT_ONBOARDED > "$file" || rm -f "$file"; exit 0; }
+    # Its size read from 64 KiB and a byte at most, before anything reads
+    # the config, so a huge or sparse one is refused at once.
+    [ "$(head -c 65537 -- "$conf" 2>/dev/null | wc -c)" -le 65536 ] ||
+      { code=2; die "$cname is over 64 KiB, more than coddy keeps a copy of to put it back when a shell command changes it, so coddy refuses every shell command until it is brought under 64 KiB with /coddy:config."; }
     oddly
     common
     admin || { code=2; die "$st"; }
     b=$(cfg default_branch); b="${b:-main}" ok=1
     for c in .coddy.yml "$legacy"; do
       p="$root/$c" s="$file.${c//\//_}"
-      kind "$p" > "$s.kind" && { [ ! -f "$p" ] || cat -- "$p" > "$s"; } && { [ ! -L "$p" ] || readlink "$p" > "$s.link"; } || ok=""
+      kind "$p" > "$s.kind" || ok=""
+      { [ "$c" = "$legacy" ] && [ -f "$root/.coddy.yml" ]; } && continue
+      { [ ! -f "$p" ] || head -c 65537 -- "$p" > "$s"; } && { [ ! -L "$p" ] || readlink "$p" > "$s.link"; } || ok=""
     done
-    { snap 4>/dev/null | LC_ALL=C sort -u > "$file"; } 3>"$file.wt" || ok=""
-    [ -n "$ok" ] || rm -f "$file"
+    # Over its budget the fingerprint is an unchecked record: the command
+    # runs, and the agent is told it goes unchecked (un, in every note),
+    # with the count of dirty paths git status gave, when it got that far
+    # (on fd 5, into $file.n). So is one holding "unchecked stat", for a
+    # dirty file stat gave no line for. Its verdicts go to $file.v, for trip.
+    fp "$file" 3>"$file.wt" 4>/dev/null 5>"$file.n" 6>"$file.v"; r=$?
+    if [ "$r" = 3 ]; then
+      rm -f "$file"; echo unchecked > "$file" || ok=""
+      nd=""; [ ! -f "$file.n" ] || nd=$(head -c 20 "$file.n")
+      case "$nd" in ''|*[!0-9]*) nd="whose dirty or untracked paths git status had not finished listing" ;; *) nd="which has $nd dirty or untracked paths" ;; esac
+      un="coddy could not fingerprint the main checkout, $nd, within $fpb seconds ($tl), $ut"
+    elif [ "$r" != 0 ]; then ok=""
+    elif grep -qx 'unchecked stat' "$file"; then un="coddy could not fingerprint the main checkout, since $sx, $ut"; fi
+    [ -n "$ok" ] || rm -f "$file" "$file".*
     # A git worktree add or jj workspace add that would make a worktree
     # outside coddy's (coddywt) is refused before it runs, read from the
     # command's text (adds): a spelling it cannot read passes, saying so, and
@@ -1375,13 +1505,13 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # so, and nothing reports it afterwards. The snapshot comes first, so
     # trip finds it whatever happens here. A push is named in any case, or
     # as send-pack, or under help.autocorrect by a typo.
-    case "$in" in *worktree*|*workspace*|*[Pp][Uu][Ss][Hh]*|*send-pack*|*[Aa][Uu][Tt][Oo][Cc][Oo][Rr][Rr][Ee][Cc][Tt]*) ;; *) exit 0 ;; esac
+    case "$in" in *worktree*|*workspace*|*[Pp][Uu][Ss][Hh]*|*send-pack*|*[Aa][Uu][Tt][Oo][Cc][Oo][Rr][Rr][Ee][Cc][Tt]*) ;; *) [ -z "$un" ] || ctx "$un"; exit 0 ;; esac
     # A jq that is missing or does not run lets the command through, saying
     # so; one that runs and cannot read the payload is refused, since the
     # agent writes the payload (a lone surrogate escape in any field fails
     # jq) and could otherwise let any push through.
     command -v jq >/dev/null && jqh -n true >/dev/null 2>&1 ||
-      { printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"coddy could not read this command for a git worktree add, a jj workspace add or a push, since jq is missing or failed, so it was let through: a worktree it makes outside .worktrees/<issue>/ is reported once it has run, a push is not."}}'; exit 0; }
+      { ctx "coddy could not read this command for a git worktree add, a jj workspace add or a push, since jq is missing or failed, so it was let through: a worktree it makes outside .worktrees/<issue>/ is reported once it has run, a push is not.${un:+ $un}"; exit 0; }
     code=2 unk="" pu=""
     pr="Issue work reaches $b through a pull request: /coddy:ship pushes the issue's branch and opens one."
     warnmode command
@@ -1401,7 +1531,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     done < <(adds "$cmd" "${cwd:-$PWD}")
     [ -z "$unk" ] || unk="coddy could not tell where this command's git worktree add or jj workspace add puts its worktree (${unk# }), so it was let through: one it makes outside .worktrees/<issue>/ is reported once it has run."
     [ -z "$pu" ] || unk="${unk:+$unk }coddy could not tell which branch this command's push reaches (${pu# }), so it was let through: a push to $b, a force push and a branch delete are a person's to make."
-    [ -z "$unk" ] || note "$unk"
+    if [ -n "$unk" ]; then note "$unk"; elif [ -n "$un" ]; then ctx "$un"; fi
     exit 0
   fi
   code=2 msg="" keep=""
@@ -1411,7 +1541,8 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # the copy a file's record promises, is one the command touched, and then
   # what it did cannot be checked: rejected. Not onboarded then: quiet, the
   # command that wrote the config included. The live config as snap saw it
-  # is the first path recorded as a file.
+  # is the first path recorded as a file, and only it has a copy: the
+  # legacy file next to a live .coddy.yml has its kind alone.
   lost="that command left no snapshot of the main checkout at $file, so what it changed cannot be checked: a command may not touch the snapshot. Undo what it did."
   [ -f "$file" ] || die "$lost"
   grep -qx NOT_ONBOARDED "$file" && { rm -f "$file" "$file".*; exit 0; }
@@ -1419,7 +1550,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   pre=""
   for c in .coddy.yml "$legacy"; do
     s="$file.${c//\//_}"; k=""; [ ! -f "$s.kind" ] || k=$(cat "$s.kind")
-    case "$k" in file) [ -f "$s" ] && pre="${pre:-$s}" ;; absent|dir|fifo|other) ;; *) false ;; esac || die "$lost"
+    case "$k" in file) [ -n "$pre" ] || { [ -f "$s" ] && pre=$s; } ;; absent|dir|fifo|other) ;; *) false ;; esac || die "$lost"
   done
   [ -n "$pre" ] || die "$lost"
   # The config is the off switch for every hook here, so a shell command may
@@ -1434,18 +1565,23 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # What is put back is a plain file. TMPDIR is the command's to write too,
   # so nothing there is opened unless it is a plain file: a FIFO planted at
   # a snapshot name would hang trip. The legacy file is let go once
-  # .coddy.yml is live (settled first, above): it is ignored then and cannot
-  # change the effective config. The default branch is read from the
-  # snapshot's copy of the config, as snap read it, not from what the
-  # command left.
-  b=$(cfg default_branch "$pre" 2>/dev/null); b="${b:-main}"
+  # .coddy.yml is live, when the command began or now (settled first,
+  # above): it is ignored then and cannot change the effective config. The
+  # default branch is read from the snapshot's copy of the config, as snap
+  # read it, not from what the command left. A copy past 64 KiB is cut
+  # short (snap refuses a config past it, so this one grew between snap's
+  # check and its copy), so that config is reported as changed and left as
+  # it is.
+  b=$(cfg default_branch "$pre" 2>/dev/null); b="${b:-main}" cap=""
   for c in .coddy.yml "$legacy"; do
     p="$root/$c" s="$file.${c//\//_}"
-    { [ "$c" = "$legacy" ] && [ -f "$root/.coddy.yml" ]; } && continue
+    { [ "$c" = "$legacy" ] && { [ -f "$root/.coddy.yml" ] || [ "$pre" != "$s" ]; }; } && continue
     # Unchanged: the same link target (none for a plain file), the same kind
     # and, for a file, the same content.
     was=""; [ ! -f "$s.link" ] || was=$(cat "$s.link")
     k=""; [ ! -f "$s.kind" ] || k=$(cat "$s.kind")
+    { [ "$k" = file ] && [ "$(wc -c < "$s")" -gt 65536 ]; } &&
+      { cap="${cap}$c is over 64 KiB, more than coddy keeps a copy of, so whether that command changed it cannot be told, and it has been left as it is: bring it under 64 KiB with /coddy:config. "; continue; }
     [ "$(readlink "$p" 2>/dev/null)" = "$was" ] && [ "$(kind "$p")" = "$k" ] && { [ "$k" != file ] || cmp -s "$p" "$s"; } && continue
     rm -rf "$p"
     # A copy that cannot be written back is kept, and the report says so,
@@ -1457,6 +1593,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     msg="${msg}that command changed $c, which switches the coddy guardrails, so it has been $what. "
   done
   [ -z "$msg" ] || msg="${msg}If that came from git (a pull or checkout), accept it with /coddy:config; other settings change there too, and leaving the workflow is for the user to do by hand. "
+  msg=$msg$cap
   confpath
   [ -z "$odd" ] || { rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*; oddly "$msg"; }
   admin || { msg="$msg$st The git worktrees could not be listed for that command, so one it made is named by its admin dir alone, and one it moved, renamed or re-created is not named: check by hand. " nowt=1; }
@@ -1471,11 +1608,23 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # checked, and the one that puts it back: git worktree move for a git
   # worktree not made, jj workspace rename for a jj workspace at a path snap
   # recorded under another name (kept: its name is out's $2, its path $3).
-  # Any other line is the main checkout's, its last word, a hash or gone,
-  # dropped.
+  # Any other line is the main checkout's, its last word, a hash, gone or
+  # big:..., dropped. A fingerprint over its budget, snap's (unchecked) or
+  # this one, leaves nothing to compare: the command is reported unchecked,
+  # and the next is checked against what it left.
+  ck="Check by hand what it did; the next command is checked against what it left."
+  lab=/dev/null now=""
+  # The snapshot goes, and trip's own files, its config copies too unless one is kept.
+  drop() { rm -f "$file" ${now:+"$now"}; [ "$lab" = /dev/null ] || rm -f "$lab"; [ -n "$keep" ] || rm -f "$file".*; }
+  grep -qx unchecked "$file" && { drop; die "${msg}that command ran unchecked: the main checkout took more than $fpb seconds to fingerprint before it ran ($tl), so what it changed there, and a worktree it made, could not be seen. $ck"; }
+  grep -qx 'unchecked stat' "$file" && { drop; die "${msg}that command ran unchecked: the main checkout could not be fingerprinted before it ran, since $sx, so what it changed there, and a worktree it made, could not be seen. $ck"; }
   [ ! -f "$file.wt" ] || seen=$'\n'$(cat "$file.wt")$'\n'
+  [ ! -f "$file.v" ] || vf=$file.v
   lab=$(mktemp 2>/dev/null) || lab=/dev/null
-  new=$(snap 3>/dev/null 4>"$lab" | LC_ALL=C sort -u | LC_ALL=C comm -13 "$file" -)
+  now=$(mktemp 2>/dev/null) || { now=""; drop; die "${msg}no temporary file could be made, so what that command changed in the main checkout could not be checked. $ck"; }
+  fp "$now" 3>/dev/null 4>"$lab" 5>/dev/null 6>/dev/null || [ $? != 3 ] || { drop; die "${msg}the main checkout took more than $fpb seconds to fingerprint after that command ran ($tl), so what it changed there could not be checked. $ck"; }
+  ! grep -qx 'unchecked stat' "$now" || { drop; die "${msg}the main checkout could not be fingerprinted after that command ran, since $sx, so what it changed there could not be checked. $ck"; }
+  new=$(LC_ALL=C comm -13 "$file" "$now")
   added="" wts=""
   while IFS= read -r l; do
     [ -n "$l" ] || continue
@@ -1487,7 +1636,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     fi
     wts="${wts:+$wts; }${l% (*}, $t (${a:+put it back with $a, or }check what it holds before removing it with ${l##* (}"
   done <<<"$new"
-  rm -f "$file"; [ "$lab" = /dev/null ] || rm -f "$lab"; [ -n "$keep" ] || rm -f "$file".*
+  drop
   [ -n "$added" ] && msg="${msg}that command changed the main checkout: $added. Issue work belongs in .worktrees/<issue>/. Undo it. "
   [ -n "$wts" ] && msg="${msg}that command made, moved or renamed a worktree outside .worktrees/<issue>/: $wts. Issue work belongs in .worktrees/<issue>/: run /coddy:start <issue>, which makes it."
   [ -z "$msg" ] && exit 0
@@ -1639,6 +1788,13 @@ if [ "$cmd" = doctor ]; then
   done
   if [ ! -d "$root/.git" ]; then say hooks "ok (not applicable: no .git at the root)"
   elif [ -n "$e" ]; then say hooks "$e (fix: $fx)"; else say hooks ok; fi
+  # the shell hooks check every entry there before each command, within 10 s
+  # (admin), so past what that covers they refuse every command; counted no
+  # further than one more
+  if [ ! -d "$root/.git" ]; then say worktrees "ok (not applicable: no .git at the root)"
+  elif [ "$(find "$root/.git/worktrees/." ! -name . -prune -print 2>/dev/null | head -n 10001 | wc -l)" -gt 10000 ]; then
+    say worktrees ".git/worktrees holds more than 10000 entries, more than coddy can be sure to check before each shell command (fix: remove the entries there that no worktree uses, by hand)"
+  else say worktrees ok; fi
   if [ "$(cfg tracker)" = github ]; then
     w=.github/workflows/coddy.yml tpl="$inst/templates/coddy.yml"
     if [ -L .github ] || [ -L .github/workflows ] || [ -L "$w" ] || [ ! -f "$w" ]; then say pr_check "$w is missing or not a plain file (fix: copy $tpl to $w)"

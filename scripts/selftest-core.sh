@@ -37,7 +37,7 @@ snapfile="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1
 # rooted <dir> [VAR=value...]: status (or $verb) run from that directory prints the project root
 rooted() { d=$1; shift; (cd "$d" && env "$@" "$here/bin/coddy" "${verb-status}" | grep -qx "root: $repo"); }
 # A PATH with everything the guard needs but jq.
-mkdir "$tmp/nojq"; for x in bash sh sed awk cat grep git cmp ps sort comm tr cut cksum mkdir cp rm head; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
+mkdir "$tmp/nojq"; for x in bash sh sed awk cat grep git cmp ps sort comm tr cut cksum mkdir cp rm head sleep stat xargs; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
 
 git init -q --bare "$tmp/origin.git"
 git clone -q "$tmp/origin.git" "$repo" 2>/dev/null
@@ -267,6 +267,11 @@ t 0 "warn: and spelled through .." asks "$repo/sub/../.coddy.yml"
 t 0 "warn: and through .. after a link out of the project" asks "$repo/lnk/../.coddy.yml"
 rm lnk
 t 0 "warn: guard lets the main checkout through" guard "$repo/README.md"
+# un, snap's unchecked notice, is the core's own: one in the environment (a
+# settings env) reaches no guard notice.
+out=$(un=XYZ guard "$repo/README.md")
+t 0 "warn: guard's notice says the edit was let through" grep -q 'was let through' <<<"$out"
+t 1 "warn: and carries no un from the environment" grep -q XYZ <<<"$out"
 PATH="$tmp/nojq" t 2 "warn: guard without jq fails closed" guard "$repo/.coddy.yml"
 sed -i.bak '/^guard:/d' .coddy.yml && rm .coddy.yml.bak
 wire snap flow
@@ -304,6 +309,13 @@ for v in "$tmp/victim" "$tmp/nothing"; do
   t 2 "snapshot: and trip reports it lost: ${v##*/}" wire trip w
   rm -f "$snapfile" "$snapfile".*
 done
+# A record that fails drops the others too: a link planted at the
+# fingerprint's alone leaves no copy of the config behind.
+printf '#!/bin/sh\nln -s "%s" "%s.wt" 2>/dev/null\nexec "%s" "$@"\n' "$tmp/nothing" "$snapfile" "$(command -v head)" > "$tmp/plant/head"
+PATH="$tmp/plant:$PATH" wire snap w 2>/dev/null
+none() { for f in "$snapfile"*; do [ ! -e "$f" ] && [ ! -L "$f" ] || return 1; done; }
+t 0 "snapshot: a record that fails leaves none of the others" none
+t 2 "snapshot: and trip reports it lost" wire trip w
 rm -r "$tmp/plant" "$tmp/victim"
 tripped 2 "config: retargeting the link trips, the same content behind it" 'ln -sf "$tmp/else" .coddy.yml'
 t 1 "config: and the link is gone" test -L .coddy.yml
@@ -346,6 +358,98 @@ CODDY_AGENT_DIR=.claude tripped 0 "config: changing the legacy file next to a li
 t 0 "config: and the change stands" grep -q '^verify: true$' .claude/coddy.yml
 CODDY_AGENT_DIR=.claude tripped 0 "config: deleting the legacy file next to a live .coddy.yml is quiet" 'rm .claude/coddy.yml'
 t 1 "config: and it is not restored" test -e .claude/coddy.yml
+# So snap records its kind alone: a sparse 1 TiB one stalls no snap.
+dd if=/dev/null of=.claude/coddy.yml bs=1048576 seek=1048576 count=0 2>/dev/null
+t 0 "config: a sparse 1 TiB legacy file next to a live .coddy.yml does not stall snap" timeout 10 sh -c "printf '{\"tool_use_id\":\"w\"}' | '$here/bin/coddy' snap"
+t 0 "config: which records its kind" test "$(cat "$snapfile..claude_coddy.yml.kind")" = file
+t 1 "config: and no copy of it" test -e "$snapfile..claude_coddy.yml"
+t 0 "config: and trip lets it go" wire trip w
+rm .claude/coddy.yml
+# A copy holds 64 KiB and a byte at most, so a .coddy.yml past 64 KiB could
+# not be put back: snap refuses every command while it is, in either guard
+# mode, naming /coddy:config, its size read from 64 KiB and a byte at most,
+# so a sparse 1 TiB one is refused at once.
+{ cat "$tmp/conf.orig"; head -c 66000 /dev/zero | tr '\0' '#'; echo; } > .coddy.yml; cp .coddy.yml "$tmp/conf.big"
+t 2 "config: snap refuses every command while .coddy.yml is over 64 KiB" wire snap w
+t 0 "config: naming /coddy:config" says '.coddy.yml is over 64 KiB, .*with /coddy:config' wire snap w
+t 0 "config: and leaving no record" none
+echo 'guard: warn' >> .coddy.yml
+t 2 "config: under guard: warn too" wire snap w
+dd if=/dev/null of=.coddy.yml bs=1048576 seek=1048576 count=0 2>/dev/null
+t 2 "config: a sparse 1 TiB .coddy.yml is refused at once" timeout 10 sh -c "printf '{\"tool_use_id\":\"w\"}' | '$here/bin/coddy' snap"
+cp "$tmp/conf.orig" .coddy.yml
+tripped 0 "config: brought back under 64 KiB, commands run as before" 'true'
+# One that grows past it between snap's check and its copy is cut short:
+# trip reports it as changed and leaves it as it is. A stub head grows it on
+# its second read of 64 KiB and a byte, the copy.
+mkdir "$tmp/grow"; cat > "$tmp/grow/head" <<EOF
+#!/bin/sh
+if [ "\$*" = "-c 65537 -- $repo/.coddy.yml" ]; then
+  if [ -e "$tmp/grow/n" ]; then cat "$tmp/conf.big" > "$repo/.coddy.yml"; else : > "$tmp/grow/n"; fi
+fi
+exec "$(command -v head)" "\$@"
+EOF
+chmod +x "$tmp/grow/head"
+PATH="$tmp/grow:$PATH" wire snap w; out=$(wire trip w 2>&1); r=$?
+t 0 "config: one grown past 64 KiB after snap's check is reported as changed" test "$r" = 2
+t 0 "config: that report says why" grep -q '.coddy.yml is over 64 KiB, more than coddy keeps a copy of' <<<"$out"
+t 0 "config: and it is left as it is" cmp -s .coddy.yml "$tmp/conf.big"
+cp "$tmp/conf.orig" .coddy.yml; rm -r "$tmp/grow"
+# The fingerprint has a budget (CODDY_BUDGET seconds, which the shims
+# ignore): past it, its git is killed, snap lets the command run and tells
+# the agent it goes unchecked, trip reports the command, and the config lock
+# still holds. A git that sleeps on merge-base, the fingerprint's first git
+# call (SECONDS counts whole seconds, so a budget of 2 may end after 1),
+# stands in for a huge checkout. It records its own pid and its sleep's, to
+# show none outlives the hook.
+mkdir "$tmp/slow"; printf '#!/bin/sh\ncase " $* " in *" merge-base "*) echo $$ >> "%s"; sleep 60 & echo $! >> "%s"; wait ;; esac\nexec "%s" "$@"\n' "$tmp/slow/pids" "$tmp/slow/pids" "$(command -v git)" > "$tmp/slow/git"; chmod +x "$tmp/slow/git"
+slow() { : > "$tmp/slow/pids"; printf '{"tool_use_id":"w"}' | CODDY_BUDGET=2 PATH="$tmp/slow:$PATH" run "$1"; }
+left() { [ -s "$tmp/slow/pids" ] || return 0; while read -r p; do ! kill -0 "$p" 2>/dev/null || return 0; done < "$tmp/slow/pids"; return 1; }
+SECONDS=0; out=$(slow snap); r=$?
+t 0 "budget: snap past it lets the command run, within seconds" test "$r:$((SECONDS <= 8))" = 0:1
+t 0 "budget: telling the agent it goes unchecked" jq -e '.hookSpecificOutput.additionalContext | contains("so this command runs unchecked")' <<<"$out"
+t 0 "budget: its snapshot says so" grep -qx unchecked "$snapfile"
+t 1 "budget: and no git of its fingerprint is left running" left
+rm .coddy.yml; out=$(wire trip w 2>&1); r=$?
+t 0 "budget: trip reports a command whose snapshot is unchecked" test "$r" = 2
+t 0 "budget: saying so" grep -q 'that command ran unchecked' <<<"$out"
+t 0 "budget: and the config lock still puts back a deleted .coddy.yml" same .coddy.yml
+tripped 0 "budget: the next command is checked afresh" 'true'
+wire snap w; rm .coddy.yml
+SECONDS=0; out=$(slow trip 2>&1); r=$?
+t 0 "budget: trip past it reports the command, within seconds" test "$r:$((SECONDS <= 8))" = 2:1
+t 0 "budget: saying it could not be checked" grep -q 'to fingerprint after that command ran' <<<"$out"
+t 0 "budget: and the config lock still puts back a deleted .coddy.yml" same .coddy.yml
+t 1 "budget: and no git of its fingerprint is left running" left
+t 0 "budget: nor any snapshot record" none
+# Past git status the notice names how many dirty paths it listed: a git
+# that sleeps on hash-object, the fingerprint's last call.
+mkdir "$tmp/slowh"; sed 's/ merge-base / hash-object /' "$tmp/slow/git" > "$tmp/slowh/git"; chmod +x "$tmp/slowh/git"
+echo a > dirty.txt; : > "$tmp/slow/pids"
+out=$(printf '{"tool_use_id":"w"}' | CODDY_BUDGET=2 PATH="$tmp/slowh:$PATH" run snap)
+t 0 "budget: past git status, the notice names the dirty paths it listed" jq -e '.hookSpecificOutput.additionalContext | test("checkout, which has [0-9]+ dirty or untracked paths, within")' <<<"$out"
+t 1 "budget: and no git of its fingerprint is left running" left
+wire trip w 2>/dev/null; rm -r dirty.txt "$tmp/slowh"
+# A member of its group that ignores TERM gets KILL once the job is gone.
+mkdir "$tmp/slowt"; sed 's/ merge-base "\*) / merge-base "*) trap "" TERM; /' "$tmp/slow/git" > "$tmp/slowt/git"; chmod +x "$tmp/slowt/git"
+: > "$tmp/slow/pids"; printf '{"tool_use_id":"w"}' | CODDY_BUDGET=2 PATH="$tmp/slowt:$PATH" run snap >/dev/null
+t 0 "budget: a TERM-ignoring git was started" test -s "$tmp/slow/pids"
+t 1 "budget: and is gone once snap returns" left
+wire trip w 2>/dev/null; rm -r "$tmp/slowt"
+# The admin dirs' check (admin) has half the budget, from the hook's start:
+# past it snap refuses every command, in either guard mode, naming
+# .git/worktrees, with no record left. A budget of 0 stands in for more
+# entries than it checks in 10 seconds.
+mkdir -p .git/worktrees/many
+adm() { printf '{"tool_use_id":"w"}' | CODDY_BUDGET=0 run snap; }
+t 2 "budget: snap refuses once the admin dirs take more than half of it" adm
+t 0 "budget: naming .git/worktrees, to clear by hand" says "/.git/worktrees' holds more entries than coddy can check in 0 seconds before a shell command, so coddy refuses every command until you remove, by hand" adm
+t 0 "budget: leaving no record" none
+echo 'guard: warn' >> .coddy.yml
+t 2 "budget: under guard: warn too" adm
+cp "$tmp/conf.orig" .coddy.yml
+tripped 0 "budget: within it, the same admin dir passes" 'true'
+rm -r .git/worktrees
 # A file git cannot read in its place is a change like any other.
 report "config: an unreadable file in its place trips" 'echo "guard: warn" > .coddy.yml && chmod 000 .coddy.yml'
 t 0 "config: and is restored" same .coddy.yml
@@ -578,7 +682,7 @@ TZ=Asia/Tokyo t 0 "and status from there shows the owner running" says '^owners:
 rm -r .git/coddy/1; run claim 1 >/dev/null 2>&1
 # A path or cwd over 4096 bytes is refused before any work on it, in both
 # modes: reading one takes time quadratic in its length, and a hook that
-# outlasts its timeout lets the edit through.
+# outlasts its timeout lets the edit through before Claude Code 2.1.295.
 over="$repo/$(printf './%.0s' $(seq 2050))README.md"
 under="$repo/.worktrees/1/"; under="$under$(printf './%.0s' $(seq $(( (4096 - ${#under} - 5) / 2 ))))a.txt"
 cp .coddy.yml "$tmp/conf.yml"
@@ -1062,7 +1166,7 @@ mkdir -p "$dp/.github/workflows"; cp "$here/templates/coddy.yml" "$dp/.github/wo
 awk '/^   <!-- coddy:begin -->$/,/^   <!-- coddy:end -->$/' "$here/skills/onboard/SKILL.md" | sed 's/^   //' > "$dp/AGENTS.md"
 t 0 "doctor: onboarded, started, PR check and AGENTS.md in place: all ok" dd doctor
 PATH="$tmp/mingw:$PATH" t 1 "doctor: all ok under MINGW still exits 1" dd doctor
-t 1 "doctor: and no check line that is not ok" sh -c "CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -E '^(config|worktree|default_branch|jq|git|jj|hooks|pr_check|agents_md): ' | grep -v ': ok'"
+t 1 "doctor: and no check line that is not ok" sh -c "CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -E '^(config|worktree|default_branch|jq|git|jj|hooks|worktrees|pr_check|agents_md): ' | grep -v ': ok'"
 before=$( (cd "$dp" && cat .git/config; git for-each-ref; find . -path ./.git -prune -o -path ./.worktrees -prune -o -type f -print | sort | xargs cksum) )
 dd doctor >/dev/null 2>&1
 t 0 "doctor: changes nothing" test "$before" = "$( (cd "$dp" && cat .git/config; git for-each-ref; find . -path ./.git -prune -o -path ./.worktrees -prune -o -type f -print | sort | xargs cksum) )"
@@ -1079,6 +1183,7 @@ ln -s "$(command -v jq)" "$tmp/nojqd/jq"
 t 0 "doctor: jj missing under worktree: jj" says '^jj: missing (fix: install jj' env PATH="$tmp/nojqd" CODDY_ROOT="$dp" "$BASH" "$here/bin/coddy" doctor
 cp "$tmp/dp.yml" "$dp/.coddy.yml"
 prob "core.hooksPath elsewhere" '^hooks: core.hooksPath is /elsewhere' 'git config core.hooksPath /elsewhere' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
+prob "more entries under .git/worktrees than the shell hooks check in time" '^worktrees: .git/worktrees holds more than 10000 entries' 'cd .git/worktrees && seq -f "zz%g" 10000 | xargs mkdir' 'cd .git/worktrees && seq -f "zz%g" 10000 | xargs rmdir'
 prob "a hook without coddy's header" '^hooks: pre-push is missing or not one coddy start wrote' 'cp .git/hooks/coddy/pre-push "$tmp/pp"; echo "#!/bin/sh" > .git/hooks/coddy/pre-push' 'cp "$tmp/pp" .git/hooks/coddy/pre-push'
 # written quoted as start writes it, and run with a coddy on PATH, which the hooks never run
 (cd "$dp" && cp .git/hooks/coddy/pre-commit "$tmp/pc" && sed -i.bak "s#^c=.*#c='/nonexistent/coddy'#" .git/hooks/coddy/pre-commit && rm .git/hooks/coddy/pre-commit.bak)

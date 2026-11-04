@@ -56,7 +56,7 @@ chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log"
 # A ps that is not there, as in a container image without procps: on PATH first when a case asks.
 mkdir "$tmp/nops"; printf '#!/bin/sh\nexit 127\n' > "$tmp/nops/ps"; chmod +x "$tmp/nops/ps"
 # A PATH with everything snap needs but jq.
-mkdir "$tmp/nojq"; for x in bash sed awk cat grep git cmp sort comm tr cut cksum mkdir cp rm head; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
+mkdir "$tmp/nojq"; for x in bash sed awk cat grep git cmp sort comm tr cut cksum mkdir cp rm head sleep stat xargs wc; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
 # A jq that fails whatever it is asked: on PATH first when a case asks.
 mkdir "$tmp/badjq"; printf '#!/bin/sh\nexit 1\n' > "$tmp/badjq/jq"; chmod +x "$tmp/badjq/jq"
 # kept <what>: sweep leaves worktree $p alone
@@ -491,7 +491,10 @@ t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u
 # On startup and resume alone: a /clear or compact in a session still running
 # an install an update replaced would point the launcher back at it.
 t 0 "hooks: SessionStart runs link with the plugin's data dir, on startup and resume alone" jq -e '.hooks.SessionStart | length == 1 and .[0].matcher == "startup|resume" and .[0].hooks[0].args[-3:] == ["${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "link", "${CLAUDE_PLUGIN_DATA}"]' "$here/hooks/hooks.json"
-t 0 "hooks: no hook sets onFailure or timeout" jq -e '[.hooks[][].hooks[]] | all(has("onFailure") or has("timeout") | not)' "$here/hooks/hooks.json"
+# guard and snap block on a failure, a timeout or a hook that cannot start
+# included (Claude Code 2.1.295 or later); trip and link set neither.
+t 0 "hooks: guard and snap block on a failure, with a 10 s and a 60 s timeout" jq -e '[.hooks.PreToolUse[].hooks[] | [.args[-1], .onFailure, .timeout]] == [["guard", "block", 10], ["snap", "block", 60]]' "$here/hooks/hooks.json"
+t 0 "hooks: trip and link set no onFailure or timeout" jq -e '[.hooks.SessionStart, .hooks.PostToolUse, .hooks.PostToolUseFailure | .[].hooks[]] | length == 3 and all(has("onFailure") or has("timeout") | not)' "$here/hooks/hooks.json"
 # A hook blocks only on exit 2, so the shim makes every other exit of guard
 # or snap a 2 with a message, a core it cannot read included, and a coddy
 # crash blocks the call; trip keeps its own.
@@ -745,6 +748,93 @@ for i in $(seq 1000); do echo "$i" > "many/$i.txt"; done
 t 0 "tripwire: 1000 dirty files are hashed by one hash-object" test "$(wc -l < "$tmp/hashes" | tr -d ' ')" = 1
 t 0 "tripwire: and each is in the snapshot" test "$(grep -c '^many/.* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/coddy-snap-*-many)" = 1000
 wire trip many 2>/dev/null; rm -r many
+# A dirty file over 1 MiB is not read: its line holds its size, ctime and
+# inode, so a sparse 14 GiB one costs what a small one does, and one
+# rewritten in place to the same size still trips.
+dd if=/dev/null of=huge.bin bs=1048576 seek=14336 count=0 2>/dev/null
+SECONDS=0; wire snap big
+t 0 "tripwire: a sparse 14 GiB untracked file is fingerprinted within seconds" test "$SECONDS" -le 5
+t 0 "tripwire: as its size, ctime and inode, unread" grep -q '^huge\.bin big:15032385536:[0-9.]*:[0-9]*$' "${TMPDIR:-/tmp}"/coddy-snap-*-big
+SECONDS=0; wire trip big; got=$?
+t 0 "tripwire: and trip, quiet while it stands, within seconds too" test "$got:$((SECONDS <= 5))" = 0:1
+rm huge.bin; dd if=/dev/zero of=two.bin bs=1048576 count=2 2>/dev/null
+tripped 0 "tripwire: quiet for a 2 MiB file left alone" 'true'
+wire snap w; printf x | dd of=two.bin bs=1 seek=4096 conv=notrunc 2>/dev/null
+wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: a 2 MiB file rewritten in place to the same size trips" test "$got" = 2
+t 0 "tripwire: and the report names its path alone" grep -q 'main checkout: two\.bin\.' "$tmp/trip.err"
+rm two.bin
+# Exactly 1 MiB is hashed; a byte more is not read.
+head -c 1048576 /dev/zero > mib.bin; head -c 1048577 /dev/zero > mib1.bin; wire snap big
+t 0 "tripwire: a file of exactly 1 MiB is hashed" grep -q '^mib\.bin [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/coddy-snap-*-big
+t 0 "tripwire: one a byte over is not read" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}"/coddy-snap-*-big
+wire trip big 2>/dev/null; rm mib.bin mib1.bin
+# A file named %Fc in the root, which GNU's stat reads after its -f as a
+# path, does not pass it off as BSD's, which would read every big file.
+head -c 1048577 /dev/zero > mib1.bin; : > %Fc; wire snap big
+t 0 "tripwire: a file named %Fc in the root leaves a big file unread" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}"/coddy-snap-*-big
+wire trip big 2>/dev/null; rm mib1.bin %Fc
+# Past 32 MiB hashed in all a file up to 1 MiB is recorded as a big one, so
+# 8000 sparse 1 MiB untracked files cost what their paths do, not 8 GiB
+# read, and one recorded so, rewritten in place to the same size, still trips.
+mkdir sp; seq -f 'sp/f%04g' 0 7999 | xargs perl -e 'for (@ARGV) { open my $f, ">", $_ or die; truncate $f, 1048576 or die }'
+wire snap big
+t 1 "tripwire: 8000 sparse 1 MiB untracked files are fingerprinted within the budget" grep -qx unchecked "${TMPDIR:-/tmp}"/coddy-snap-*-big
+got=$(grep -c '^sp/f[0-9]* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/coddy-snap-*-big)
+t 0 "tripwire: no more than 32 MiB of them hashed" test "$got" -ge 1 -a "$got" -le 32
+t 0 "tripwire: the rest by size, ctime and inode" grep -q '^sp/f7999 big:1048576:' "${TMPDIR:-/tmp}"/coddy-snap-*-big
+wire trip big 2>/dev/null
+wire snap w; printf x | dd of=sp/f7999 bs=1 seek=4096 conv=notrunc 2>/dev/null
+wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: one of those rewritten in place to the same size trips" test "$got" = 2
+t 0 "tripwire: and the report names its path alone" grep -q 'main checkout: sp/f7999\.' "$tmp/trip.err"
+rm -r sp
+# The fingerprint's budget is the core's alone: a CODDY_BUDGET a settings env
+# hands the hook is dropped, so 0 runs no command unchecked.
+CODDY_BUDGET=0 wire snap w >/dev/null
+t 1 "tripwire: an inherited CODDY_BUDGET is ignored" grep -qx unchecked "${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-w"
+wire trip w 2>/dev/null
+# A path holding a newline is left out of the stat, where its second line
+# would read as another path's stat line and hide that path's change.
+echo a > other.txt; echo b > "$(printf 'z\n9999999 1 1:other.txt')"
+tripped 2 "tripwire: a newline in a path forges no other path's line" 'echo c > other.txt'
+rm other.txt z?9999999*
+# hash-object stops at the first path it cannot hash: one unreadable, one
+# starting with a quote, which it reads as quoted, and one ending in a CR,
+# which it strips, go by their stat instead, and so does each from the
+# first it still fails on, so none hides a later file's change.
+for e in a0 '"x' "$(printf 'a\r')"; do
+  echo a > "$e"; echo b > z.txt; [ "$e" != a0 ] || chmod 000 a0
+  wire snap w; echo c > z.txt; wire trip w 2>"$tmp/trip.err"; got=$?
+  t 0 "tripwire: a change after an unhashable path trips: ${#e} bytes" test "$got" = 2
+  t 0 "tripwire: and the report names the later file: ${#e} bytes" grep -q 'main checkout: z\.txt\.' "$tmp/trip.err"
+  rm -f "$e" z.txt
+done
+mkdir "$tmp/hof"; printf '#!/bin/sh\ncase " $* " in *" hash-object "*) chmod 000 a0 ;; esac\nexec "%s" "$@"\n' "$(command -v git)" > "$tmp/hof/git"; chmod +x "$tmp/hof/git"
+echo a > a0; echo b > z.txt
+PATH="$tmp/hof:$PATH" wire snap w; chmod 644 a0; echo c > z.txt; PATH="$tmp/hof:$PATH" wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: a change after a path hash-object fails on trips" test "$got" = 2
+t 0 "tripwire: and the report names the later file" grep -q 'main checkout: .*z\.txt\.' "$tmp/trip.err"
+rm -rf a0 z.txt "$tmp/hof"
+# trip records each path as snap did, so staging a file or one going away
+# moves no other between hashed and big: past the 32 MiB.
+mkdir r1; seq -f 'r1/b%02g' 0 32 | xargs perl -e 'for (@ARGV) { open my $f, ">", $_ or die; truncate $f, 1048576 or die }'
+tripped 0 "tripwire: staging one of 33 1 MiB files moves none of the others" 'git add r1/b32'
+git rm -q --cached r1/b32; perl -e 'open my $f, ">", "r1/a.bin" or die; truncate $f, 1048576 or die'
+tripped 0 "tripwire: nor does one of them going away" 'rm r1/a.bin'
+wire snap w; printf x >> r1/b31; wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: a change to the last of them still trips" test "$got" = 2
+t 0 "tripwire: and the report names it" grep -q 'main checkout: r1/b31\.' "$tmp/trip.err"
+rm -r r1
+# A stat that gives no line for a dirty file leaves it unchecked: snap says
+# the command runs unchecked and trip reports it.
+mkdir "$tmp/nostat"; printf '#!/bin/sh\nexit 1\n' > "$tmp/nostat/stat"; chmod +x "$tmp/nostat/stat"
+echo a > z.txt; out=$(PATH="$tmp/nostat:$PATH" wire snap w)
+t 0 "tripwire: with no working stat, snap says the command runs unchecked" jq -e '.hookSpecificOutput.additionalContext | contains("since stat gave no size")' <<<"$out"
+echo b > z.txt; PATH="$tmp/nostat:$PATH" wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: and trip reports it" test "$got" = 2
+t 0 "tripwire: saying so" grep -q 'ran unchecked: .*since stat gave no size' "$tmp/trip.err"
+rm -r z.txt "$tmp/nostat"
 # HEAD leaving the default branch is a change too, even for a pushed commit
 # with nothing dirty. A detached HEAD on the default branch's own history is
 # where jj leaves a synced checkout, so that one is quiet.
