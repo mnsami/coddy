@@ -33,7 +33,7 @@
 # An issue counts as In Progress once the lock .git/coddy/<issue>/ exists.
 # Only claim makes it (mkdir, so of two sessions claiming at once one wins;
 # a plain-file marker from before locks still counts until the next claim
-# replaces it with a lock); its owner file holds "<session> <pid>", and
+# replaces it with a lock); its owner file holds "<session> <pid> <local start> <start>", and
 # another session's claim is refused unless --take is passed or the owner's
 # pid no longer runs. The tracker is reached only through MCP tools, so the
 # skill moves the issue to In Progress and claim records that it did.
@@ -720,9 +720,12 @@ if [ "${1-}" = guard ]; then
   held "$f" "$root"; m=$move
   [ "$g" = "$f" ] && [ "$pr" = "$root" ] || held "$g" "$pr"; n=$move
   [ "$p" = "$g" ] || { [ "$p" = "$f" ] && [ "$pr" = "$root" ]; } || held "$p" "$pr"
-  [ -z "$m" ] || myline > "$root/.git/coddy/$m/owner" 2>/dev/null
-  [ -z "$n" ] || [ "$n" = "$m" ] || myline > "$root/.git/coddy/$n/owner" 2>/dev/null
-  [ -z "$move" ] || [ "$move" = "$m" ] || [ "$move" = "$n" ] || myline > "$root/.git/coddy/$move/owner" 2>/dev/null
+  # The line is built before any owner file is truncated, so none sits
+  # empty, a claim in flight to another session, while ps runs.
+  [ -z "$m$n$move" ] || ml=$(myline)
+  [ -z "$m" ] || printf '%s\n' "$ml" > "$root/.git/coddy/$m/owner" 2>/dev/null
+  [ -z "$n" ] || [ "$n" = "$m" ] || printf '%s\n' "$ml" > "$root/.git/coddy/$n/owner" 2>/dev/null
+  [ -z "$move" ] || [ "$move" = "$m" ] || [ "$move" = "$n" ] || printf '%s\n' "$ml" > "$root/.git/coddy/$move/owner" 2>/dev/null
   exit 0
 fi
 # Where shell command $1, run in directory $2, would make a worktree with git
@@ -2066,6 +2069,9 @@ case "$cmd" in
     # the claim replaces it. rm -f never removes the lock another session
     # just made of it, so the mkdir race stays atomic.
     [ -f "$lock" ] && rm -f "$lock"
+    # The owner line is built before the mkdir and the write, so the lock is
+    # never left without one, or with an empty one, while ps runs.
+    ml=$(myline)
     mkdir -p .git/coddy || die "could not record the claim"
     if ! mkdir "$lock" 2>/dev/null; then
       for i in 1 2 3 4 5; do [ -s "$lock/owner" ] && break; sleep 0.1; done # the winner writes owner right after its mkdir
@@ -2087,7 +2093,7 @@ case "$cmd" in
     # ponytail: the tracker is reachable only through MCP tools, so this
     # records the transition the skill just made instead of verifying it.
     # Upgrade path: a PostToolUse hook on the tracker's write tool.
-    myline > "$lock/owner" || die "could not record the claim"
+    printf '%s\n' "$ml" > "$lock/owner" || die "could not record the claim"
     trap - EXIT
     [ -z "$note" ] || echo "$note"
     if [ -n "$again" ]; then echo "claimed: $issue (already by this session)"; else echo "claimed: $issue"; fi ;;

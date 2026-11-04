@@ -687,6 +687,20 @@ rm -r .git/coddy/1; TZ=UTC run claim 1 >/dev/null 2>&1
 TZ=Asia/Tokyo t 1 "claimed under TZ=UTC: another session's claim from TZ=Asia/Tokyo is refused while the owner runs" as sess-b 1 claim 1
 TZ=Asia/Tokyo t 0 "and status from there shows the owner running" says '^owners: 1=sess-a (running)' as sess-b 1 status
 rm -r .git/coddy/1; run claim 1 >/dev/null 2>&1
+# The owner line is built before its file is opened: no ps runs while the
+# lock holds an empty owner file, which another session reads as a claim in
+# flight. The stub ps logs the owner file's state at each call.
+mkdir "$tmp/ownps"; printf '#!/bin/sh\nif [ ! -d "%s" ]; then echo none; elif [ -s "%s/owner" ]; then echo full; else echo empty; fi >> "%s"\nexec "%s" "$@"\n' "$repo/.git/coddy/1" "$repo/.git/coddy/1" "$tmp/ownps/seen" "$(command -v ps)" > "$tmp/ownps/ps"; chmod +x "$tmp/ownps/ps"
+filled() { [ -s "$tmp/ownps/seen" ] && ! grep -qx empty "$tmp/ownps/seen"; }
+: > "$tmp/ownps/seen"; PATH="$tmp/ownps:$PATH" run claim 1 >/dev/null 2>&1
+t 0 "re-claim: ps never runs while the owner file is empty" filled
+rm -r .git/coddy/1; : > "$tmp/ownps/seen"; PATH="$tmp/ownps:$PATH" run claim 1 >/dev/null 2>&1
+t 0 "claim: nor while the lock has no owner file" filled
+t 0 "claim: and the owner line is whole" grep -qx "sess-a $$ $lstart $ustart" .git/coddy/1/owner
+printf 'sess-old %s\n' $$ > .git/coddy/1/owner; : > "$tmp/ownps/seen"
+PATH="$tmp/ownps:$PATH" t 0 "guard: the owner's process under a new id edits" guard "$repo/.worktrees/1/a.txt"
+t 0 "guard: and ps never runs while the owner file it moves is empty" filled
+t 0 "guard: and the moved owner line is whole" grep -qx "sess-a $$ $lstart $ustart" .git/coddy/1/owner
 # A path or cwd over 4096 bytes is refused before any work on it, in both
 # modes: reading one takes time quadratic in its length, and a hook that
 # outlasts its timeout lets the edit through before Claude Code 2.1.295.
