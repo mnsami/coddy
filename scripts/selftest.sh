@@ -769,6 +769,11 @@ head -c 1048576 /dev/zero > mib.bin; head -c 1048577 /dev/zero > mib1.bin; wire 
 t 0 "tripwire: a file of exactly 1 MiB is hashed" grep -q '^mib\.bin [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/coddy-snap-*-big
 t 0 "tripwire: one a byte over is not read" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}"/coddy-snap-*-big
 wire trip big 2>/dev/null; rm mib.bin mib1.bin
+# A file named %Fc in the root, which GNU's stat reads after its -f as a
+# path, does not pass it off as BSD's, which would read every big file.
+head -c 1048577 /dev/zero > mib1.bin; : > %Fc; wire snap big
+t 0 "tripwire: a file named %Fc in the root leaves a big file unread" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}"/coddy-snap-*-big
+wire trip big 2>/dev/null; rm mib1.bin %Fc
 # The fingerprint's budget is the core's alone: a CODDY_BUDGET a settings env
 # hands the hook is dropped, so 0 runs no command unchecked.
 CODDY_BUDGET=0 wire snap w >/dev/null

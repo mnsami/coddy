@@ -1308,7 +1308,9 @@ snap() {
     done
   done < <(git status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null)
   [ "$n" -gt 0 ] || return 0
-  if stat -L -f %Fc / >/dev/null 2>&1; then sf=(-f '%z %Fc %i:%N')
+  # By what it prints, not its exit: GNU's stat takes -f for a flag and
+  # stats %Fc too, which a file of that name in the root lets pass.
+  if [[ $(stat -L -f %Fc / 2>/dev/null) =~ ^[0-9]+\.[0-9]+$ ]]; then sf=(-f '%z %Fc %i:%N')
   elif [[ $(stat -L -c %.9Z / 2>/dev/null) =~ ^[0-9]+\.[0-9]+$ ]]; then sf=(-c '%s %.9Z %i:%n')
   else sf=(-c '%s %Z %i:%n'); fi
   big=""; [ "$ns" = 0 ] || big=$(printf '%s\0' "${sts[@]}" | LC_ALL=C xargs -0 stat -L "${sf[@]}" -- 2>/dev/null |
