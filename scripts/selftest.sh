@@ -1591,15 +1591,22 @@ echo "sess-e $$" > .git/coddy/other/owner
 PATH="$tmp/nops:$PATH" t 0 "issue.sh status owners: a running process is running with no ps on PATH" owns "other=sess-e (running)" sess-a 1
 echo "sess-f " > .git/coddy/other/owner
 t 0 "issue.sh status owners: another session without a pid is running, as claim reads it" owns "other=sess-f (running)"
-# A pid is the owner's only while it is the process that started then.
+# A pid is the owner's only while it is the process that started then: the
+# fourth field, in UTC, is compared; the third is the local start 0.6.0
+# wrote and compares, as its started prints it in C.
+lstart=$(LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_")} 1')
 started=$(TZ=UTC0 LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}')
-echo "sess-e $$ $started" > .git/coddy/other/owner
+echo "sess-e $$ $lstart $started" > .git/coddy/other/owner
 t 0 "issue.sh status owners: a running pid with the recorded start time is running" owns "other=sess-e (running)" sess-z 1
-echo "sess-e $$ Thu_Jan_1_00:00:00_1970_UTC" > .git/coddy/other/owner
+echo "sess-e $$ $lstart Thu_Jan_1_00:00:00_1970_UTC" > .git/coddy/other/owner
 t 0 "issue.sh status owners: a running pid with another start time is gone" owns "other=sess-e (gone)"
 t 1 "issue.sh status owners: and it is not me by that pid" owns "other=me" sess-z
 PATH="$tmp/nops:$PATH" t 0 "issue.sh status owners: a start time ps cannot read counts as a match" owns "other=sess-e (running)" sess-z 1
-t 0 "claim records the claiming process's start time" grep -qx "sess-a $$ $started" .git/coddy/43/owner
+echo "sess-e $$ Thu_Jan_1_00:00:00_1970" > .git/coddy/other/owner # 0.6.0's line: three fields, the third local
+t 0 "issue.sh status owners: a line 0.6.0 wrote counts by its running pid alone" owns "other=sess-e (running)" sess-z 1
+echo "sess-e $$ Thu_Jan_1_00:00:00_1970_UTC" > .git/coddy/other/owner
+t 0 "issue.sh status owners: and so does a three-field line in UTC" owns "other=sess-e (running)" sess-z 1
+t 0 "claim records the claiming process's start, local as 0.6.0 compares it, then UTC" grep -qx "sess-a $$ $lstart $started" .git/coddy/43/owner
 rm -r .git/coddy/other; : > .git/coddy/other
 t 0 "issue.sh status owners: a marker from before locks is unknown" owns "other=unknown"
 rm .git/coddy/other
