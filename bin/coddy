@@ -9,6 +9,7 @@
 #   coddy verify <issue>            run the config's verify command in the issue's worktree, passing its exit code through
 #   coddy diff   <issue>            the worktree's diff against its base (default_branch on the remote, or the stacked issue's branch)
 #   coddy log    <issue> <path>...  the last 15 commits on the paths, on the issue's base
+#   coddy mark   <issue>            a fingerprint of the issue's worktree and its state file, for start to compare around a read-only agent
 #   coddy sweep                     remove what issues with a merged PR left behind
 #   coddy status                    the root, the config path and the claimed worktrees, for the prompts
 #   coddy config | detect           the config, or NOT_ONBOARDED; facts about the project for onboarding
@@ -2285,6 +2286,27 @@ $bad" ;;
     fi
     exit $? ;;
 
+  mark)
+    # What start compares around an agent that must change nothing: git's
+    # HEAD and the hashes of its staged and unstaged diffs, or jj's @ and its
+    # parents, which a change to a tracked file moves (jj snapshots it, as any
+    # jj call does); then each untracked file with its content's hash, and the
+    # state file's. Only a plain file is read (a FIFO would hang it): any
+    # other hashes as -.
+    [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
+    if [ "$tool" = jj ]; then
+      jjn log --no-graph -r @ -T '"commit " ++ commit_id ++ "\n" ++ parents.map(|p| "parent " ++ p.commit_id() ++ "\n").join("")' || die "jj log failed in $wt"
+    else
+      dh() { set -o pipefail; git -C "$wt" diff --binary --no-ext-diff --no-textconv "$@" | git hash-object --stdin; }
+      h=$(git -C "$wt" rev-parse HEAD) && s=$(dh --cached) && u=$(dh) || die "git failed in $wt"
+      printf 'head %s\nstaged %s\nunstaged %s\n' "$h" "$s" "$u"
+    fi
+    hof() { if [ -f "$1" ]; then git hash-object --no-filters -- "$1"; else echo -; fi; }
+    l=$(set -o pipefail; untracked | while IFS= read -r -d '' u; do echo "untracked $(q "$u") $(hof "$wt/$u")"; done) || die "could not list the untracked files in $wt"
+    [ -z "$l" ] || printf '%s\n' "$l"
+    f=".git/coddy/$issue/state"; if [ -e "$f" ]; then echo "state $(hof "$f")"; else echo "state none"; fi
+    exit 0 ;;
+
   state)
     # start's phase state: key=value lines in the lock directory, so sweep
     # removes them with the lock. Anyone may read; only the lock's owner
@@ -2313,5 +2335,5 @@ $bad" ;;
         { grep -v "^$k=" "$f" 2>/dev/null; printf '%s=%s\n' "$k" "$v"; } > "$f.tmp" && mv "$f.tmp" "$f" || die "could not write $f"
       fi
     done ;;
-  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] [-- <path>...] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | sweep | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard | githook pre-commit|pre-push" ;;
+  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] [-- <path>...] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | mark <issue> | sweep | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard | githook pre-commit|pre-push" ;;
 esac

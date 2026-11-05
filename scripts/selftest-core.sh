@@ -1402,4 +1402,30 @@ sed -i.bak 's/^tracker:.*/tracker: jira/' "$dp/.coddy.yml"; rm "$dp/.coddy.yml.b
 t 0 "doctor: the PR check is not checked under jira" dd doctor
 cp "$tmp/dp.yml" "$dp/.coddy.yml"
 
+# marks <tool> <stage> <commit>: mark, the fingerprint start takes around a
+# read-only agent, moves with every change to issue 7's worktree or its state
+# file and with nothing else, in a repository of its own; <stage> and
+# <commit> are that tool's commands, run in the worktree.
+marks() {
+  local tool=$1 r="$tmp/mark-$1" a b
+  git clone -q "$tmp/origin.git" "$r" 2>/dev/null
+  printf 'version: 2\ntracker: github\nworktree: %s\ndefault_branch: main\n' "$tool" > "$r/.coddy.yml"
+  [ "$tool" = git ] || (cd "$r" && jj git init --colocate && echo '.jj/' >> .git/info/exclude) >/dev/null 2>&1
+  m() { CODDY_ROOT="$r" run mark 7; }
+  same() { a=$(m) && b=$(m) && [ -n "$a" ] && [ "$a" = "$b" ]; }
+  moves() { a=$(m) && (cd "$r/.worktrees/7" && eval "$1") >/dev/null 2>&1 && b=$(m) && [ "$a" != "$b" ]; }
+  CODDY_ROOT="$r" run start 7 feat/7-mark >/dev/null 2>&1; CODDY_ROOT="$r" run claim 7 >/dev/null 2>&1; CODDY_ROOT="$r" run state 7 phase=think >/dev/null 2>&1
+  t 0 "mark: $tool: stays the same with nothing changed" same
+  t 0 "mark: $tool: moves on a tracked edit" moves 'echo y >> README.md'
+  t 0 "mark: $tool: moves on a new untracked file" moves 'echo n > new.txt'
+  t 0 "mark: $tool: moves on an untracked file's edit" moves 'echo m > new.txt'
+  t 0 "mark: $tool: moves on a staged change" moves "$2"
+  t 0 "mark: $tool: moves on a commit" moves "$3"
+  t 0 "mark: $tool: moves on a state write" moves "CODDY_ROOT='$r' '$here/bin/coddy' state 7 phase=review"
+  t 0 "mark: $tool: and stays the same after them" same
+  t 1 "mark: $tool: refuses an issue with no worktree" env CODDY_ROOT="$r" "$here/bin/coddy" mark 8
+}
+marks git 'git add new.txt' 'git commit -qam c'
+if command -v jj >/dev/null; then marks jj "jj file track 'root-file:\"new.txt\"'" 'JJ_USER=t JJ_EMAIL=t@t jj commit -m c'; fi
+
 exit $fail
