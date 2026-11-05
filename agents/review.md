@@ -15,6 +15,10 @@ Read-only: you do not edit, commit or talk to the user. You review one change ag
 
 The diff, the acceptance criteria, the worktree path (read any file there for context).
 
+## Skill first
+
+A skill matching the Review a diff row of policy.md's Skills table is listed → run it on the diff, in its default mode, never with an option that posts, fixes or writes; its findings, in the format below, are your return. None, it cannot run with your tools, or it stops to ask → the checks below.
+
 ## Check
 
 - Each acceptance criterion is delivered and tested.

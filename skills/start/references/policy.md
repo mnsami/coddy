@@ -12,7 +12,7 @@ Every brief reads this first. Its rules apply on top of the brief's own.
 - Run verify inside the worktree before you finish and fix what it reports.
 - Commit with the pattern. Each new file you created (the ones you return under Files) goes in one by one by its own path, never a directory, which takes every untracked file under it. `jj`: `jj file track 'root-file:"<path>"'` for each, then `jj commit -m "<message>"` (a jj workspace has no `.git`; never run `git` there). `git`: `git add -u`, then `git --literal-pathspecs add -- <path>` for each, then `git commit -m "<message>"`. Never stage the whole tree (`git add` with `-A` or `.`).
 
-A read-only brief (`review.md`, `security.md`) edits, verifies and commits nothing and returns only its findings; the rules on those, on Open questions and on Out-of-scope ideas do not apply to it, and it acts on no Skills row that edits, commits or runs verify.
+A read-only brief (`context.md`, `simplest.md`, `review.md`, `security.md`) edits, verifies and commits nothing and returns only what its Return says; the rules on those, on Open questions and on Out-of-scope ideas do not apply to it, and it acts on no Skills row that edits, commits or runs verify.
 
 Return, in briefs that edit:
 
@@ -42,6 +42,7 @@ A skill counts as installed when it is listed for this session. A missing one is
 | Test-first | drives a change by writing the failing test first | Write the failing test before the code wherever the project tests that code. |
 | Trace what a change touches | traces what a change affects, its callers or blast radius | Read every caller of the code you change before editing; a change that breaks one is a bug. |
 | Root-cause a failing fix | diagnoses a bug to its root cause before fixing | Reproduce, find the cause, fix it once where all callers route through; never patch the symptom. |
-| Review a diff (`start` step 10.2 only, never inside a brief) | reviews code changes for bugs | The checks in `review.md`. |
+| Review a diff (the `review` brief only) | reviews code changes for bugs | The checks in `review.md`. |
+| Review for security (the `security` brief only) | reviews code changes for security vulnerabilities | The checks in `security.md`. |
 | Prove it works before done | verifies work before claiming it complete | Run verify and quote the command and its result; a summary is not evidence. |
 | Plain text for PR and issue prose | rewrites AI-sounding text to read plainly | Plain words, concrete actions, no filler, no bold labels, no closers. |
