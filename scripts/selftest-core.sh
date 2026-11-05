@@ -1414,11 +1414,14 @@ marks() {
   m() { CODDY_ROOT="$r" run mark 7; }
   same() { a=$(m) && b=$(m) && [ -n "$a" ] && [ "$a" = "$b" ]; }
   moves() { a=$(m) && (cd "$r/.worktrees/7" && eval "$1") >/dev/null 2>&1 && b=$(m) && [ "$a" != "$b" ]; }
-  CODDY_ROOT="$r" run start 7 feat/7-mark >/dev/null 2>&1; CODDY_ROOT="$r" run claim 7 >/dev/null 2>&1; CODDY_ROOT="$r" run state 7 phase=think >/dev/null 2>&1
+  CODDY_ROOT="$r" run start 7 feat/7-mark >/dev/null 2>&1; CODDY_ROOT="$r" run claim 7 >/dev/null 2>&1
   t 0 "mark: $tool: stays the same with nothing changed" same
+  t 0 "mark: $tool: moves on the state file's first write" moves "CODDY_ROOT='$r' '$here/bin/coddy' state 7 phase=think"
   t 0 "mark: $tool: moves on a tracked edit" moves 'echo y >> README.md'
   t 0 "mark: $tool: moves on a new untracked file" moves 'echo n > new.txt'
+  t 0 "mark: $tool: moves on an untracked file in a new directory" moves 'mkdir d && echo n > d/f'
   t 0 "mark: $tool: moves on an untracked file's edit" moves 'echo m > new.txt'
+  t 0 "mark: $tool: moves on an untracked file's mode" moves 'chmod +x new.txt'
   t 0 "mark: $tool: moves on a staged change" moves "$2"
   t 0 "mark: $tool: moves on a commit" moves "$3"
   t 0 "mark: $tool: moves on a state write" moves "CODDY_ROOT='$r' '$here/bin/coddy' state 7 phase=review"

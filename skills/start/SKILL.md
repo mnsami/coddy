@@ -42,7 +42,7 @@ Run `coddy:<name>` on a tier: its model is `tiers.<agent>.<tier>`, `<agent>` bei
 - Sub-agents are available → a generic sub-agent on the brief `${CLAUDE_PLUGIN_ROOT}/agents/<name>.md`, on that model when the host lets the caller choose one.
 - Neither → follow the brief yourself and say so once.
 
-Around each run of `coddy:context`, `coddy:simplest`, `coddy:review` and `coddy:security`, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" mark $issue` before and after. The two differ → stop: do not use that run's output, tell the user which agent changed what (the lines that differ), and leave the change where it is; they revert it by hand, or run `/coddy:start $issue` again to keep it. Headless → post that as the `<!-- coddy:questions -->` comment and stop.
+Around each run of `coddy:context`, `coddy:simplest`, `coddy:review` and `coddy:security`, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" mark $issue` before and after. The two differ, or either run of `mark` fails → stop: do not use that run's output, tell the user which agent changed what (the lines that differ, or `mark`'s error), and leave the change where it is; they revert it by hand, or run `/coddy:start $issue` again to keep it. Headless → post that as the `<!-- coddy:questions -->` comment and stop.
 
 ## Steps
 

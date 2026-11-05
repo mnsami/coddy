@@ -2290,9 +2290,9 @@ $bad" ;;
     # What start compares around an agent that must change nothing: git's
     # HEAD and the hashes of its staged and unstaged diffs, or jj's @ and its
     # parents, which a change to a tracked file moves (jj snapshots it, as any
-    # jj call does); then each untracked file with its content's hash, and the
-    # state file's. Only a plain file is read (a FIFO would hang it): any
-    # other hashes as -.
+    # jj call does); then each untracked file with its content's hash and an x
+    # when it is executable, and the state file's. Only a plain file is read
+    # (a FIFO would hang it): any other hashes as -.
     [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
     if [ "$tool" = jj ]; then
       jjn log --no-graph -r @ -T '"commit " ++ commit_id ++ "\n" ++ parents.map(|p| "parent " ++ p.commit_id() ++ "\n").join("")' || die "jj log failed in $wt"
@@ -2302,7 +2302,7 @@ $bad" ;;
       printf 'head %s\nstaged %s\nunstaged %s\n' "$h" "$s" "$u"
     fi
     hof() { if [ -f "$1" ]; then git hash-object --no-filters -- "$1"; else echo -; fi; }
-    l=$(set -o pipefail; untracked | while IFS= read -r -d '' u; do echo "untracked $(q "$u") $(hof "$wt/$u")"; done) || die "could not list the untracked files in $wt"
+    l=$(set -o pipefail; untracked | while IFS= read -r -d '' u; do echo "untracked $(q "$u") $(hof "$wt/$u")$([ -x "$wt/$u" ] && echo ' x')"; done) || die "could not list the untracked files in $wt"
     [ -z "$l" ] || printf '%s\n' "$l"
     f=".git/coddy/$issue/state"; if [ -e "$f" ]; then echo "state $(hof "$f")"; else echo "state none"; fi
     exit 0 ;;

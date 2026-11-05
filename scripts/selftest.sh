@@ -96,6 +96,10 @@ for b in context simplest review security; do
   t 1 "agent $b lists no Write, Edit, NotebookEdit or Agent" lists "$here/agents/$b.md" 'Write|Edit|NotebookEdit|Agent|Task'
 done
 for b in context simplest; do t 1 "agent $b lists no Bash" lists "$here/agents/$b.md" Bash; done
+# and exactly these, so no other tool (an MCP write, a list form the checks above cannot read) slips in
+for bt in 'context:Read, Grep, Glob' 'simplest:Read, Grep, Glob, Skill' 'review:Read, Grep, Glob, Bash, Skill' 'security:Read, Grep, Glob, Bash, Skill'; do
+  t 0 "agent ${bt%%:*} lists exactly ${bt#*:}" test "$(key "$here/agents/${bt%%:*}.md" tools)" = "${bt#*:}"
+done
 for b in implement harden; do t 1 "agent $b has no tools line, so it inherits every tool" hastools "$here/agents/$b.md"; done
 sed 's/^tools: .*/&, Edit/' "$here/agents/review.md" > "$tmp/review.md"
 t 0 "the tools check finds an Edit added to an agent" lists "$tmp/review.md" 'Write|Edit|NotebookEdit|Agent|Task'
