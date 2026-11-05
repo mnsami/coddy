@@ -11,7 +11,7 @@ A Claude Code plugin (`coddy`) that is also its own single-plugin marketplace. T
 ```bash
 bash scripts/selftest.sh                    # the shims end to end: both worktree tools, claim, push, guard, tripwire, PR check
 bash scripts/selftest-core.sh               # bin/coddy on its CODDY_* inputs alone, with no CLAUDE_* set: root, config paths, guard's ask, config lock, start and ship, the git hooks, `get.sh` and `doctor`
-claude plugin validate .                    # manifest + skill frontmatter; its one warning, about this CLAUDE.md, is expected
+claude plugin validate .                    # manifest + skill frontmatter; its one warning, that CLAUDE.md at the plugin root is not loaded as project context, is expected
 claude --plugin-dir . -p "/coddy:next"      # run one skill headless against the working copy
 ```
 
@@ -24,7 +24,7 @@ Both self-tests build a throwaway repo with a local bare remote; `selftest.sh` a
 
 Skills act on the project in `$CLAUDE_PROJECT_DIR`, so to exercise one, run `claude --plugin-dir /path/to/coddy` from inside a target project that has (or, for `onboard`, lacks) `.coddy.yml`.
 
-Release = commit straight to `main` (the marketplace installs from it), then bump `version` in `.claude-plugin/plugin.json` as its own commit (`chore: bump to X.Y.Z`). `marketplace.json` carries no version. An installed copy only changes after a bump: `claude plugin marketplace update coddy && claude plugin update coddy@coddy`.
+Release = a version bump of `.claude-plugin/plugin.json` through a PR of its own, never a direct commit to `main` (the marketplace installs from it); steps in `RELEASING.md`. `marketplace.json` carries no version. An installed copy only changes after a bump: `claude plugin marketplace update coddy && claude plugin update coddy@coddy`.
 
 ## Architecture
 
