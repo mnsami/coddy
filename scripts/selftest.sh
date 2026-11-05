@@ -70,13 +70,35 @@ mkdir .claude
 echo note > notes.txt; : > empty.txt # untracked on purpose: jj must not make these look like changes
 
 t 1 "no skill disables model invocation" grep -rq disable-model-invocation "$here/skills"
-t 1 "no skill names a vendor skill" grep -rqE 'superpowers|code-review:' "$here/skills"
+t 1 "no skill or agent names a vendor skill" grep -rqE 'superpowers|code-review:' "$here/skills" "$here/agents"
 t 0 "policy.md exists" test -f "$here/skills/start/references/policy.md"
 # Each agent's body, after its frontmatter, is a title and then the policy.md line.
 opens() { awk 'NR == 1 { if ($0 != "---") exit; next } !b { if ($0 == "---") b = 1; next } NF { if (++n == 1 && !/^# /) exit; if (n == 2) { print; exit } }' "$1" | grep -qxF 'Read `policy.md` at the path you were given first; its rules apply here. No path given, or the file cannot be read → stop and return `no policy path`.'; }
 for b in context simplest implement harden review security; do t 0 "agent $b opens with policy.md" opens "$here/agents/$b.md"; done
 sed '1,/^# /!{/^Read `policy.md`/d;}' "$here/agents/review.md" > "$tmp/review.md"
 t 1 "an agent whose body does not open with it fails it" opens "$tmp/review.md"
+# Each agent's frontmatter: its name, a description that keeps it inside
+# coddy:start, model: inherit for a call that passes none, and its tools. A
+# tools line is an allowlist and none inherits every tool, so the four that
+# must change nothing carry one without a tool that writes or spawns, and the
+# two that read alone carry no Bash.
+fm() { awk 'NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit } { print }' "$1"; }
+key() { fm "$1" | sed -n "s/^$2: *//p"; }
+named() { [ "$(key "$1" name)" = "$2" ] && key "$1" description | grep -qF coddy:start; }
+hastools() { fm "$1" | grep -q '^tools:'; }
+lists() { key "$1" tools | tr , '\n' | sed 's/^ *//; s/ *$//' | grep -qxE "($2)(\(.*\))?"; }
+for b in context simplest implement harden review security; do
+  t 0 "agent $b has its name and a description naming coddy:start" named "$here/agents/$b.md" "$b"
+  t 0 "agent $b has model: inherit" test "$(key "$here/agents/$b.md" model)" = inherit
+done
+for b in context simplest review security; do
+  t 0 "agent $b has a tools line" hastools "$here/agents/$b.md"
+  t 1 "agent $b lists no Write, Edit, NotebookEdit or Agent" lists "$here/agents/$b.md" 'Write|Edit|NotebookEdit|Agent|Task'
+done
+for b in context simplest; do t 1 "agent $b lists no Bash" lists "$here/agents/$b.md" Bash; done
+for b in implement harden; do t 1 "agent $b has no tools line, so it inherits every tool" hastools "$here/agents/$b.md"; done
+sed 's/^tools: .*/&, Edit/' "$here/agents/review.md" > "$tmp/review.md"
+t 0 "the tools check finds an Edit added to an agent" lists "$tmp/review.md" 'Write|Edit|NotebookEdit|Agent|Task'
 t 1 "policy.md never has a brief stage the whole tree" grep -q 'add -A' "$here/skills/start/references/policy.md"
 literal() { grep -F 'Commit with the pattern' "$1" | grep -qF "root-file:" && grep -F 'Commit with the pattern' "$1" | grep -qF -- '--literal-pathspecs'; }
 t 0 "policy.md tracks each new file by its literal path, never a directory" literal "$here/skills/start/references/policy.md"
