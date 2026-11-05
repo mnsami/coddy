@@ -72,8 +72,11 @@ echo note > notes.txt; : > empty.txt # untracked on purpose: jj must not make th
 t 1 "no skill disables model invocation" grep -rq disable-model-invocation "$here/skills"
 t 1 "no skill names a vendor skill" grep -rqE 'superpowers|code-review:' "$here/skills"
 t 0 "policy.md exists" test -f "$here/skills/start/references/policy.md"
-opens() { sed -n 3p "$1" | grep -qxF 'Read `policy.md` at the path you were given first; its rules apply here. No path given, or the file cannot be read → stop and return `no policy path`.'; }
-for b in implement harden review security; do t 0 "brief $b opens with policy.md" opens "$here/skills/start/$b.md"; done
+# Each agent's body, after its frontmatter, is a title and then the policy.md line.
+opens() { awk 'NR == 1 { if ($0 != "---") exit; next } !b { if ($0 == "---") b = 1; next } NF { if (++n == 1 && !/^# /) exit; if (n == 2) { print; exit } }' "$1" | grep -qxF 'Read `policy.md` at the path you were given first; its rules apply here. No path given, or the file cannot be read → stop and return `no policy path`.'; }
+for b in context simplest implement harden review security; do t 0 "agent $b opens with policy.md" opens "$here/agents/$b.md"; done
+sed '1,/^# /!{/^Read `policy.md`/d;}' "$here/agents/review.md" > "$tmp/review.md"
+t 1 "an agent whose body does not open with it fails it" opens "$tmp/review.md"
 t 1 "policy.md never has a brief stage the whole tree" grep -q 'add -A' "$here/skills/start/references/policy.md"
 literal() { grep -F 'Commit with the pattern' "$1" | grep -qF "root-file:" && grep -F 'Commit with the pattern' "$1" | grep -qF -- '--literal-pathspecs'; }
 t 0 "policy.md tracks each new file by its literal path, never a directory" literal "$here/skills/start/references/policy.md"

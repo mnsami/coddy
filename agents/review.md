@@ -1,3 +1,10 @@
+---
+name: review
+description: Coddy start's code reviewer. Only for use when the coddy:start skill delegates to it, which passes policy.md's path, the worktree path, the diff and the acceptance criteria.
+tools: Read, Grep, Glob, Bash, Skill
+model: inherit
+---
+
 # Review
 
 Read `policy.md` at the path you were given first; its rules apply here. No path given, or the file cannot be read → stop and return `no policy path`.

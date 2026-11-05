@@ -1,3 +1,9 @@
+---
+name: implement
+description: Coddy start's implementer. Only for use when the coddy:start skill delegates to it, which passes policy.md's path, the worktree path, the plan, verify, the commit pattern, the worktree tool and, in fix mode, the findings to fix.
+model: inherit
+---
+
 # Implement
 
 Read `policy.md` at the path you were given first; its rules apply here. No path given, or the file cannot be read → stop and return `no policy path`.
