@@ -2293,14 +2293,16 @@ $bad" ;;
   mark)
     # What start compares around an agent that must change nothing, by its
     # digest alone, printed first: git's HEAD, the branch it is on, the
-    # hashes of its staged and unstaged diffs, the worktree's .git pointer and
-    # its admin dir's commondir, which every git call here goes through; or
-    # jj's @ and its parents, which a change to a tracked file moves (jj
-    # snapshots it, as any jj call does) unless its size and mtime stay, so
-    # each tracked file's ctime and inode, hashed, too. Then each untracked
-    # file with its content's hash and an x when it is executable, and the
-    # issue's state, base and branch records. Only a plain file is read: any
-    # other hashes as -. Given a digest, it exits 1 when this one differs.
+    # hashes of its staged and unstaged diffs and of its index entries, read
+    # past any replace ref, the worktree's .git pointer and its admin dir's
+    # commondir, which every git call here goes through; or jj's @ and its
+    # parents, which a change to a tracked file moves (jj snapshots it, as any
+    # jj call does) unless its size and mtime stay. Under either, each
+    # tracked file's size, ctime and inode, hashed, so a rewritten object
+    # hides no edit either. Then each untracked file with its content's hash
+    # and an x when it is executable, and the issue's state, base and branch
+    # records. Only a plain file is read: any other hashes as -. Given a
+    # digest, it exits 1 when this one differs.
     [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
     if [ $# -ge 3 ]; then
       case "$3" in *[!0123456789abcdef]*) n=0 ;; *) n=${#3} ;; esac
@@ -2310,19 +2312,21 @@ $bad" ;;
     p=$(cd "$wt" && find . -path ./.jj -prune -o -type p -print -quit 2>/dev/null); [ -z "$p" ] || p="$wt/${p#./}"
     [ -n "$p" ] || p=$(find -L .git/info -type p -print -quit 2>/dev/null)
     [ -z "$p" ] || die "$(q "$p") is a FIFO, which git or jj would wait on for good: remove it by hand"
+    export GIT_NO_REPLACE_OBJECTS=1
     hof() { if [ -f "$1" ]; then git hash-object --no-filters -- "$1"; else echo -; fi; }
+    # each listed file's size, ctime and inode, hashed; one stat cannot read (outside the sparse patterns) prints no line, as on every run
+    sts() { sflav; { cd "$wt" && LC_ALL=C xargs -0 stat "${sf[@]}" -- 2>/dev/null; :; } | git hash-object --stdin; }
     o=$(
       if [ "$tool" = jj ]; then
         jjn log --no-graph -r @ -T '"commit " ++ commit_id ++ "\n" ++ parents.map(|p| "parent " ++ p.commit_id() ++ "\n").join("")' || die "jj log failed in $wt"
-        # a file stat cannot read (outside the sparse patterns) prints no line, as on every run
-        sflav; t=$(set -o pipefail; jjn --ignore-working-copy file list -r @ -T 'path ++ "\0"' |
-          { cd "$wt" && LC_ALL=C xargs -0 stat "${sf[@]}" -- 2>/dev/null; :; } | git hash-object --stdin) || die "could not list the tracked files in $wt"
+        t=$(set -o pipefail; jjn --ignore-working-copy file list -r @ -T 'path ++ "\0"' | sts) || die "could not list the tracked files in $wt"
         echo "tracked $t"
       else
-        dh() { set -o pipefail; git -C "$wt" diff --binary --no-ext-diff --no-textconv "$@" | git hash-object --stdin; }
-        h=$(git -C "$wt" rev-parse HEAD) && s=$(dh --cached) && u=$(dh) && g=$(git -C "$wt" rev-parse --absolute-git-dir) || die "git failed in $wt"
+        dh() { set -o pipefail; git -C "$wt" "$@" | git hash-object --stdin; }
+        h=$(git -C "$wt" rev-parse HEAD) && s=$(dh diff --binary --no-ext-diff --no-textconv --cached) && u=$(dh diff --binary --no-ext-diff --no-textconv) &&
+          i=$(dh ls-files -s -z) && t=$(set -o pipefail; git -C "$wt" ls-files -z | sts) && g=$(git -C "$wt" rev-parse --absolute-git-dir) || die "git failed in $wt"
         r=$(git -C "$wt" symbolic-ref -q HEAD) || r=detached
-        printf 'head %s\nref %s\nstaged %s\nunstaged %s\npointer %s\ncommondir %s\n' "$h" "$(q "$r")" "$s" "$u" "$(hof "$wt/.git")" "$(hof "$g/commondir")"
+        printf 'head %s\nref %s\nstaged %s\nunstaged %s\nindex %s\ntracked %s\npointer %s\ncommondir %s\n' "$h" "$(q "$r")" "$s" "$u" "$i" "$t" "$(hof "$wt/.git")" "$(hof "$g/commondir")"
       fi
       l=$(set -o pipefail; untracked | while IFS= read -r -d '' u; do echo "untracked $(q "$u") $(hof "$wt/$u")$([ -x "$wt/$u" ] && echo ' x')"; done) || die "could not list the untracked files in $wt"
       [ -z "$l" ] || printf '%s\n' "$l"

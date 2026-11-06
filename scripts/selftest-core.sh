@@ -1416,7 +1416,8 @@ marks() {
   m() { CODDY_ROOT="$r" run mark 7 "$@"; }
   # its own names: a function defined here is global, and same is the config cases'
   msame() { a=$(m) && b=$(m) && [ -n "$a" ] && [ "$a" = "$b" ]; }
-  moves() { a=$(m) && (cd "$r/.worktrees/7" && eval "$1") >/dev/null 2>&1 && b=$(m) && [ "$a" != "$b" ]; }
+  # moves <command> [line]: mark's output, or the line of that name, moves with the command
+  moves() { a=$(set -o pipefail; m | grep "^${2-}") && (cd "$r/.worktrees/7" && eval "$1") >/dev/null 2>&1 && b=$(set -o pipefail; m | grep "^${2-}") && [ "$a" != "$b" ]; }
   # mholds <command>: mark given the digest taken before the command
   mholds() { local d; d=$(m | sed -n '1s/^digest: //p') && [ -n "$d" ] && (cd "$r/.worktrees/7" && eval "$1") >/dev/null 2>&1 && m "$d"; }
   CODDY_ROOT="$r" run start 7 feat/7-mark >/dev/null 2>&1; CODDY_ROOT="$r" run claim 7 >/dev/null 2>&1
@@ -1433,6 +1434,8 @@ marks() {
   t 0 "mark: $tool: moves on a base record's write" moves "echo main > '$r/.git/coddy/7.base'"
   t 0 "mark: $tool: moves on a branch record's write" moves "echo feat/7-other > '$r/.git/coddy/7.branch'"
   shift 3; for c; do t 0 "mark: $tool: moves on ${c%%:*}" moves "${c#*:}"; done
+  # git reads past a replace ref, so the edit one hides shows in the unstaged diff itself
+  [ "$tool" = jj ] || t 0 "mark: git: an edit a replace ref hides moves the unstaged diff" moves 'echo r >> README.md && git replace "$(git rev-parse :README.md)" "$(git hash-object -w README.md)"' unstaged
   t 0 "mark: $tool: and stays the same after them" msame
   t 0 "mark: $tool: passes the digest it printed" mholds true
   t 1 "mark: $tool: fails one the worktree no longer holds" mholds 'echo w >> README.md'
@@ -1451,7 +1454,8 @@ marks git 'git add new.txt' 'git commit -qam c' \
   'a branch switch at the same commit:git switch -qc feat/7-x' \
   'a detach at the same commit:git checkout -q --detach' \
   "a .git pointer rewrite:printf 'gitdir: %s/.\n' \"\$(sed -n 's/^gitdir: //p' .git)\" > \"\$tmp/p\" && cat \"\$tmp/p\" > .git" \
-  "a commondir rewrite:echo ../../. > '$tmp/mark-git/.git/worktrees/7/commondir'"
+  "a commondir rewrite:echo ../../. > '$tmp/mark-git/.git/worktrees/7/commondir'" \
+  'a tracked edit whose blob is rewritten in place:echo s >> new.txt && o=$(git rev-parse :new.txt) && n=$(git hash-object -w new.txt) && d=$tmp/mark-git/.git/objects && rm -f "$d/${o:0:2}/${o:2}" && cp "$d/${n:0:2}/${n:2}" "$d/${o:0:2}/${o:2}"'
 # jj judges a tracked file by its size and mtime, so the same size with the mtime put back moves no @.
 if command -v jj >/dev/null; then marks jj "jj file track 'root-file:\"new.txt\"'" 'JJ_USER=t JJ_EMAIL=t@t jj commit -m c' \
   'a same-size rewrite with its mtime put back:touch -r README.md "$tmp/ref" && tr y z < README.md > "$tmp/rw" && cat "$tmp/rw" > README.md && touch -r "$tmp/ref" README.md'; fi
