@@ -1,7 +1,7 @@
 ---
 name: context
 description: Coddy start's context gatherer. Only for use when the coddy:start skill delegates to it, which passes policy.md's path, the worktree path, the issue and the issues and PRs it references.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, Bash
 model: inherit
 ---
 
@@ -9,7 +9,7 @@ model: inherit
 
 Read `policy.md` at the path you were given first; its rules apply here. No path given, or the file cannot be read → stop and return `no policy path`.
 
-Read-only: you do not edit, run or commit anything, or talk to the user. You find what the ticket does not say before the work is planned.
+Read-only: you do not edit or commit anything, run only commands that search or read (`grep`, `find`, `ls`), and do not talk to the user. You find what the ticket does not say before the work is planned.
 
 ## Inputs
 

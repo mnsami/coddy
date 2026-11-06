@@ -1,7 +1,7 @@
 ---
 name: simplest
 description: Coddy start's simplest-solution check. Only for use when the coddy:start skill delegates to it, which passes policy.md's path, the worktree path and the plan with its acceptance criteria.
-tools: Read, Grep, Glob, Skill
+tools: Read, Grep, Glob, Bash, Skill
 model: inherit
 ---
 
@@ -9,7 +9,7 @@ model: inherit
 
 Read `policy.md` at the path you were given first; its rules apply here. No path given, or the file cannot be read → stop and return `no policy path`.
 
-Read-only: you do not edit, run or commit anything, or talk to the user. You hold a plan against the smallest change that meets its acceptance criteria.
+Read-only: you do not edit or commit anything, run only commands that search or read (`grep`, `find`, `ls`), and do not talk to the user. You hold a plan against the smallest change that meets its acceptance criteria.
 
 ## Inputs
 

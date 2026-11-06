@@ -80,8 +80,9 @@ t 1 "an agent whose body does not open with it fails it" opens "$tmp/review.md"
 # Each agent's frontmatter: its name, a description that keeps it inside
 # coddy:start, model: inherit for a call that passes none, and its tools. A
 # tools line is an allowlist and none inherits every tool, so the four that
-# must change nothing carry one without a tool that writes or spawns, and the
-# two that read alone carry no Bash.
+# must change nothing carry one without Write, Edit, NotebookEdit or Agent;
+# their Bash, which a build with no Grep or Glob tool needs to search, can
+# still write, which start's mark catches in the worktree.
 fm() { awk 'NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit } { print }' "$1"; }
 key() { fm "$1" | sed -n "s/^$2: *//p"; }
 named() { [ "$(key "$1" name)" = "$2" ] && key "$1" description | grep -qF coddy:start; }
@@ -95,9 +96,8 @@ for b in context simplest review security; do
   t 0 "agent $b has a tools line" hastools "$here/agents/$b.md"
   t 1 "agent $b lists no Write, Edit, NotebookEdit or Agent" lists "$here/agents/$b.md" 'Write|Edit|NotebookEdit|Agent|Task'
 done
-for b in context simplest; do t 1 "agent $b lists no Bash" lists "$here/agents/$b.md" Bash; done
 # and exactly these, so no other tool (an MCP write, a list form the checks above cannot read) slips in
-for bt in 'context:Read, Grep, Glob' 'simplest:Read, Grep, Glob, Skill' 'review:Read, Grep, Glob, Bash, Skill' 'security:Read, Grep, Glob, Bash, Skill'; do
+for bt in 'context:Read, Grep, Glob, Bash' 'simplest:Read, Grep, Glob, Bash, Skill' 'review:Read, Grep, Glob, Bash, Skill' 'security:Read, Grep, Glob, Bash, Skill'; do
   t 0 "agent ${bt%%:*} lists exactly ${bt#*:}" test "$(key "$here/agents/${bt%%:*}.md" tools)" = "${bt#*:}"
 done
 for b in implement harden; do t 1 "agent $b has no tools line, so it inherits every tool" hastools "$here/agents/$b.md"; done
