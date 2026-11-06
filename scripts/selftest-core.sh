@@ -939,6 +939,14 @@ t 1 "githook: under .git/hooks, its coddy directory gets no pass-through" test -
 cp "$tmp/prev/pre-commit" .git/hooks/pre-commit
 PREV_EXIT=1 t 1 "githook: and then .git/hooks/ runs after coddy's check" git -C .worktrees/1 commit -q --allow-empty -m x
 rm .git/hooks/pre-commit
+# A coddy hook is never handed off to: a copy of it in .git/hooks, or another
+# repository's coddy hooks directory as the previous path, would exec itself.
+cp "$hooks/pre-commit" .git/hooks/pre-commit
+t 0 "githook: a copy of coddy's pre-commit in .git/hooks is not run again" timeout 20 git -C .worktrees/1 commit -q --allow-empty -m x
+rm .git/hooks/pre-commit
+cp -R "$hooks" "$tmp/otherhooks"; git config --local coddy.previousHooksPath "$tmp/otherhooks"
+t 0 "githook: another repository's coddy hooks directory as the previous path is not run" timeout 20 git -C .worktrees/1 commit -q --allow-empty -m x
+git config --local --unset coddy.previousHooksPath; rm -rf "$tmp/otherhooks"
 # On a case-insensitive file system PRE-COMMIT is pre-commit: a pass-through by
 # that name would replace coddy's own. Either way coddy's stays.
 printf '#!/bin/sh\nexit 0\n' > .git/hooks/PRE-COMMIT; chmod +x .git/hooks/PRE-COMMIT; run start 1 feat/1-thing >/dev/null 2>&1
