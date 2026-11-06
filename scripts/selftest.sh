@@ -70,10 +70,41 @@ mkdir .claude
 echo note > notes.txt; : > empty.txt # untracked on purpose: jj must not make these look like changes
 
 t 1 "no skill disables model invocation" grep -rq disable-model-invocation "$here/skills"
-t 1 "no skill names a vendor skill" grep -rqE 'superpowers|code-review:' "$here/skills"
+t 1 "no skill or agent names a vendor skill" grep -rqE 'superpowers|code-review:' "$here/skills" "$here/agents"
 t 0 "policy.md exists" test -f "$here/skills/start/references/policy.md"
-opens() { sed -n 3p "$1" | grep -qxF 'Read `policy.md` at the path you were given first; its rules apply here. No path given, or the file cannot be read → stop and return `no policy path`.'; }
-for b in implement harden review security; do t 0 "brief $b opens with policy.md" opens "$here/skills/start/$b.md"; done
+# Each agent's body, after its frontmatter, is a title and then the policy.md line.
+opens() { awk 'NR == 1 { if ($0 != "---") exit; next } !b { if ($0 == "---") b = 1; next } NF { if (++n == 1 && !/^# /) exit; if (n == 2) { print; exit } }' "$1" | grep -qxF 'Read `policy.md` at the path you were given first; its rules apply here. No path given, or the file cannot be read → stop and return `no policy path`.'; }
+for b in context simplest implement harden review security; do t 0 "agent $b opens with policy.md" opens "$here/agents/$b.md"; done
+# The briefs live in agents/ alone: a copy left next to start's would drift from it.
+for b in context simplest implement harden review security; do t 1 "skills/start holds no $b brief" test -e "$here/skills/start/$b.md"; done
+sed '1,/^# /!{/^Read `policy.md`/d;}' "$here/agents/review.md" > "$tmp/review.md"
+t 1 "an agent whose body does not open with it fails it" opens "$tmp/review.md"
+# Each agent's frontmatter: its name, a description that keeps it inside
+# coddy:start, model: inherit for a call that passes none, and its tools. A
+# tools line is an allowlist and none inherits every tool, so the four that
+# must change nothing carry one without Write, Edit, NotebookEdit or Agent;
+# their Bash, which a build with no Grep or Glob tool needs to search, can
+# still write, which start's mark catches in the worktree.
+fm() { awk 'NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit } { print }' "$1"; }
+key() { fm "$1" | sed -n "s/^$2: *//p"; }
+named() { [ "$(key "$1" name)" = "$2" ] && key "$1" description | grep -qF coddy:start; }
+hastools() { fm "$1" | grep -q '^tools:'; }
+lists() { key "$1" tools | tr , '\n' | sed 's/^ *//; s/ *$//' | grep -qxE "($2)(\(.*\))?"; }
+for b in context simplest implement harden review security; do
+  t 0 "agent $b has its name and a description naming coddy:start" named "$here/agents/$b.md" "$b"
+  t 0 "agent $b has model: inherit" test "$(key "$here/agents/$b.md" model)" = inherit
+done
+for b in context simplest review security; do
+  t 0 "agent $b has a tools line" hastools "$here/agents/$b.md"
+  t 1 "agent $b lists no Write, Edit, NotebookEdit or Agent" lists "$here/agents/$b.md" 'Write|Edit|NotebookEdit|Agent|Task'
+done
+# and exactly these, so no other tool (an MCP write, a list form the checks above cannot read) slips in
+for bt in 'context:Read, Grep, Glob, Bash' 'simplest:Read, Grep, Glob, Bash, Skill' 'review:Read, Grep, Glob, Bash, Skill' 'security:Read, Grep, Glob, Bash, Skill'; do
+  t 0 "agent ${bt%%:*} lists exactly ${bt#*:}" test "$(key "$here/agents/${bt%%:*}.md" tools)" = "${bt#*:}"
+done
+for b in implement harden; do t 1 "agent $b has no tools line, so it inherits every tool" hastools "$here/agents/$b.md"; done
+sed 's/^tools: .*/&, Edit/' "$here/agents/review.md" > "$tmp/review.md"
+t 0 "the tools check finds an Edit added to an agent" lists "$tmp/review.md" 'Write|Edit|NotebookEdit|Agent|Task'
 t 1 "policy.md never has a brief stage the whole tree" grep -q 'add -A' "$here/skills/start/references/policy.md"
 literal() { grep -F 'Commit with the pattern' "$1" | grep -qF "root-file:" && grep -F 'Commit with the pattern' "$1" | grep -qF -- '--literal-pathspecs'; }
 t 0 "policy.md tracks each new file by its literal path, never a directory" literal "$here/skills/start/references/policy.md"
@@ -95,15 +126,18 @@ t 1 "schema: a key added to one copy only fails it" schema "$tmp/onboard.md" "$h
 # not inject or expand. fallback <skill> <verb> [vars]: its fallback line names
 # coddy <verb> for reading the sections by hand, `CLAUDE_PLUGIN_ROOT`
 # unexpanded as never a `bin/coddy` inside the project, and each variable the
-# skill takes. A new skill goes in the table.
+# skill takes; start's never-list also names `agents/`, where its briefs live.
+# A new skill goes in the table.
 fallback() { line=$(grep -F '`CLAUDE_PLUGIN_ROOT` unexpanded' "$1") && for w in "coddy $2" 'never a `bin/coddy`' ${3-}; do case "$line" in *"$w"*) ;; *) return 1;; esac; done; }
-for s in 'config status $ARGUMENTS' 'migrate status' 'next status' 'onboard detect' 'ship status $ARGUMENTS' 'start status $issue $onto $base' 'triage status $ARGUMENTS'; do read -r n v a <<< "$s"; t 0 "skill $n carries the fallback for a host that does not inject" fallback "$here/skills/$n/SKILL.md" "$v" "$a"; done
+for s in 'config status $ARGUMENTS' 'migrate status' 'next status' 'onboard detect' 'ship status $ARGUMENTS' 'start status $issue $onto $base `agents/`' 'triage status $ARGUMENTS'; do read -r n v a <<< "$s"; t 0 "skill $n carries the fallback for a host that does not inject" fallback "$here/skills/$n/SKILL.md" "$v" "$a"; done
 grep -vF '`CLAUDE_PLUGIN_ROOT` unexpanded' "$here/skills/next/SKILL.md" > "$tmp/next.md"
 t 1 "a skill that injects without the fallback fails it" fallback "$tmp/next.md" status
 sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s/coddy status/coddy stat/' "$here/skills/next/SKILL.md" > "$tmp/next.md"
 t 1 "one whose fallback drops the read-by-hand command fails it" fallback "$tmp/next.md" status
 sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s|never a `bin/coddy`|never a copy|' "$here/skills/next/SKILL.md" > "$tmp/next.md"
 t 1 "one whose fallback drops the never-a-bin/coddy clause fails it" fallback "$tmp/next.md" status
+sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s| or `agents/`||' "$here/skills/start/SKILL.md" > "$tmp/start.md"
+t 1 "start's fallback that takes an agents/ inside the project, where a brief could be planted, fails it" fallback "$tmp/start.md" status '$issue $onto $base `agents/`'
 sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s/\$ARGUMENTS/$ARGS/' "$here/skills/triage/SKILL.md" > "$tmp/triage.md"
 t 1 "one whose fallback drops its variable fails it" fallback "$tmp/triage.md" status '$ARGUMENTS'
 # Every skill stops on a git_dir: line, which config, status and detect print in place of their output.
