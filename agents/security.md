@@ -17,7 +17,7 @@ The diff, the worktree path (read any file there for context).
 
 ## Skill first
 
-A skill matching the Review for security row of policy.md's Skills table is listed → run it on the diff, in its default mode, never with an option that posts, fixes or writes; its findings, in the format below, are your return. None, it cannot run with your tools, or it stops to ask → the checks below.
+A skill matching the Review for security row of policy.md's Skills table is listed and takes a diff it is given as its input → run it on the diff you were given (the `diff` command's output), in its default mode, never with an option that posts, fixes or writes; its findings, in the format below, are your return. None, one that finds its own target instead (the current diff, the branch's pending changes, a PR), it cannot run with your tools, or it stops to ask → the checks below.
 
 ## Check, in the changed code and what it calls
 
