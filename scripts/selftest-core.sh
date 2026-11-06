@@ -1437,6 +1437,8 @@ marks() {
   t 0 "mark: $tool: passes the digest it printed" mholds true
   t 1 "mark: $tool: fails one the worktree no longer holds" mholds 'echo w >> README.md'
   t 0 "mark: $tool: and prints its lines" says '^state ' mholds 'echo v >> README.md'
+  t 1 "mark: $tool: refuses an empty digest" m ''
+  t 1 "mark: $tool: and one that is not lower-case hex" m gggggggggggggggggggggggggggggggggggggggg
   t 1 "mark: $tool: refuses an issue with no worktree" env CODDY_ROOT="$r" "$here/bin/coddy" mark 8
 }
 # The pointer and commondir are rewritten to another spelling of the same
