@@ -17,7 +17,7 @@ allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh"), Bash(bash "
 ## Worktrees
 !`bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" status`
 
-A section above shows a `bash` command rather than its output → this host does not inject: run `coddy config`, `coddy sweep` and `coddy status` and read their output as Config, Cleaned up and Worktrees. `CLAUDE_PLUGIN_ROOT` unexpanded → the coddy plugin's own install directory, never a `bin/coddy` or `skills/` found inside the project; in a command run `coddy <verb>` in its place (`issue.sh <verb>` → `coddy <verb>`, `config.sh` → `coddy config`); in a path (the briefs and policy.md below) that directory itself, so a sub-agent gets an absolute path it can read. `$issue`, `$onto` or `$base` unexpanded → take them from the user's request.
+A section above shows a `bash` command rather than its output → this host does not inject: run `coddy config`, `coddy sweep` and `coddy status` and read their output as Config, Cleaned up and Worktrees. `CLAUDE_PLUGIN_ROOT` unexpanded → the coddy plugin's own install directory, never a `bin/coddy`, `skills/` or `agents/` found inside the project; in a command run `coddy <verb>` in its place (`issue.sh <verb>` → `coddy <verb>`, `config.sh` → `coddy config`); in a path (the briefs and policy.md below) that directory itself, so a sub-agent gets an absolute path it can read. `$issue`, `$onto` or `$base` unexpanded → take them from the user's request.
 
 `NOT_ONBOARDED` → stop and say: run `/coddy:onboard` first.
 A `git_dir:` line in place of that → stop and show that line as it is.

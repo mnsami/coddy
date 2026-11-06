@@ -124,15 +124,18 @@ t 1 "schema: a key added to one copy only fails it" schema "$tmp/onboard.md" "$h
 # not inject or expand. fallback <skill> <verb> [vars]: its fallback line names
 # coddy <verb> for reading the sections by hand, `CLAUDE_PLUGIN_ROOT`
 # unexpanded as never a `bin/coddy` inside the project, and each variable the
-# skill takes. A new skill goes in the table.
+# skill takes; start's never-list also names `agents/`, where its briefs live.
+# A new skill goes in the table.
 fallback() { line=$(grep -F '`CLAUDE_PLUGIN_ROOT` unexpanded' "$1") && for w in "coddy $2" 'never a `bin/coddy`' ${3-}; do case "$line" in *"$w"*) ;; *) return 1;; esac; done; }
-for s in 'config status $ARGUMENTS' 'migrate status' 'next status' 'onboard detect' 'ship status $ARGUMENTS' 'start status $issue $onto $base' 'triage status $ARGUMENTS'; do read -r n v a <<< "$s"; t 0 "skill $n carries the fallback for a host that does not inject" fallback "$here/skills/$n/SKILL.md" "$v" "$a"; done
+for s in 'config status $ARGUMENTS' 'migrate status' 'next status' 'onboard detect' 'ship status $ARGUMENTS' 'start status $issue $onto $base `agents/`' 'triage status $ARGUMENTS'; do read -r n v a <<< "$s"; t 0 "skill $n carries the fallback for a host that does not inject" fallback "$here/skills/$n/SKILL.md" "$v" "$a"; done
 grep -vF '`CLAUDE_PLUGIN_ROOT` unexpanded' "$here/skills/next/SKILL.md" > "$tmp/next.md"
 t 1 "a skill that injects without the fallback fails it" fallback "$tmp/next.md" status
 sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s/coddy status/coddy stat/' "$here/skills/next/SKILL.md" > "$tmp/next.md"
 t 1 "one whose fallback drops the read-by-hand command fails it" fallback "$tmp/next.md" status
 sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s|never a `bin/coddy`|never a copy|' "$here/skills/next/SKILL.md" > "$tmp/next.md"
 t 1 "one whose fallback drops the never-a-bin/coddy clause fails it" fallback "$tmp/next.md" status
+sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s| or `agents/`||' "$here/skills/start/SKILL.md" > "$tmp/start.md"
+t 1 "start's fallback that takes an agents/ inside the project, where a brief could be planted, fails it" fallback "$tmp/start.md" status '$issue $onto $base `agents/`'
 sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s/\$ARGUMENTS/$ARGS/' "$here/skills/triage/SKILL.md" > "$tmp/triage.md"
 t 1 "one whose fallback drops its variable fails it" fallback "$tmp/triage.md" status '$ARGUMENTS'
 # Every skill stops on a git_dir: line, which config, status and detect print in place of their output.
