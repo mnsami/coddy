@@ -1439,6 +1439,10 @@ marks() {
   t 0 "mark: $tool: and prints its lines" says '^state ' mholds 'echo v >> README.md'
   t 1 "mark: $tool: refuses an empty digest" m ''
   t 1 "mark: $tool: and one that is not lower-case hex" m gggggggggggggggggggggggggggggggggggggggg
+  # A FIFO git or jj opens as an ignore or attributes file would hang it.
+  for p in .worktrees/7/.gitignore .git/info/attributes; do
+    mkfifo "$r/$p"; t 1 "mark: $tool: refuses a FIFO at $p, promptly" timeout 10 env CODDY_ROOT="$r" "$here/bin/coddy" mark 7; rm -f "$r/$p"
+  done
   t 1 "mark: $tool: refuses an issue with no worktree" env CODDY_ROOT="$r" "$here/bin/coddy" mark 8
 }
 # The pointer and commondir are rewritten to another spelling of the same

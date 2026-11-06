@@ -2299,14 +2299,17 @@ $bad" ;;
     # snapshots it, as any jj call does) unless its size and mtime stay, so
     # each tracked file's ctime and inode, hashed, too. Then each untracked
     # file with its content's hash and an x when it is executable, and the
-    # issue's state, base and branch records. Only a plain file is read (a
-    # FIFO would hang it): any other hashes as -. Given a digest, it exits 1
-    # when this one differs.
+    # issue's state, base and branch records. Only a plain file is read: any
+    # other hashes as -. Given a digest, it exits 1 when this one differs.
     [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
     if [ $# -ge 3 ]; then
       case "$3" in *[!0123456789abcdef]*) n=0 ;; *) n=${#3} ;; esac
       [ "$n" = 40 ] || [ "$n" = 64 ] || die "a digest is 40 or 64 lower-case hex digits, got $(q "$3")"
     fi
+    # git and jj open an ignore or attributes file, and would wait on a FIFO for good.
+    p=$(cd "$wt" && find . -path ./.jj -prune -o -type p -print -quit 2>/dev/null); [ -z "$p" ] || p="$wt/${p#./}"
+    [ -n "$p" ] || p=$(find -L .git/info -type p -print -quit 2>/dev/null)
+    [ -z "$p" ] || die "$(q "$p") is a FIFO, which git or jj would wait on for good: remove it by hand"
     hof() { if [ -f "$1" ]; then git hash-object --no-filters -- "$1"; else echo -; fi; }
     o=$(
       if [ "$tool" = jj ]; then
