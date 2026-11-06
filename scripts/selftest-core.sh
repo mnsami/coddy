@@ -1083,6 +1083,10 @@ t 0 "tripwire: and it is back" test "$(git config core.hooksPath)" = "$hooks"
 report "tripwire: core.hooksPath unset trips" 'git config --unset core.hooksPath'
 t 0 "tripwire: saying it is unset" grep -qF "core.hooksPath is now unset" <<<"$out"
 tripped 0 "tripwire: and only once" 'true'
+# git sets no bound on the value: a long one is named cut short, within the budget.
+report "tripwire: a 100 KB core.hooksPath trips" 'git config core.hooksPath "/$(head -c 100000 /dev/zero | tr "\0" a)"'
+t 0 "tripwire: naming it cut short" grep -qF "core.hooksPath is now '/aaaa" <<<"$out"
+t 0 "tripwire: and saying so" grep -qF "aaa' (cut short), not coddy's hooks directory" <<<"$out"
 mv "$hooks" "$tmp/hooks.aside"
 tripped 0 "tripwire: without .git/hooks/coddy, a core.hooksPath change is quiet" 'git config core.hooksPath .husky/_'
 mv "$tmp/hooks.aside" "$hooks"; git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
