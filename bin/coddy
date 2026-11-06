@@ -9,7 +9,7 @@
 #   coddy verify <issue>            run the config's verify command in the issue's worktree, passing its exit code through
 #   coddy diff   <issue>            the worktree's diff against its base (default_branch on the remote, or the stacked issue's branch)
 #   coddy log    <issue> <path>...  the last 15 commits on the paths, on the issue's base
-#   coddy mark   <issue>            a fingerprint of the issue's worktree and its state file, for start to compare around a read-only agent
+#   coddy mark   <issue> [digest]   a fingerprint of the issue's worktree and its records under .git/coddy, its digest first; given one, exit 1 when it differs
 #   coddy sweep                     remove what issues with a merged PR left behind
 #   coddy status                    the root, the config path and the claimed worktrees, for the prompts
 #   coddy config | detect           the config, or NOT_ONBOARDED; facts about the project for onboarding
@@ -1284,6 +1284,14 @@ out() {
 # Under nowt (trip, an admin file that is no plain file) git lists no
 # worktree: each admin dir, globbed as admin globs them, whose id snap did
 # not record is named made by that dir's path, and no file in it is read.
+# stat's flavour in sf, each file's size, ctime, inode, a colon and its
+# name: by what it prints, not its exit, since GNU's stat takes -f for a
+# flag and stats %Fc too, which a file of that name in the root lets pass.
+sflav() {
+  if [[ $(stat -L -f %Fc / 2>/dev/null) =~ ^[0-9]+\.[0-9]+$ ]]; then sf=(-f '%z %Fc %i:%N')
+  elif [[ $(stat -L -c %.9Z / 2>/dev/null) =~ ^[0-9]+\.[0-9]+$ ]]; then sf=(-c '%s %.9Z %i:%n')
+  else sf=(-c '%s %Z %i:%n'); fi
+}
 snap() {
   cd "$root" 2>/dev/null || return 0
   git merge-base --is-ancestor "refs/heads/$b" "refs/remotes/origin/$b" 2>/dev/null ||
@@ -1334,11 +1342,7 @@ snap() {
   done < <(git status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null)
   { echo "$dp" >&5; } 2>/dev/null
   [ "$((n + nn))" -gt 0 ] || return 0
-  # By what it prints, not its exit: GNU's stat takes -f for a flag and
-  # stats %Fc too, which a file of that name in the root lets pass.
-  if [[ $(stat -L -f %Fc / 2>/dev/null) =~ ^[0-9]+\.[0-9]+$ ]]; then sf=(-f '%z %Fc %i:%N')
-  elif [[ $(stat -L -c %.9Z / 2>/dev/null) =~ ^[0-9]+\.[0-9]+$ ]]; then sf=(-c '%s %.9Z %i:%n')
-  else sf=(-c '%s %Z %i:%n'); fi
+  sflav
   k=0 small=() tot=0 l=""
   for p in ${files[@]+"${files[@]}"}; do
     [ -n "$l" ] || IFS= read -r l <&7 || l=:
@@ -2287,24 +2291,41 @@ $bad" ;;
     exit $? ;;
 
   mark)
-    # What start compares around an agent that must change nothing: git's
-    # HEAD and the hashes of its staged and unstaged diffs, or jj's @ and its
-    # parents, which a change to a tracked file moves (jj snapshots it, as any
-    # jj call does); then each untracked file with its content's hash and an x
-    # when it is executable, and the state file's. Only a plain file is read
-    # (a FIFO would hang it): any other hashes as -.
+    # What start compares around an agent that must change nothing, by its
+    # digest alone, printed first: git's HEAD, the branch it is on, the
+    # hashes of its staged and unstaged diffs, the worktree's .git pointer and
+    # its admin dir's commondir, which every git call here goes through; or
+    # jj's @ and its parents, which a change to a tracked file moves (jj
+    # snapshots it, as any jj call does) unless its size and mtime stay, so
+    # each tracked file's ctime and inode, hashed, too. Then each untracked
+    # file with its content's hash and an x when it is executable, and the
+    # issue's state, base and branch records. Only a plain file is read (a
+    # FIFO would hang it): any other hashes as -. Given a digest, it exits 1
+    # when this one differs.
     [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
-    if [ "$tool" = jj ]; then
-      jjn log --no-graph -r @ -T '"commit " ++ commit_id ++ "\n" ++ parents.map(|p| "parent " ++ p.commit_id() ++ "\n").join("")' || die "jj log failed in $wt"
-    else
-      dh() { set -o pipefail; git -C "$wt" diff --binary --no-ext-diff --no-textconv "$@" | git hash-object --stdin; }
-      h=$(git -C "$wt" rev-parse HEAD) && s=$(dh --cached) && u=$(dh) || die "git failed in $wt"
-      printf 'head %s\nstaged %s\nunstaged %s\n' "$h" "$s" "$u"
-    fi
     hof() { if [ -f "$1" ]; then git hash-object --no-filters -- "$1"; else echo -; fi; }
-    l=$(set -o pipefail; untracked | while IFS= read -r -d '' u; do echo "untracked $(q "$u") $(hof "$wt/$u")$([ -x "$wt/$u" ] && echo ' x')"; done) || die "could not list the untracked files in $wt"
-    [ -z "$l" ] || printf '%s\n' "$l"
-    f=".git/coddy/$issue/state"; if [ -e "$f" ]; then echo "state $(hof "$f")"; else echo "state none"; fi
+    o=$(
+      if [ "$tool" = jj ]; then
+        jjn log --no-graph -r @ -T '"commit " ++ commit_id ++ "\n" ++ parents.map(|p| "parent " ++ p.commit_id() ++ "\n").join("")' || die "jj log failed in $wt"
+        # a file stat cannot read (outside the sparse patterns) prints no line, as on every run
+        sflav; t=$(set -o pipefail; jjn --ignore-working-copy file list -r @ -T 'path ++ "\0"' |
+          { cd "$wt" && LC_ALL=C xargs -0 stat "${sf[@]}" -- 2>/dev/null; :; } | git hash-object --stdin) || die "could not list the tracked files in $wt"
+        echo "tracked $t"
+      else
+        dh() { set -o pipefail; git -C "$wt" diff --binary --no-ext-diff --no-textconv "$@" | git hash-object --stdin; }
+        h=$(git -C "$wt" rev-parse HEAD) && s=$(dh --cached) && u=$(dh) && g=$(git -C "$wt" rev-parse --absolute-git-dir) || die "git failed in $wt"
+        r=$(git -C "$wt" symbolic-ref -q HEAD) || r=detached
+        printf 'head %s\nref %s\nstaged %s\nunstaged %s\npointer %s\ncommondir %s\n' "$h" "$(q "$r")" "$s" "$u" "$(hof "$wt/.git")" "$(hof "$g/commondir")"
+      fi
+      l=$(set -o pipefail; untracked | while IFS= read -r -d '' u; do echo "untracked $(q "$u") $(hof "$wt/$u")$([ -x "$wt/$u" ] && echo ' x')"; done) || die "could not list the untracked files in $wt"
+      [ -z "$l" ] || printf '%s\n' "$l"
+      for f in "state:$issue/state" "base:$issue.base" "branch:$issue.branch"; do
+        p=".git/coddy/${f#*:}"; if [ -e "$p" ]; then echo "${f%%:*} $(hof "$p")"; else echo "${f%%:*} none"; fi
+      done
+    ) || exit
+    d=$(printf '%s\n' "$o" | git hash-object --stdin) || die "could not hash the fingerprint of $wt"
+    printf 'digest: %s\n%s\n' "$d" "$o"
+    [ -z "${3-}" ] || [ "$3" = "$d" ] || die "the worktree of issue $issue or its records changed since the digest given"
     exit 0 ;;
 
   state)
@@ -2335,5 +2356,5 @@ $bad" ;;
         { grep -v "^$k=" "$f" 2>/dev/null; printf '%s=%s\n' "$k" "$v"; } > "$f.tmp" && mv "$f.tmp" "$f" || die "could not write $f"
       fi
     done ;;
-  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] [-- <path>...] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | mark <issue> | sweep | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard | githook pre-commit|pre-push" ;;
+  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] [-- <path>...] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | mark <issue> [digest] | sweep | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard | githook pre-commit|pre-push" ;;
 esac
