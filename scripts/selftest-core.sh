@@ -1070,6 +1070,37 @@ mv .coddy.yml "$tmp/aside"
 t 0 "githook: not onboarded, pre-commit passes" "$hooks/pre-commit"
 t 0 "githook: and pre-push" pp
 mv "$tmp/aside" .coddy.yml
+# A hook manager's install re-points core.hooksPath (husky's prepare, on every
+# npm install): the tripwire reports it once, in words of its own, and start
+# putting it back is quiet. Without coddy's hooks there is nothing to report.
+report "tripwire: core.hooksPath re-pointed off coddy's hooks trips" 'git config core.hooksPath .husky/_'
+t 0 "tripwire: naming the value and that the hooks are off" grep -qF "core.hooksPath is now '.husky/_', not coddy's hooks directory, so coddy's git hooks are off" <<<"$out"
+t 0 "tripwire: and /coddy:start" grep -qF "/coddy:start <issue> puts them back" <<<"$out"
+t 1 "tripwire: not an undo" grep -qF "Undo it" <<<"$out"
+tripped 0 "tripwire: the next command does not trip on it again" 'true'
+tripped 0 "tripwire: start putting core.hooksPath back is quiet" 'run start 1 feat/1-thing'
+t 0 "tripwire: and it is back" test "$(git config core.hooksPath)" = "$hooks"
+report "tripwire: core.hooksPath unset trips" 'git config --unset core.hooksPath'
+t 0 "tripwire: saying it is unset" grep -qF "core.hooksPath is now unset" <<<"$out"
+tripped 0 "tripwire: and only once" 'true'
+# git sets no bound on the value: a long one is named cut short, within the budget.
+report "tripwire: a 100 KB core.hooksPath trips" 'git config core.hooksPath "/$(head -c 100000 /dev/zero | tr "\0" a)"'
+t 0 "tripwire: naming it cut short" grep -qF "core.hooksPath is now '/aaaa" <<<"$out"
+t 0 "tripwire: and saying so" grep -qF "aaa' (cut short), not coddy's hooks directory" <<<"$out"
+mv "$hooks" "$tmp/hooks.aside"
+tripped 0 "tripwire: without .git/hooks/coddy, a core.hooksPath change is quiet" 'git config core.hooksPath .husky/_'
+mv "$tmp/hooks.aside" "$hooks"; git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
+t 0 "tripwire: start put them back" test "$(git config core.hooksPath)" = "$hooks"
+# A moved checkout's core.hooksPath names coddy's hooks by the old path: start
+# keeps the record of the one before rather than taking that one for it.
+mv1="$tmp/mv1" mv2="$tmp/mv2"
+git init -q --bare "$tmp/mvo.git"; git clone -q "$tmp/mvo.git" "$mv1" 2>/dev/null
+(cd "$mv1" && git checkout -q -b main && echo hi > README.md && git add -A && git commit -q -m init && git push -q -u origin main && cp "$repo/.coddy.yml" . && git config core.hooksPath .husky/_)
+CODDY_ROOT="$mv1" run start 3 feat/3-mv >/dev/null 2>&1
+t 0 "moved checkout: start records the hook manager's core.hooksPath" test "$(git -C "$mv1" config --local coddy.previousHooksPath)" = .husky/_
+mv "$mv1" "$mv2"; CODDY_ROOT="$mv2" run start 4 feat/4-mv >/dev/null 2>&1
+t 0 "moved checkout: start points core.hooksPath at the new path" test "$(git -C "$mv2" config core.hooksPath)" = "$mv2/.git/hooks/coddy"
+t 0 "moved checkout: and keeps that record, not the old path" test "$(git -C "$mv2" config --local coddy.previousHooksPath)" = .husky/_
 
 # get.sh installs main from CODDY_REPO_URL into CODDY_HOME and links coddy
 # into CODDY_BIN, run as curl pipes it (the script on stdin), with no network.

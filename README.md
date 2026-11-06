@@ -267,7 +267,9 @@ and how to turn the hooks off. Their ceilings:
 - jj runs no git hooks. The tripwire's push check reads a `jj git push`
   before it runs.
 - A tool that sets `core.hooksPath` itself, such as a hook manager's
-  install, turns them off until the next `/coddy:start`.
+  install, turns them off until the next `/coddy:start`. husky's `prepare`
+  script does it on every `npm install` or `npm ci`, in a worktree too. The
+  tripwire reports it once, and `coddy doctor`'s `hooks` line shows it.
 - A tool that installs into git's hooks directory (lefthook,
   `git lfs install`, simple-git-hooks) writes into `.git/hooks/coddy/` once
   `/coddy:start` has run, and can replace coddy's own. `/coddy:start` then
