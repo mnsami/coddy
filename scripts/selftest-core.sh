@@ -1075,7 +1075,8 @@ mv "$tmp/aside" .coddy.yml
 # putting it back is quiet. Without coddy's hooks there is nothing to report.
 report "tripwire: core.hooksPath re-pointed off coddy's hooks trips" 'git config core.hooksPath .husky/_'
 t 0 "tripwire: naming the value and that the hooks are off" grep -qF "core.hooksPath is now '.husky/_', not coddy's hooks directory, so coddy's git hooks are off" <<<"$out"
-t 0 "tripwire: and /coddy:start, not an undo" sh -c 'grep -q "/coddy:start <issue> puts them back" <<<"$1" && ! grep -q "Undo it" <<<"$1"' _ "$out"
+t 0 "tripwire: and /coddy:start" grep -qF "/coddy:start <issue> puts them back" <<<"$out"
+t 1 "tripwire: not an undo" grep -qF "Undo it" <<<"$out"
 tripped 0 "tripwire: the next command does not trip on it again" 'true'
 tripped 0 "tripwire: start putting core.hooksPath back is quiet" 'run start 1 feat/1-thing'
 t 0 "tripwire: and it is back" test "$(git config core.hooksPath)" = "$hooks"
