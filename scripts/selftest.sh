@@ -75,6 +75,8 @@ t 0 "policy.md exists" test -f "$here/skills/start/references/policy.md"
 # Each agent's body, after its frontmatter, is a title and then the policy.md line.
 opens() { awk 'NR == 1 { if ($0 != "---") exit; next } !b { if ($0 == "---") b = 1; next } NF { if (++n == 1 && !/^# /) exit; if (n == 2) { print; exit } }' "$1" | grep -qxF 'Read `policy.md` at the path you were given first; its rules apply here. No path given, or the file cannot be read → stop and return `no policy path`.'; }
 for b in context simplest implement harden review security; do t 0 "agent $b opens with policy.md" opens "$here/agents/$b.md"; done
+# The briefs live in agents/ alone: a copy left next to start's would drift from it.
+for b in context simplest implement harden review security; do t 1 "skills/start holds no $b brief" test -e "$here/skills/start/$b.md"; done
 sed '1,/^# /!{/^Read `policy.md`/d;}' "$here/agents/review.md" > "$tmp/review.md"
 t 1 "an agent whose body does not open with it fails it" opens "$tmp/review.md"
 # Each agent's frontmatter: its name, a description that keeps it inside
