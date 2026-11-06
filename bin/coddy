@@ -1688,8 +1688,9 @@ if [ "${1-}" = githook ]; then
   # .git/hooks, a sandbox keeps it out of an agent's reach, since git runs
   # hooks outside the sandbox. .git/coddy is only data here.
   p=$(git config --file "$root/.git/config" coddy.previousHooksPath); p="${p:-$root/.git/hooks}/$h"
-  # Never this hook again: a previous path that is another spelling of it would loop.
-  { [ -x "$p" ] && [ ! "$p" -ef "$root/.git/hooks/coddy/$h" ]; } || exit 0
+  # Never a hook coddy start wrote: a copy of coddy's own in .git/hooks, or another
+  # repository's .git/hooks/coddy as the previous path, would exec itself forever.
+  { [ -f "$p" ] && [ -x "$p" ] && ! head -c 4096 "$p" | grep -q '^# Written by coddy start: '; } || exit 0
   # It is the project's own, and gets PATH as git gave the hook (CODDY_PATH),
   # in-repository entries and all, which coddy's own lookups went without.
   [ -z "${CODDY_PATH+x}" ] || { PATH=$CODDY_PATH; unset CODDY_PATH; }
