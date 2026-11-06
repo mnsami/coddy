@@ -1872,6 +1872,14 @@ untracked() {
 }
 record() { mkdir -p .git/coddy && echo "$branch" > "$rec" || die "could not record the branch"; }
 has() { [ -n "$(jj log --no-graph -r "$1" -T '"x"' 2>/dev/null)" ]; } # a jj revset matches
+# from: the stacked base diff, log and mark measure from, while its branch
+# still resolves (a merged base is removed by sweep); else empty, for
+# default_branch on the remote.
+stacked() {
+  from=$(cat ".git/coddy/$issue.base" 2>/dev/null)
+  [ -n "$from" ] || return 0
+  if [ "$tool" = jj ]; then has "\"$from\"" || from=""; else git rev-parse -q --verify "refs/heads/$from" >/dev/null || from=""; fi
+}
 # The config's verify command, run in the worktree; its exit code is the result.
 verify() {
   [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
@@ -2273,12 +2281,7 @@ $bad" ;;
 
   diff|log)
     [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
-    # The stacked base, while its branch still resolves (a merged base is
-    # removed by sweep); else default_branch on the remote.
-    from=$(cat ".git/coddy/$issue.base" 2>/dev/null)
-    if [ -n "$from" ]; then
-      if [ "$tool" = jj ]; then has "\"$from\"" || from=""; else git rev-parse -q --verify "refs/heads/$from" >/dev/null || from=""; fi
-    fi
+    stacked
     if [ "$cmd" = log ]; then
       shift 2; git log --oneline -15 "${from:-origin/$base}" -- "$@"; exit $?
     fi
@@ -2299,10 +2302,11 @@ $bad" ;;
     # parents, which a change to a tracked file moves (jj snapshots it, as any
     # jj call does) unless its size and mtime stay. Under either, each
     # tracked file's size, ctime and inode, hashed, so a rewritten object
-    # hides no edit either. Then each untracked file with its content's hash
-    # and an x when it is executable, and the issue's state, base and branch
-    # records. Only a plain file is read: any other hashes as -. Given a
-    # digest, it exits 1 when this one differs.
+    # hides no edit either, and the commit diff measures from. Then each
+    # untracked file with its content's hash and an x when it is executable,
+    # and the issue's state, base and branch records. Only a plain file is
+    # read: any other hashes as -. Given a digest, it exits 1 when this one
+    # differs.
     [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
     if [ $# -ge 3 ]; then
       case "$3" in *[!0123456789abcdef]*) n=0 ;; *) n=${#3} ;; esac
@@ -2328,6 +2332,15 @@ $bad" ;;
         r=$(git -C "$wt" symbolic-ref -q HEAD) || r=detached
         printf 'head %s\nref %s\nstaged %s\nunstaged %s\nindex %s\ntracked %s\npointer %s\ncommondir %s\n' "$h" "$(q "$r")" "$s" "$u" "$i" "$t" "$(hof "$wt/.git")" "$(hof "$g/commondir")"
       fi
+      # resolved as diff resolves it, so a moved base, which would empty every later diff, moves it
+      stacked
+      if [ "$tool" = jj ]; then
+        if [ -n "$from" ]; then from="\"$from\""; else from="$base@origin"; fi
+        b=$(jjn log --no-graph -r "$from" -T 'commit_id ++ " "' 2>/dev/null) && b=${b% } || b=-
+      else
+        b=$(git -C "$wt" rev-parse -q --verify "${from:-origin/$base}^{commit}") || b=-
+      fi
+      echo "from ${b:--}"
       l=$(set -o pipefail; untracked | while IFS= read -r -d '' u; do echo "untracked $(q "$u") $(hof "$wt/$u")$([ -x "$wt/$u" ] && echo ' x')"; done) || die "could not list the untracked files in $wt"
       [ -z "$l" ] || printf '%s\n' "$l"
       for f in "state:$issue/state" "base:$issue.base" "branch:$issue.branch"; do

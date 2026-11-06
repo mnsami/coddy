@@ -1455,9 +1455,15 @@ marks git 'git add new.txt' 'git commit -qam c' \
   'a detach at the same commit:git checkout -q --detach' \
   "a .git pointer rewrite:printf 'gitdir: %s/.\n' \"\$(sed -n 's/^gitdir: //p' .git)\" > \"\$tmp/p\" && cat \"\$tmp/p\" > .git" \
   "a commondir rewrite:echo ../../. > '$tmp/mark-git/.git/worktrees/7/commondir'" \
-  'a tracked edit whose blob is rewritten in place:echo s >> new.txt && o=$(git rev-parse :new.txt) && n=$(git hash-object -w new.txt) && d=$tmp/mark-git/.git/objects && rm -f "$d/${o:0:2}/${o:2}" && cp "$d/${n:0:2}/${n:2}" "$d/${o:0:2}/${o:2}"'
+  'a tracked edit whose blob is rewritten in place:echo s >> new.txt && o=$(git rev-parse :new.txt) && n=$(git hash-object -w new.txt) && d=$tmp/mark-git/.git/objects && rm -f "$d/${o:0:2}/${o:2}" && cp "$d/${n:0:2}/${n:2}" "$d/${o:0:2}/${o:2}"' \
+  'a move of the stacked base:git update-ref refs/heads/main HEAD' \
+  'the removal of the base record:rm "$tmp/mark-git/.git/coddy/7.base"' \
+  'a move of default_branch on the remote:git update-ref refs/remotes/origin/main HEAD'
 # jj judges a tracked file by its size and mtime, so the same size with the mtime put back moves no @.
 if command -v jj >/dev/null; then marks jj "jj file track 'root-file:\"new.txt\"'" 'JJ_USER=t JJ_EMAIL=t@t jj commit -m c' \
-  'a same-size rewrite with its mtime put back:touch -r README.md "$tmp/ref" && tr y z < README.md > "$tmp/rw" && cat "$tmp/rw" > README.md && touch -r "$tmp/ref" README.md'; fi
+  'a same-size rewrite with its mtime put back:touch -r README.md "$tmp/ref" && tr y z < README.md > "$tmp/rw" && cat "$tmp/rw" > README.md && touch -r "$tmp/ref" README.md' \
+  'a move of the stacked base:jj bookmark set main -r @-' \
+  'the removal of the base record:rm "$tmp/mark-jj/.git/coddy/7.base"' \
+  'a move of default_branch on the remote:git -C "$tmp/mark-jj" update-ref refs/remotes/origin/main "$(jj log --no-graph -r @- -T commit_id)"'; fi
 
 exit $fail
