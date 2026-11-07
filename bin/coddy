@@ -1655,12 +1655,16 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # removed it, or made it. No snapshot, or one missing a path's record, or
   # the copy a file's record promises, is one the command touched, and then
   # what it did cannot be checked: rejected. Not onboarded then: quiet, the
-  # command that wrote the config included. The live config as snap saw it
-  # is the first path recorded as a file, and only it has a copy: the
-  # legacy file next to a live .coddy.yml has its kind alone.
+  # command that wrote the config included. snap writes that marker alone,
+  # so a marker with any record beside it is one the command rewrote:
+  # rejected too, the config left as the command left it. The records are
+  # globbed by name, opened by none, and found whatever nullglob says. The
+  # live config as snap saw it is the first path recorded as a file, and
+  # only it has a copy: the legacy file next to a live .coddy.yml has its
+  # kind alone.
   lost="that command left no snapshot of the main checkout at $file, so what it changed cannot be checked: a command may not touch the snapshot. Undo what it did."
   [ -f "$file" ] || die "$lost"
-  grep -qx NOT_ONBOARDED "$file" && { rm -f "$file" "$file".*; exit 0; }
+  grep -qx NOT_ONBOARDED "$file" && { for r in "$file".*; do { [ -e "$r" ] || [ -L "$r" ]; } && die "$lost"; done; rm -f "$file" "$file".*; exit 0; }
   common
   pre=""
   for c in .coddy.yml "$legacy"; do

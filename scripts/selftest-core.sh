@@ -528,6 +528,8 @@ t 0 "snapshot: and the report names it" grep -q "$snapfile" <<<"$out"
 tripped 2 "snapshot: so does one that removes it with the config, .git/coddy left behind" 'rm -f "$snapfile" .coddy.yml'
 git checkout -q -- .coddy.yml
 tripped 2 "snapshot: so does one that removes its copy of the config" 'rm -f "$snapfile".*'
+tripped 2 "snapshot: so does one that rewrites it as not onboarded, its records left, and removes the config" 'echo NOT_ONBOARDED > "$snapfile" && rm .coddy.yml'
+git checkout -q -- .coddy.yml
 # Each path's kind is recorded, present or not, so a lost copy is not read
 # as a path that was absent: a weakened legacy file planted next to the live
 # .coddy.yml is let go, and a command that then removed .coddy.yml with its
