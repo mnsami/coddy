@@ -1141,8 +1141,13 @@ t 0 "removed config: naming the claim" says 'yet .git/coddy/1 is there' guard "$
 t 2 "removed config: and for snap" wire snap w
 t 1 "removed config: and for githook" run githook pre-commit
 mv .git/coddy/1 "$tmp/lock-aside"
-t 0 "removed config: a branch record alone is no leftover: guard is inert" quiet guard "$repo/README.md"
+# What a project left by hand keeps (a .branch or .base record, swept/, a dot name) is no leftover.
+sw=; [ -e .git/coddy/swept ] || [ -L .git/coddy/swept ] || { sw=1; mkdir .git/coddy/swept; }
+: > .git/coddy/zz.base; : > .git/coddy/.zz.tmp
+t 0 "removed config: a branch or base record, swept/ or a dot name is no leftover: guard is inert" quiet guard "$repo/README.md"
 wire snap w; t 0 "removed config: and snap writes the not-onboarded snapshot" grep -qx NOT_ONBOARDED "$snapfile"; wire trip w
+t 0 "removed config: and githook hands off" run githook pre-commit
+rm .git/coddy/zz.base .git/coddy/.zz.tmp; [ -z "$sw" ] || rmdir .git/coddy/swept
 mv "$tmp/hooks-aside" "$hooks"
 t 2 "removed config: the git hooks directory alone is enough for guard" guard "$repo/README.md"
 t 2 "removed config: and for snap" wire snap w
