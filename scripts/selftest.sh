@@ -523,13 +523,90 @@ rm -r .git/coddy/66
 hook() { local v=$1 p=$2; shift 2; eval "set -- \"\$@\" $(jq -r --arg v "$v" --arg r "$here" 'first(.hooks[][].hooks[] | select(.args | index($v))) | [.command] + .args | map(split("${CLAUDE_PLUGIN_ROOT}") | join($r)) | @sh' "$here/hooks/hooks.json")"; printf %s "$p" | env CLAUDE_PROJECT_DIR="$repo" "$@"; }
 t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u FUNCNEST -u POSIXLY_CORRECT -u POSIX_PEDANTIC -u OSTYPE /bin/sh and the launcher" jq -e '[.hooks[][].hooks[]] | all(.command == "/usr/bin/env" and .args[:14] == ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "POSIX_PEDANTIC", "-u", "OSTYPE", "/bin/sh", "${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh"])' "$here/hooks/hooks.json"
 t 0 "hooks: the launcher is executable" test -x "$here/scripts/hook.sh"
-# On startup and resume alone: a /clear or compact in a session still running
-# an install an update replaced would point the launcher back at it.
-t 0 "hooks: SessionStart runs link with the plugin's data dir, on startup and resume alone" jq -e '.hooks.SessionStart | length == 1 and .[0].matcher == "startup|resume" and .[0].hooks[0].args[-3:] == ["${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh", "link", "${CLAUDE_PLUGIN_DATA}"]' "$here/hooks/hooks.json"
-# guard and snap block on a failure, a timeout or a hook that cannot start
-# included (Claude Code 2.1.295 or later); trip and link set neither.
-t 0 "hooks: guard and snap block on a failure, with a 10 s and a 60 s timeout" jq -e '[.hooks.PreToolUse[].hooks[] | [.args[-1], .onFailure, .timeout]] == [["guard", "block", 10], ["snap", "block", 60]]' "$here/hooks/hooks.json"
-t 0 "hooks: trip and link set no onFailure or timeout" jq -e '[.hooks.SessionStart, .hooks.PostToolUse, .hooks.PostToolUseFailure | .[].hooks[]] | length == 3 and all(has("onFailure") or has("timeout") | not)' "$here/hooks/hooks.json"
+# The whole hooks/hooks.json table, in one equality: event, matcher, type, the
+# verb and its args after the script path, onFailure and timeout. The launcher
+# prefix is asserted above, so a change to it touches that line alone.
+hookwant='[
+ {"e":"SessionStart","m":"startup|resume","t":"command","a":["link","${CLAUDE_PLUGIN_DATA}"],"f":null,"o":null},
+ {"e":"PreToolUse","m":"Edit|Write|NotebookEdit","t":"command","a":["guard"],"f":"block","o":10},
+ {"e":"PreToolUse","m":"Bash","t":"command","a":["snap"],"f":"block","o":60},
+ {"e":"PostToolUse","m":"Bash","t":"command","a":["trip"],"f":null,"o":null},
+ {"e":"PostToolUseFailure","m":"Bash","t":"command","a":["trip"],"f":null,"o":null}]'
+hooktable() { jq -e --argjson w "$hookwant" '[.hooks | to_entries[] | .key as $e | .value[] | .matcher as $m | .hooks[] | {e:$e,m:$m,t:.type,a:((.args | map(endswith("/scripts/hook.sh")) | index(true)) as $i | .args[$i+1:]),f:.onFailure,o:.timeout}] | sort_by(tojson) == ($w | sort_by(tojson))' "$1"; }
+t 0 "hooks: the table is the five entries, with their matchers, verbs, onFailure and timeouts" hooktable "$here/hooks/hooks.json"
+hmut() { jq "$1" "$here/hooks/hooks.json" > "$tmp/hooks.json"; hooktable "$tmp/hooks.json"; }
+t 1 "hooks: a guard matcher shrunk to Edit fails the table" hmut '.hooks.PreToolUse[0].matcher = "Edit"'
+t 1 "hooks: PostToolUseFailure's trip pointed at a nonexistent verb fails it" hmut '.hooks.PostToolUseFailure[0].hooks[0].args[-1] = "nope"'
+t 1 "hooks: both trip entries pointed at one verb fail it" hmut '.hooks.PostToolUse[0].hooks[0].args[-1] = "guard" | .hooks.PostToolUseFailure[0].hooks[0].args[-1] = "guard"'
+t 1 "hooks: PostToolUseFailure removed fails it" hmut 'del(.hooks.PostToolUseFailure)'
+t 1 "hooks: an extra hook entry fails it" hmut '.hooks.PostToolUse += [.hooks.PostToolUse[0]]'
+t 1 "hooks: an extra event fails it" hmut '.hooks.Stop = .hooks.PostToolUse'
+# PostToolUseFailure is the entry a failing command fires, and hook() runs the
+# first trip, PostToolUse's: run this one too, with its payload shape.
+failtrip() { eval "set -- $(jq -r --arg r "$here" '.hooks.PostToolUseFailure[0].hooks[0] | [.command] + .args | map(split("${CLAUDE_PLUGIN_ROOT}") | join($r)) | @sh' "$here/hooks/hooks.json")"; printf '{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_use_id":"w","error":"Exit code 1"}' | env CLAUDE_PROJECT_DIR="$repo" "$@"; }
+wire snap w; echo x > stray.txt; t 2 "hooks: the PostToolUseFailure entry trips on a stray file" failtrip; rm stray.txt
+# Every skill's allowed-tools and body agree, both ways: each injected script
+# and issue.sh verb a body calls has a rule that glob-matches it (a trailing :*
+# read as " *", as Claude Code does), each rule is used by its own body, and
+# each MCP tool a body names in backticks, of those any skill allows, is in its
+# own allowed-tools. take and drop are prompt-gated: no rule may pre-approve
+# them, and a body may call them without one. MCP names drifting upstream is
+# not checked here.
+rules() { sed -n 's/^allowed-tools: //p' "$1" | tr ',' '\n' | sed 's/^ *//;s/ *$//'; }
+mirror() {
+  local f body at all r p c short bad=0
+  all=$(for f in "$1"/*/SKILL.md; do rules "$f"; done | sed -n 's/^mcp__.*__//p' | sort -u)
+  for f in "$1"/*/SKILL.md; do
+    body=$(awk '/^---$/{n++;next} n>=2' "$f"); at=$(rules "$f")
+    while IFS= read -r c; do
+      case $c in *'issue.sh" take'*|*'issue.sh" drop'*) continue ;; esac
+      ok=1
+      while IFS= read -r r; do
+        case $r in Bash\(*\)) p=${r#Bash(}; p=${p%)}; case $p in *:\*) p="${p%:\*} *" ;; esac; [[ $c == $p ]] && ok=0 ;; esac
+      done <<< "$at"
+      [ $ok = 0 ] || { echo "$f: no rule for: $c" >&2; bad=1; }
+    done <<< "$(printf '%s\n' "$body" | grep -o 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/[a-z]*\.sh"[^`]*')"
+    while IFS= read -r r; do
+      case $r in mcp__*) p=${r##*__} ;; Bash\(*\)) p=${r#Bash(}; p=${p%)}; p=${p%:\*}; p=${p% \*} ;; *) p=$r ;; esac
+      printf '%s\n' "$body" | grep -qF -- "$p" || { echo "$f: unused rule: $r" >&2; bad=1; }
+    done <<< "$at"
+    while IFS= read -r short; do
+      [ -n "$short" ] || continue
+      ! printf '%s\n' "$body" | grep -qF "\`$short\`" || printf '%s\n' "$at" | grep -q "__$short\$" || { echo "$f: $short is not allowed" >&2; bad=1; }
+    done <<< "$all"
+  done
+  return $bad
+}
+gated() {
+  local f r p c
+  for f in "$1"/*/SKILL.md; do
+    while IFS= read -r r; do
+      [ "$r" != Bash ] || return 1
+      case $r in Bash\(*\)) p=${r#Bash(}; p=${p%)}; case $p in *:\*) p="${p%:\*} *" ;; esac ;; *) continue ;; esac
+      for c in 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" take 7' 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" drop 7 --force' 'coddy take 7' 'coddy drop 7 --force'; do
+        [[ $c == $p ]] && return 1
+      done
+    done <<< "$(rules "$f")"
+  done
+  return 0
+}
+sk() { rm -rf "$tmp/sk"; cp -R "$here/skills" "$tmp/sk"; }
+skadd() { sk; printf '%s\n' "$2" >> "$tmp/sk/$1/SKILL.md"; "${@:3}" "$tmp/sk"; }
+skrule() { sk; sed "s|^allowed-tools: .*|&, $2|" "$here/skills/$1/SKILL.md" > "$tmp/sk/$1/SKILL.md"; "${@:3}" "$tmp/sk"; }
+R='bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh"'
+t 0 "skills: every body and allowed-tools agree, both ways" mirror "$here/skills"
+t 0 "skills: no rule pre-approves take or drop" gated "$here/skills"
+t 1 "skills: an issue.sh verb called without its rule fails" skadd next "\`$R frobnicate\`" mirror
+t 1 "skills: an injected script without its rule fails" skadd next "\`bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/detect.sh\"\`" mirror
+t 1 "skills: a rule no body uses fails" skrule next "Bash($R frobnicate *)" mirror
+t 1 "skills: an MCP tool named in backticks without its entry fails" skadd next '`create_pull_request`' mirror
+t 0 "skills: a body calling take or drop without a rule passes" skadd next "\`$R take 7\` and \`$R drop 7 --force\`" mirror
+t 1 "skills: a take rule fails" skrule next "Bash($R take *)" gated
+t 1 "skills: a take rule written with :* fails" skrule next "Bash($R take:*)" gated
+t 1 "skills: a drop rule fails" skrule next "Bash($R drop 7 --force)" gated
+t 1 "skills: a rule broader than take and drop fails" skrule next "Bash($R *)" gated
+t 1 "skills: a coddy rule covering them fails" skrule next "Bash(coddy *)" gated
+t 1 "skills: a bare Bash fails" skrule next "Bash" gated
 # A hook blocks only on exit 2, so the shim makes every other exit of guard
 # or snap a 2 with a message, a core it cannot read included, and a coddy
 # crash blocks the call; trip keeps its own.
