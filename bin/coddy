@@ -1269,13 +1269,17 @@ gitwts() {
   [ -z "$p" ] || printf '%s\n\0' "$p"
 }
 # A jj workspace listing that failed failed for real: a jj repository is
-# here (.jj/repo) and the jj on PATH names a workspace's root (0.38 on).
-# No jj, an empty .jj or an older jj lists no workspace, as it always has.
-# Its version is read outside the repository: a repo config a command broke
-# fails jj there, --version included.
+# here (.jj/repo) and a jj is on PATH, unless that jj reports a version
+# before 0.38, which names no workspace's root. No jj on PATH, an empty .jj
+# or an older jj lists no workspace, as it always has; a jj whose version
+# cannot be read (a broken user config, a binary mid-upgrade) is broken, not
+# absent. Its version is read outside the repository: a repo config a
+# command broke fails jj there, --version included.
 jjfailed() {
-  local re='^jj ([0-9]{1,6})\.([0-9]{1,6})'
-  [ -e .jj/repo ] && [[ $(cd / && jj --version 2>/dev/null) =~ $re ]] && { [ "${BASH_REMATCH[1]}" != 0 ] || [ "${BASH_REMATCH[2]}" -ge 38 ]; }
+  local re='^jj ([0-9]{1,6})\.([0-9]{1,6})' v
+  [ -e .jj/repo ] && command -v jj >/dev/null || return 1
+  v=$(cd / && jj --version 2>/dev/null) && [[ $v =~ $re ]] || return 0
+  [ "${BASH_REMATCH[1]}" != 0 ] || [ "${BASH_REMATCH[2]}" -ge 38 ]
 }
 # ins, for inproj: the root, where the call began and every worktree of the
 # repository, git's and, under worktree: jj, jj's (listed as snap lists

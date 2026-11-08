@@ -497,15 +497,22 @@ rm -r .git/worktrees
 # git status, git worktree list and, in a jj repository with a jj that names
 # a workspace's root, jj workspace list. A failed listing read as an empty
 # one would hide the command's change, or name a worktree there before as
-# made. No jj, an empty .jj or a jj before 0.38 lists no workspace, as it
-# always has.
-mkdir "$tmp/fsrc" "$tmp/jjnew" "$tmp/jjold" "$tmp/nojj"
+# made. No jj on PATH, an empty .jj or a jj before 0.38 lists no workspace,
+# as it always has; a jj whose version cannot be read is broken, not absent.
+mkdir "$tmp/fsrc" "$tmp/jjnew" "$tmp/jjold" "$tmp/jjdead"
 printf '#!/bin/sh\ncase " $* " in *" ${FAIL:?} "*) exit 128 ;; esac\nexec "%s" "$@"\n' "$(command -v git)" > "$tmp/fsrc/git"
 printf '#!/bin/sh\n[ "$1" != --version ] || { echo "jj 0.46.0"; exit 0; }\nexit 1\n' > "$tmp/jjnew/jj"
 printf '#!/bin/sh\n[ "$1" != --version ] || { echo "jj 0.37.0"; exit 0; }\nexit 1\n' > "$tmp/jjold/jj"
-printf '#!/bin/sh\nexit 127\n' > "$tmp/nojj/jj"; chmod +x "$tmp/fsrc/git" "$tmp/jjnew/jj" "$tmp/jjold/jj" "$tmp/nojj/jj"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/jjdead/jj"; chmod +x "$tmp/fsrc/git" "$tmp/jjnew/jj" "$tmp/jjold/jj" "$tmp/jjdead/jj"
 # A repo config jj cannot read fails it inside the repository, --version included.
-mkdir "$tmp/jjbad"; printf '#!/bin/sh\n[ "$1" != --version ] || [ -e .jj/repo ] || { echo "jj 0.46.0"; exit 0; }\nexit 1\n' > "$tmp/jjbad/jj"; chmod +x "$tmp/jjbad/jj"
+mkdir "$tmp/jjbad" "$tmp/jjbadold"; printf '#!/bin/sh\n[ "$1" != --version ] || [ -e .jj/repo ] || { echo "jj 0.46.0"; exit 0; }\nexit 1\n' > "$tmp/jjbad/jj"
+sed 's/0\.46/0.37/' "$tmp/jjbad/jj" > "$tmp/jjbadold/jj"; chmod +x "$tmp/jjbad/jj" "$tmp/jjbadold/jj"
+# A PATH with no jj on it: each entry holding one stands in a copy of its links but jj.
+nojp="" i=0; IFS=: read -ra ds <<<"$PATH"
+for d in "${ds[@]}"; do
+  [ ! -e "$d/jj" ] || { i=$((i+1)); mkdir -p "$tmp/nojj/$i"; ln -s "$d"/* "$tmp/nojj/$i/"; rm "$tmp/nojj/$i/jj"; d=$tmp/nojj/$i; }
+  nojp+=${nojp:+:}$d
+done
 # unchecked <source> <the call, as named> <stub dir> [stub dir for a snap that works]:
 # the source failing at snap and trip, twice, then at trip alone
 unchecked() {
@@ -523,10 +530,12 @@ unchecked() {
 }
 FAIL=status unchecked "git status" "git status" "$tmp/fsrc"
 FAIL='worktree list' unchecked "git worktree list" "git worktree list" "$tmp/fsrc"
-mkdir -p .jj/repo; unchecked "jj workspace list in a jj repository" "jj workspace list" "$tmp/jjnew" "$tmp/nojj"
-unchecked "jj workspace list on a repo config jj cannot read" "jj workspace list" "$tmp/jjbad" "$tmp/nojj"
+mkdir -p .jj/repo; unchecked "jj workspace list in a jj repository" "jj workspace list" "$tmp/jjnew" "$tmp/jjold"
+unchecked "jj workspace list on a repo config jj cannot read" "jj workspace list" "$tmp/jjbad" "$tmp/jjold"
+unchecked "jj workspace list with a jj whose version cannot be read" "jj workspace list" "$tmp/jjdead" "$tmp/jjold"
 PATH="$tmp/jjold:$PATH" tripped 0 "unchecked: a jj before 0.38 failing lists no workspace, as before" 'true'
-PATH="$tmp/nojj:$PATH" tripped 0 "unchecked: no jj lists no workspace, as before" 'true'
+PATH="$tmp/jjbadold:$PATH" tripped 0 "unchecked: so does one on a repo config it cannot read, its version read outside the repository" 'true'
+PATH=$nojp t 0 "unchecked: no jj on PATH in a jj repository is refused, as before" says 'no jj is on PATH outside the project' wire snap w
 rmdir .jj/repo; PATH="$tmp/jjnew:$PATH" tripped 0 "unchecked: an empty .jj lists no workspace, as before" 'true'
 rmdir .jj
 # A root with no .git (a plain jj root) has no git to fail: git status and
@@ -568,7 +577,7 @@ t 1 "unchecked: and its snapshot is checked" grep -q '^unchecked' "$snapfile"
 SECONDS=0; PATH="$tmp/fsmon:$PATH" wire trip w; r=$?
 t 0 "unchecked: and trip, quiet, within seconds too" test "$r:$((SECONDS <= 8))" = 0:1
 while read -r p; do kill "$p" 2>/dev/null; done < "$tmp/fsmon/pids"; rm -r "$tmp/fsmon"
-rm -r "$tmp/fsrc" "$tmp/nosort" "$tmp/jjnew" "$tmp/jjold" "$tmp/nojj" "$tmp/jjbad"
+rm -rf "$tmp/fsrc" "$tmp/nosort" "$tmp/jjnew" "$tmp/jjold" "$tmp/jjdead" "$tmp/nojj" "$tmp/jjbad" "$tmp/jjbadold"
 # A file git cannot read in its place is a change like any other.
 report "config: an unreadable file in its place trips" 'echo "guard: warn" > .coddy.yml && chmod 000 .coddy.yml'
 t 0 "config: and is restored" same .coddy.yml
@@ -1190,6 +1199,12 @@ PATH="$tmp/nowtl:$PATH" CODDY_ROOT="$tmp/w" t 0 "and one where the call began, w
 sed 's/) exit 0 ;;/) exit 128 ;;/' "$tmp/nowtl/git" > "$tmp/nowtl/g2"; mv "$tmp/nowtl/g2" "$tmp/nowtl/git"; chmod +x "$tmp/nowtl/git"
 PATH="$tmp/nowtl:$PATH" t 1 "start refuses when git worktree list fails" run start 1 feat/1-thing
 PATH="$tmp/nowtl:$PATH" t 0 "saying it cannot tell where the coddy path lies" says 'git worktree list failed, so start cannot tell whether .* lies in a worktree of the repository' run start 1 feat/1-thing
+# So does jj's, under worktree: jj in a jj repository, with a jj that names a workspace's root.
+mkdir "$tmp/jjwl"; printf '#!/bin/sh\n[ "$1" != --version ] || { echo "jj 0.46.0"; exit 0; }\nexit 1\n' > "$tmp/jjwl/jj"; chmod +x "$tmp/jjwl/jj"
+cp .coddy.yml "$tmp/wc.yml"; { echo 'worktree: jj'; grep -v '^worktree:' "$tmp/wc.yml"; } > .coddy.yml; mkdir -p .jj/repo
+PATH="$tmp/jjwl:$PATH" t 1 "start refuses when jj workspace list fails under worktree: jj" run start 1 feat/1-thing
+PATH="$tmp/jjwl:$PATH" t 0 "saying it cannot tell where the coddy path lies" says 'jj workspace list failed, so start cannot tell whether .* lies in a worktree of the repository' run start 1 feat/1-thing
+cp "$tmp/wc.yml" .coddy.yml; rm -r .jj
 t 0 "having written nothing" test "$(cksum "$hooks"/*; git config --local --list)" = "$sums"
 "$g" worktree remove --force "$tmp/w"
 rm -r "${repo:?}/bin" "$repo/plant" "$repo/lnk" "$tmp/inlink" "$tmp/chain" "$tmp/dirchain"
@@ -1455,6 +1470,8 @@ inhook() { cp .git/hooks/coddy/pre-commit "$tmp/pc"; mkdir bin; cp "$here/bin/co
 prob "a hook running a coddy in the project" "^hooks: pre-commit runs .*/bin/coddy, which lies in the project or a worktree of it, or is reached through a link there $term" inhook 'cp "$tmp/pc" .git/hooks/coddy/pre-commit; rm -r bin'
 PATH="$tmp/nowtl:$PATH" t 0 "doctor: git worktree list failing" dsays '^hooks: git worktree list failed, so whether pre-commit runs a file in a worktree of the project cannot be told (fix: '
 PATH="$tmp/nowtl:$PATH" t 1 "doctor: git worktree list failing exits 1" dd doctor
+PATH="$tmp/jjwl:$PATH" prob "jj workspace list failing under worktree: jj" '^hooks: jj workspace list failed, so whether pre-commit runs a file in a worktree of the project cannot be told (fix: repair what makes jj workspace list fail here)$' 'sed -i.bak "s/^worktree:.*/worktree: jj/" .coddy.yml; rm .coddy.yml.bak; mkdir -p .jj/repo' 'cp "$tmp/dp.yml" .coddy.yml; rm -r .jj'
+rm -r "$tmp/jjwl"
 prob "a hook git would skip" '^hooks: pre-push is not executable' 'chmod -x .git/hooks/coddy/pre-push' 'chmod +x .git/hooks/coddy/pre-push'
 prob "hooks not installed" '^hooks: core.hooksPath is not set.*(fix: /coddy:start <issue>)' 'git config --unset core.hooksPath' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
 prob "PR check missing" '^pr_check: .*is missing or not a plain file (fix: copy ' 'rm .github/workflows/coddy.yml' 'cp "$here/templates/coddy.yml" .github/workflows/coddy.yml'

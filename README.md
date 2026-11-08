@@ -228,7 +228,8 @@ the command that moves or deletes a worktree there trips once. When
 every shell command is refused until you remove the ones no worktree uses
 (`git worktree prune` drops those whose worktree is gone).
 A `git status` or `git worktree list` where the root holds a `.git`, or, in
-a jj repository with jj 0.38 or later, a `jj workspace list`, that fails,
+a jj repository with a jj on `PATH` that does not report a version before
+0.38, a `jj workspace list`, that fails,
 before the command or after it, is
 never read as an empty listing, and neither is a fingerprint that fails on
 its own: the command is reported as unchecked, naming the call that failed.
