@@ -559,7 +559,7 @@ mirror() {
   for f in "$1"/*/SKILL.md; do
     body=$(awk '/^---$/{n++;next} n>=2' "$f"); at=$(rules "$f")
     while IFS= read -r c; do
-      case $c in *'issue.sh" take'*|*'issue.sh" drop'*) continue ;; esac
+      case $c in ''|*'issue.sh" take'*|*'issue.sh" drop'*) continue ;; esac
       ok=1
       while IFS= read -r r; do
         case $r in Bash\(*\)) p=${r#Bash(}; p=${p%)}; case $p in *:\*) p="${p%:\*} *" ;; esac; [[ $c == $p ]] && ok=0 ;; esac
