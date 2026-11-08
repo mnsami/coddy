@@ -146,6 +146,9 @@ t 2 "trip without a snapshot trips before onboarding too: snap writes one before
 # trip with it: the snapshot's name must not depend on jq.
 PATH="$tmp/nojq" wire snap w; t 0 "before onboarding: snap without jq and trip with it name the same snapshot" wire trip w
 tripped 0 "before onboarding: a shell write to the main checkout is quiet" 'echo x > stray.txt'; rm stray.txt
+# BASHOPTS is readonly in bash, so env hands it on: nullglob must not read
+# an empty glob of the marker's records as some.
+wire snap w; t 0 "before onboarding: trip is quiet with nullglob inherited" env BASHOPTS=nullglob "$here/bin/coddy" trip <<<'{"tool_use_id":"w"}'
 t 1 "before onboarding: snap made nothing under .git" test -e .git/coddy
 
 tripped 0 "onboarding: the command that writes the config is let through" 'printf "tracker: github\nworktree: git\ndefault_branch: main\nverify: test -f ok.txt\n" > .claude/coddy.yml'
@@ -528,8 +531,12 @@ t 0 "snapshot: and the report names it" grep -q "$snapfile" <<<"$out"
 tripped 2 "snapshot: so does one that removes it with the config, .git/coddy left behind" 'rm -f "$snapfile" .coddy.yml'
 git checkout -q -- .coddy.yml
 tripped 2 "snapshot: so does one that removes its copy of the config" 'rm -f "$snapfile".*'
-tripped 2 "snapshot: so does one that rewrites it as not onboarded, its records left, and removes the config" 'echo NOT_ONBOARDED > "$snapfile" && rm .coddy.yml'
+report "snapshot: so does one that rewrites it as not onboarded, its records left, and removes the config" 'echo NOT_ONBOARDED > "$snapfile" && rm .coddy.yml'
+t 0 "snapshot: and the report names it" grep -q "$snapfile" <<<"$out"
 git checkout -q -- .coddy.yml
+tripped 2 "snapshot: so does one that rewrites it as not onboarded alone, the config untouched" 'echo NOT_ONBOARDED > "$snapfile"'
+wire snap w; echo NOT_ONBOARDED > "$snapfile"
+t 2 "snapshot: and so with nullglob inherited" env BASHOPTS=nullglob "$here/bin/coddy" trip <<<'{"tool_use_id":"w"}'
 # Each path's kind is recorded, present or not, so a lost copy is not read
 # as a path that was absent: a weakened legacy file planted next to the live
 # .coddy.yml is let go, and a command that then removed .coddy.yml with its
