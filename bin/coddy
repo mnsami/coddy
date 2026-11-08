@@ -30,10 +30,10 @@
 # hooks start writes run (this file without it); CODDY_PATH, set by those
 # hooks alone: the PATH git gave them, which githook hands the hook before,
 # its own PATH having lost every entry that is relative or in the repository;
-# CODDY_HOOKS, set by an adapter whose agent runs snap before each shell
-# command to what would keep it from running there: start and claim then
-# print hooks: off and it when snap left no mark for CODDY_SESSION in the
-# last 60 s (none without it).
+# CODDY_HOOKS, set to 1 by an adapter whose agent runs snap before each
+# shell command (any other value is none): start and claim then print
+# hooks: off, with Claude Code's causes, when snap left no mark for
+# CODDY_SESSION in the last 60 s.
 # The config is .coddy.yml at the root, or .claude/coddy.yml from before.
 # An issue counts as In Progress once the lock .git/coddy/<issue>/ exists.
 # Only claim makes it (mkdir, so of two sessions claiming at once one wins;
@@ -495,21 +495,22 @@ owner() { own=$(cat "$root/.git/coddy/$1/owner" 2>/dev/null); read -r sid pid _ 
 # never lands in the third field.
 myline() { local l; l=$(lstarted "${CODDY_PID-}"); echo "$me ${CODDY_PID-} $l${l:+ $(started "${CODDY_PID-}")}"; }
 # The mark snap leaves at each run for session $1, which start and claim
-# read (hookson): the id kept to A-Za-z0-9_- and 128 characters, dot-named
-# so it is never read as an issue's record; status 1 when nothing is kept.
+# read (hookson): a directory, the id kept to A-Za-z0-9_- and 128
+# characters, dot-named so it is never read as an issue's record; status 1
+# when nothing is kept.
 smark() { local s=${1//[!A-Za-z0-9_-]/}; s=${s:0:128}; [ -n "$s" ] && echo "$root/.git/coddy/.snap-$s"; }
 # For an adapter whose agent runs snap before each shell command
-# (CODDY_HOOKS), one hooks: off line, with what it names, when snap left no
-# mark for this session in the last 60 s: the shell command running this
-# one went past no coddy hook. Its mtime by BSD's stat or GNU's (by what it
-# prints).
+# (CODDY_HOOKS=1), one hooks: off line, with Claude Code's causes, when snap
+# left no mark for this session in the last 60 s: the shell command running
+# this one went past no coddy hook. Its mtime by BSD's stat or GNU's (by
+# what it prints).
 hookson() {
   local m t n
-  [ -n "${CODDY_HOOKS-}" ] && [ -d "$root/.git" ] && m=$(smark "${CODDY_SESSION-}") || return 0
+  [ "${CODDY_HOOKS-}" = 1 ] && [ -d "$root/.git" ] && m=$(smark "${CODDY_SESSION-}") || return 0
   t=$(stat -f %m -- "$m" 2>/dev/null); [[ $t =~ ^[0-9]+$ ]] || t=$(stat -c %Y -- "$m" 2>/dev/null)
   n=$(date +%s 2>/dev/null)
   [[ $t =~ ^[0-9]+$ && $n =~ ^[0-9]+$ ]] && [ "$((n - t))" -le 60 ] && return 0
-  echo "hooks: off: no coddy shell hook ran before this command in this session, so the edit guard, the shell tripwire and the config lock are likely off for it too. $CODDY_HOOKS"
+  echo "hooks: off: no coddy shell hook ran before this command in this session, so the edit guard, the shell tripwire and the config lock are likely off for it too. Likely causes: disableAllHooks set in a settings file or passed with --settings; managed settings with allowManagedHooksOnly whose enabledPlugins does not force-enable coddy@coddy; a Claude Code older than 2.1.139, which cannot run coddy's hooks."
 }
 # jq for the hooks: HOME=/dev/null, so a ~/.jq (loaded into every program)
 # is never read. Not named jq, so command -v jq still finds the real one.
@@ -1621,11 +1622,14 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # keeps its id from reuse (KILL, once TERM ended the job but not a member
   # that ignores it). The launch's stderr goes nowhere: under set -m the
   # child may report a setpgid it lost to the parent's; the fingerprint's
-  # data is on its other fds.
+  # data is on its other fds. When snap names a directory in pd, the marks
+  # there over a day old go first, in the same group and budget, so a
+  # directory a command filled cannot hold snap past it.
   lj() { [[ $'\n'$(jobs -rp)$'\n' == *$'\n'"$j"$'\n'* ]]; }
   fp() {
     local j i s
-    { set -m; { snap | LC_ALL=C sort -u > "$1"; } & j=$!; set +m; } 2>/dev/null
+    { set -m; { [ -z "$pd" ] || find "$pd" -maxdepth 1 -name '.snap-*' -mmin +1440 -exec rm -df {} + >/dev/null 2>&1
+      snap | LC_ALL=C sort -u > "$1"; } & j=$!; set +m; } 2>/dev/null
     while lj; do
       if [ "$SECONDS" -ge "$fpb" ]; then
         for s in TERM KILL; do
@@ -1692,7 +1696,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     done < <(grep -xE 'unchecked (stat|status|list|jj|fp)' "$1")
     [ -n "$w" ] && echo "$w"
   }
-  seen="" nowt="" vf=/dev/null gd=""
+  seen="" nowt="" vf=/dev/null gd="" pd=""
   case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
   file="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
   # Both config paths are kept, present or not: a .coddy.yml the command
@@ -1727,13 +1731,18 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     homes || { code=2; die "$hm"; }
     tools || { code=2; die "$hm"; }
     # This session's mark (smark) for start and claim, which read it from a
-    # shell command whatever its TMPDIR (a sandbox's differs): made anew
-    # each run (set -C), never through a link planted at its name; a
-    # session's first prunes those over a day old.
+    # shell command whatever its TMPDIR (a sandbox's differs): a directory
+    # made anew each run by mkdir, which neither follows nor waits on a
+    # link or FIFO planted at its name, and none when .git/coddy is a link
+    # or no directory; a session's first has fp prune those over a day old
+    # (pd).
     ss=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
     if [ -d "$root/.git" ] && m=$(smark "$ss"); then
-      { [ -e "$m" ] || [ -L "$m" ] || find "$root/.git/coddy" -maxdepth 1 -name '.snap-*' -mmin +1440 -exec rm -f {} +
-        rm -f "$m"; mkdir -p "$root/.git/coddy" && : > "$m"; } 2>/dev/null
+      { [ -e "${m%/*}" ] || [ -L "${m%/*}" ] || mkdir "${m%/*}"
+        if [ -d "${m%/*}" ] && [ ! -L "${m%/*}" ]; then
+          [ -e "$m" ] || [ -L "$m" ] || pd=${m%/*}
+          rm -df "$m"; mkdir "$m"
+        fi; } 2>/dev/null
     fi
     common
     admin || { code=2; die "$st"; }

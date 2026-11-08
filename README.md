@@ -271,7 +271,8 @@ Claude is told to have you check it. Its ceilings:
 - A shell write of `permissions.allow` is not seen, an `Edit` allow rule
   there included.
 - `~/.claude/settings.json`, managed settings and a worktree's own
-  `.claude/settings*.json` are not compared.
+  `.claude/settings*.json` are not compared, nor a subdirectory's, which
+  a session opened in that subdirectory loads.
 - `hooks: off` reads the session's own mark alone, so a session with its
   hooks off is caught only when it runs `/coddy:start` itself, and a shell
   command can make that mark: it is a check, not a guardrail.

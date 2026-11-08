@@ -2026,7 +2026,7 @@ wire snap w; t 0 "hook: a cd out of the project is not a change" away wire trip 
 # hsnap <session> [TMPDIR]: snap, as Claude Code runs it for that session
 hsnap() { printf '{"session_id":"%s","tool_use_id":"w"}' "$1" | TMPDIR=${2:-${TMPDIR:-/tmp}} run snap >/dev/null 2>&1; }
 off() { says '^hooks: off: .*disableAllHooks.*allowManagedHooksOnly.*coddy@coddy.*2\.1\.139' "$@"; }
-rm -f .git/coddy/.snap-*
+rm -rf .git/coddy/.snap-*
 t 0 "hooks: create with no snap for this session says the hooks are off, with the causes" off run create 43 feat/43-thing
 t 0 "hooks: so does claim" off run claim 43
 hsnap sess-b
@@ -2041,7 +2041,7 @@ t 1 "hooks: a session's first snap prunes marks over a day old" test -e .git/cod
 t 0 "hooks: and keeps a newer one" test -e .git/coddy/.snap-sess-b
 hsnap '../../a/b'
 t 0 "hooks: a session id is kept to a plain word inside .git/coddy" test -e .git/coddy/.snap-ab
-rm -f .git/coddy/.snap-*
+rm -rf .git/coddy/.snap-*
 # Claude Code's settings files, which can turn the hooks off: a shell write
 # of anything but permissions.allow trips, and is left as it is.
 # setting <expected exit> <name> <file> <json>: snap, a shell write of json to file, trip
