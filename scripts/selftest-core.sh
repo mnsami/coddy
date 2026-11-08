@@ -557,6 +557,17 @@ out=$(wire trip w 2>&1); r=$?
 t 0 "unchecked: and trip reports it" test "$r" = 2
 t 0 "unchecked: as a fingerprint that failed, not a snapshot the command touched" grep -q 'ran unchecked: .*since the fingerprint failed' <<<"$out"
 tripped 0 "unchecked: the next command is checked afresh" 'true'
+# A git status that leaves a child running with every fd above stderr open
+# (the fsmonitor daemon a git before 2.55 starts under core.fsmonitor=true)
+# holds no end of the fingerprint's pipe: snap and trip finish well within
+# the budget, checked.
+mkdir "$tmp/fsmon"; printf '#!/bin/sh\ncase " $* " in *" status "*) sleep 30 </dev/null >/dev/null 2>&1 & echo $! >> "%s" ;; esac\nexec "%s" "$@"\n' "$tmp/fsmon/pids" "$(command -v git)" > "$tmp/fsmon/git"; chmod +x "$tmp/fsmon/git"
+SECONDS=0; PATH="$tmp/fsmon:$PATH" wire snap w >/dev/null; r=$?
+t 0 "unchecked: a git status leaving a child that holds its fds, snap finishes within seconds" test "$r:$((SECONDS <= 8))" = 0:1
+t 1 "unchecked: and its snapshot is checked" grep -q '^unchecked' "$snapfile"
+SECONDS=0; PATH="$tmp/fsmon:$PATH" wire trip w; r=$?
+t 0 "unchecked: and trip, quiet, within seconds too" test "$r:$((SECONDS <= 8))" = 0:1
+while read -r p; do kill "$p" 2>/dev/null; done < "$tmp/fsmon/pids"; rm -r "$tmp/fsmon"
 rm -r "$tmp/fsrc" "$tmp/nosort" "$tmp/jjnew" "$tmp/jjold" "$tmp/nojj" "$tmp/jjbad"
 # A file git cannot read in its place is a change like any other.
 report "config: an unreadable file in its place trips" 'echo "guard: warn" > .coddy.yml && chmod 000 .coddy.yml'

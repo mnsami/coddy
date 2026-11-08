@@ -233,8 +233,11 @@ before the command or after it, is
 never read as an empty listing, and neither is a fingerprint that fails on
 its own: the command is reported as unchecked, naming the call that failed.
 While one keeps failing (a bad line in a staged nested repository's config,
-a corrupt index), every command runs unchecked, so a worktree made meanwhile
-is not named. `/coddy:start` refuses, and `coddy doctor` reports it, when
+a corrupt index), every command runs unchecked and nothing it changes is
+named. Each command's check starts from a fingerprint taken just before it,
+so once the call works again, whatever changed meanwhile (an edit in the
+main checkout, a worktree made outside `.worktrees/`, a `core.hooksPath`
+change) is part of that fingerprint and is never named either. `/coddy:start` refuses, and `coddy doctor` reports it, when
 the listing it checks the coddy path against fails.
 
 Before a command runs, the hook reads its text for a `git worktree add` or
