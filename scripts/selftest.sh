@@ -1175,6 +1175,23 @@ echo b > z.txt; PATH="$tmp/nostat:$PATH" wire trip w 2>"$tmp/trip.err"; got=$?
 t 0 "tripwire: and trip reports it" test "$got" = 2
 t 0 "tripwire: saying so" grep -q 'ran unchecked: .*since stat gave no size' "$tmp/trip.err"
 rm -r z.txt "$tmp/nostat"
+# A git status that fails lists nothing: the run is unchecked, never quiet.
+# It reads a staged nested repository's config, so a bad line there fails
+# it, and so does a corrupt index.
+git init -q nest; (cd nest && echo n > n && git add n && git commit -q -m n); git add nest 2>/dev/null; cp nest/.git/config "$tmp/nest.cfg"
+wire snap w; echo '[[bad' >> nest/.git/config; echo x >> README.md
+wire trip w 2>"$tmp/trip.err"; got=$?
+t 0 "tripwire: a bad line in a staged nested repository's config, and an edit, trips" test "$got" = 2
+t 0 "tripwire: saying git status failed" grep -q 'could not be fingerprinted after that command ran, since git status failed' "$tmp/trip.err"
+cp "$tmp/nest.cfg" nest/.git/config; git reset -q -- nest; rm -rf nest; git checkout -q README.md
+cp .git/index "$tmp/index"
+tripped 2 "tripwire: a command that corrupts the index trips" 'echo garbage > .git/index'
+cp "$tmp/index" .git/index
+# A line of the fingerprint is a whole line: a file named as a source's
+# failure is a dirty path like any other.
+: > 'unchecked status'
+tripped 0 "tripwire: a file named unchecked status in the root runs checked" 'true'
+rm 'unchecked status'
 # HEAD leaving the default branch is a change too, even for a pushed commit
 # with nothing dirty. A detached HEAD on the default branch's own history is
 # where jj leaves a synced checkout, so that one is quiet.
@@ -1842,6 +1859,15 @@ if [ -d .jj ]; then
   t 0 "tripwire: and names it, made, with the tool that removes it" grep -qF "jj workspace 'o t' at '$wo', made (check what it holds before removing it with jj workspace forget)" "$tmp/trip.err"
   t 1 "tripwire: and gives no command line" cmdline
   jj workspace forget 'o t' >/dev/null 2>&1
+  # One there before, its listing failing at snap alone, is named neither
+  # made nor renamed: the run is unchecked.
+  wp=${wo%/*}/o5; jj workspace add --name o5 "$wp" >/dev/null 2>&1
+  mkdir "$tmp/nowsl"; printf '#!/bin/sh\ncase "$*" in *"workspace list"*) exit 1 ;; esac\nexec "%s" "$@"\n' "$(command -v jj)" > "$tmp/nowsl/jj"; chmod +x "$tmp/nowsl/jj"
+  PATH="$tmp/nowsl:$PATH" wire snap w >/dev/null; wire trip w 2>"$tmp/trip.err"; got=$?
+  t 0 "tripwire: a jj workspace listing that failed at snap alone trips" test "$got" = 2
+  t 0 "tripwire: as a command that ran unchecked" grep -q 'ran unchecked: .*since jj workspace list failed' "$tmp/trip.err"
+  t 1 "tripwire: naming no workspace there before as made, moved, renamed or re-created" grep -qE "', (made|moved, renamed or re-created) \(" "$tmp/trip.err"
+  jj workspace forget o5 >/dev/null 2>&1; rm -rf "$wp" "$tmp/nowsl"
   # A jj workspace outside, renamed, was not made.
   wp=${wo%/*}/o2; jj workspace add --name o2 "$wp" >/dev/null 2>&1
   wire snap w; (cd "$wp" && jj workspace rename o3) >/dev/null 2>&1

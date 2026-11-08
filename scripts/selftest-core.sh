@@ -492,6 +492,64 @@ t 2 "budget: under guard: warn too" adm
 cp "$tmp/conf.orig" .coddy.yml
 tripped 0 "budget: within it, the same admin dir passes" 'true'
 rm -r .git/worktrees
+# A source of the fingerprint that fails makes the run unchecked, named in
+# fixed text, at snap or at trip, on every command while it keeps failing:
+# git status, git worktree list and, in a jj repository with a jj that names
+# a workspace's root, jj workspace list. A failed listing read as an empty
+# one would hide the command's change, or name a worktree there before as
+# made. No jj, an empty .jj or a jj before 0.38 lists no workspace, as it
+# always has.
+mkdir "$tmp/fsrc" "$tmp/jjnew" "$tmp/jjold" "$tmp/nojj"
+printf '#!/bin/sh\ncase " $* " in *" ${FAIL:?} "*) exit 128 ;; esac\nexec "%s" "$@"\n' "$(command -v git)" > "$tmp/fsrc/git"
+printf '#!/bin/sh\n[ "$1" != --version ] || { echo "jj 0.46.0"; exit 0; }\nexit 1\n' > "$tmp/jjnew/jj"
+printf '#!/bin/sh\n[ "$1" != --version ] || { echo "jj 0.37.0"; exit 0; }\nexit 1\n' > "$tmp/jjold/jj"
+printf '#!/bin/sh\nexit 127\n' > "$tmp/nojj/jj"; chmod +x "$tmp/fsrc/git" "$tmp/jjnew/jj" "$tmp/jjold/jj" "$tmp/nojj/jj"
+# unchecked <source> <the call, as named> <stub dir> [stub dir for a snap that works]:
+# the source failing at snap and trip, twice, then at trip alone
+unchecked() {
+  for i in 1 2; do
+    out=$(PATH="$3:$PATH" wire snap w); echo x >> README.md
+    t 0 "unchecked: $1 failing, snap says the command runs unchecked ($i)" jq -e --arg s "since $2 failed, so this command runs unchecked" '.hookSpecificOutput.additionalContext | contains($s)' <<<"$out"
+    out=$(PATH="$3:$PATH" wire trip w 2>&1); r=$?
+    t 0 "unchecked: and trip reports the edit's command ($i)" test "$r" = 2
+    t 0 "unchecked: as one that ran unchecked, naming $2 ($i)" grep -q "ran unchecked: the main checkout could not be fingerprinted before it ran, since $2 failed" <<<"$out"
+  done
+  git checkout -q README.md; PATH="${4:-$3}:$PATH" FAIL=none wire snap w >/dev/null; echo x >> README.md; out=$(PATH="$3:$PATH" wire trip w 2>&1); r=$?
+  t 0 "unchecked: $1 failing at trip alone, an edit trips" test "$r" = 2
+  t 0 "unchecked: saying the checkout could not be fingerprinted, naming $2" grep -q "could not be fingerprinted after that command ran, since $2 failed" <<<"$out"
+  git checkout -q README.md
+}
+FAIL=status unchecked "git status" "git status" "$tmp/fsrc"
+FAIL='worktree list' unchecked "git worktree list" "git worktree list" "$tmp/fsrc"
+mkdir -p .jj/repo; unchecked "jj workspace list in a jj repository" "jj workspace list" "$tmp/jjnew" "$tmp/nojj"
+PATH="$tmp/jjold:$PATH" tripped 0 "unchecked: a jj before 0.38 failing lists no workspace, as before" 'true'
+PATH="$tmp/nojj:$PATH" tripped 0 "unchecked: no jj lists no workspace, as before" 'true'
+rmdir .jj/repo; PATH="$tmp/jjnew:$PATH" tripped 0 "unchecked: an empty .jj lists no workspace, as before" 'true'
+rmdir .jj
+# A git worktree there before, its listing failing at snap alone, is named
+# neither made nor moved: the run is unchecked.
+git worktree add -q --detach "$tmp/owt"
+FAIL='worktree list' PATH="$tmp/fsrc:$PATH" wire snap w >/dev/null; out=$(wire trip w 2>&1); r=$?
+t 0 "unchecked: a git worktree listing that failed at snap alone trips" test "$r" = 2
+t 0 "unchecked: as a command that ran unchecked" grep -q 'ran unchecked: .*since git worktree list failed' <<<"$out"
+t 1 "unchecked: naming no worktree there before as made, moved, renamed or re-created" grep -qE "', (made|moved, renamed or re-created) \(" <<<"$out"
+git worktree remove --force "$tmp/owt"
+# The fingerprint failing on its own (a sort that fails) is coddy's failure:
+# at trip it is reported as such, an edit or not; at snap the snapshot says
+# so, and trip reports that, not a command that touched the snapshot.
+mkdir "$tmp/nosort"; printf '#!/bin/sh\ncat >/dev/null; exit 1\n' > "$tmp/nosort/sort"; chmod +x "$tmp/nosort/sort"
+wire snap w >/dev/null; echo x >> README.md; out=$(PATH="$tmp/nosort:$PATH" wire trip w 2>&1); r=$?
+t 0 "unchecked: trip's fingerprint failing, with an edit, trips" test "$r" = 2
+t 0 "unchecked: saying the fingerprint failed" grep -q 'could not be fingerprinted after that command ran, since the fingerprint failed' <<<"$out"
+git checkout -q README.md
+out=$(PATH="$tmp/nosort:$PATH" wire snap w)
+t 0 "unchecked: snap's fingerprint failing says the command runs unchecked" jq -e '.hookSpecificOutput.additionalContext | contains("since the fingerprint failed, so this command runs unchecked")' <<<"$out"
+t 0 "unchecked: its snapshot says so" grep -qx 'unchecked fp' "$snapfile"
+out=$(wire trip w 2>&1); r=$?
+t 0 "unchecked: and trip reports it" test "$r" = 2
+t 0 "unchecked: as a fingerprint that failed, not a snapshot the command touched" grep -q 'ran unchecked: .*since the fingerprint failed' <<<"$out"
+tripped 0 "unchecked: the next command is checked afresh" 'true'
+rm -r "$tmp/fsrc" "$tmp/nosort" "$tmp/jjnew" "$tmp/jjold" "$tmp/nojj"
 # A file git cannot read in its place is a change like any other.
 report "config: an unreadable file in its place trips" 'echo "guard: warn" > .coddy.yml && chmod 000 .coddy.yml'
 t 0 "config: and is restored" same .coddy.yml
@@ -1106,8 +1164,13 @@ CODDY_EXEC="$here/bin/coddy/" t 0 "and one with a trailing slash, which names no
 # repository outside the checkout, or wherever the call began.
 mkdir "$tmp/w/plug"; cp "$here/bin/coddy" "$tmp/w/plug/"
 CODDY_EXEC="$tmp/w/plug/coddy" t 0 "and a CODDY_EXEC in a worktree of the repository outside the checkout" says "$inside" run start 1 feat/1-thing
-mkdir "$tmp/nowtl"; printf '#!/bin/sh\ncase " $* " in *" worktree list "*) exit 1 ;; esac\nexec %s "$@"\n' "$g" > "$tmp/nowtl/git"; chmod +x "$tmp/nowtl/git"
+mkdir "$tmp/nowtl"; printf '#!/bin/sh\ncase " $* " in *" worktree list "*) exit 0 ;; esac\nexec %s "$@"\n' "$g" > "$tmp/nowtl/git"; chmod +x "$tmp/nowtl/git"
 PATH="$tmp/nowtl:$PATH" CODDY_ROOT="$tmp/w" t 0 "and one where the call began, with git listing no worktree" says "$inside" "$tmp/w/plug/coddy" start 1 feat/1-thing
+# A listing that fails is no empty one: start cannot tell where the coddy
+# path sits, and refuses in plain text.
+sed 's/) exit 0 ;;/) exit 128 ;;/' "$tmp/nowtl/git" > "$tmp/nowtl/g2"; mv "$tmp/nowtl/g2" "$tmp/nowtl/git"; chmod +x "$tmp/nowtl/git"
+PATH="$tmp/nowtl:$PATH" t 1 "start refuses when git worktree list fails" run start 1 feat/1-thing
+PATH="$tmp/nowtl:$PATH" t 0 "saying it cannot tell where the coddy path lies" says 'git worktree list failed, so start cannot tell whether .* lies in a worktree of the repository' run start 1 feat/1-thing
 t 0 "having written nothing" test "$(cksum "$hooks"/*; git config --local --list)" = "$sums"
 "$g" worktree remove --force "$tmp/w"
 rm -r "${repo:?}/bin" "$repo/plant" "$repo/lnk" "$tmp/inlink" "$tmp/chain" "$tmp/dirchain"
@@ -1371,6 +1434,8 @@ oldhook() { cp .git/hooks/coddy/pre-commit "$tmp/pc"; { sed -n 1,3p "$tmp/pc"; e
 prob "a hook falling back to a coddy on PATH" "^hooks: pre-commit falls back to a coddy on PATH, where a command in the project could plant one $term" oldhook 'cp "$tmp/pc" .git/hooks/coddy/pre-commit'
 inhook() { cp .git/hooks/coddy/pre-commit "$tmp/pc"; mkdir bin; cp "$here/bin/coddy" bin/; sed -i.bak "s#^c=.*#c='$PWD/bin/coddy'#" .git/hooks/coddy/pre-commit; rm .git/hooks/coddy/pre-commit.bak; }
 prob "a hook running a coddy in the project" "^hooks: pre-commit runs .*/bin/coddy, which lies in the project or a worktree of it, or is reached through a link there $term" inhook 'cp "$tmp/pc" .git/hooks/coddy/pre-commit; rm -r bin'
+PATH="$tmp/nowtl:$PATH" t 0 "doctor: git worktree list failing" dsays '^hooks: git worktree list failed, so whether pre-commit runs a file in a worktree of the project cannot be told (fix: '
+PATH="$tmp/nowtl:$PATH" t 1 "doctor: git worktree list failing exits 1" dd doctor
 prob "a hook git would skip" '^hooks: pre-push is not executable' 'chmod -x .git/hooks/coddy/pre-push' 'chmod +x .git/hooks/coddy/pre-push'
 prob "hooks not installed" '^hooks: core.hooksPath is not set.*(fix: /coddy:start <issue>)' 'git config --unset core.hooksPath' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
 prob "PR check missing" '^pr_check: .*is missing or not a plain file (fix: copy ' 'rm .github/workflows/coddy.yml' 'cp "$here/templates/coddy.yml" .github/workflows/coddy.yml'
