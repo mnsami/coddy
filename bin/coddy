@@ -1478,13 +1478,16 @@ snap() {
   # the user allows a command for good (and an empty list under permissions,
   # as it writes deny and ask, and a permissions it leaves empty), one that
   # leaves {} as absent, so the file the agent makes for an allow rule is no
-  # change, or as its bytes when jq is missing or cannot read it; a bigger
-  # one by its size, ctime and inode; anything else by its kind.
+  # change, or as its bytes when jq is missing or cannot read it, each hash
+  # after jq: or raw:, so no dirty path's line (a file at "settings
+  # .claude/settings.json" holding that JSON) reads as one and hides its
+  # change; a bigger one by its size, ctime and inode; anything else by its
+  # kind.
   [ -z "${CODDY_AGENT_DIR-}" ] || for f in "$CODDY_AGENT_DIR/settings.json" "$CODDY_AGENT_DIR/settings.local.json"; do
     if [ ! -f "$f" ]; then v=$(kind "$f")
     elif [ "$(head -c 65537 -- "$f" 2>/dev/null | wc -c)" -gt 65536 ]; then sflav; v=$(stat -L "${sf[@]}" -- "$f" 2>/dev/null); v=big:${v%%:*}; v=${v// /:}
     elif v=$(jqh -cS 'del(.permissions.allow) | del(.permissions[]? | select(. == [])) | if .permissions == {} then del(.permissions) else . end' < "$f" 2>/dev/null); then
-      [ "$v" = '{}' ] && v=absent || v=$(printf '%s\n' "$v" | git hash-object --stdin 2>/dev/null)
+      [ "$v" = '{}' ] && v=absent || v=jq:$(printf '%s\n' "$v" | git hash-object --stdin 2>/dev/null)
     else v=raw:$(git hash-object --stdin < "$f" 2>/dev/null); fi
     clean "$f" || f=$(q "$f")
     echo "settings $f $v"; echo "settings settings $f $v" >&4

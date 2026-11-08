@@ -2076,6 +2076,13 @@ t 0 "settings: without jq, no change is quiet" test "$r" = 0
 PATH="$tmp/nojq" wire snap w; printf '{%s}\n' '"permissions":{"allow":["Bash(cat)"],"deny":["Bash(rm)"]}' > .claude/settings.json; PATH="$tmp/nojq" wire trip w 2>"$tmp/trip.err"; r=$?
 t 0 "settings: without jq, a change to permissions.allow alone trips, by the whole file's hash" test "$r" = 2
 t 0 "settings: naming the file" grep -qF "that command changed .claude/settings.json," "$tmp/trip.err"
+# A dirty file whose line would read as a settings file's (settings .claude/
+# at the root, holding the JSON as jq prints it) hides no change to it.
+mkdir "settings .claude"; printf '{"disableAllHooks":true}\n' > "settings .claude/settings.json"
+wire snap w; printf '{"disableAllHooks":true}\n' > .claude/settings.json; wire trip w 2>"$tmp/trip.err"; r=$?
+t 0 "settings: a dirty file of the same name and hash under the root hides no change" test "$r" = 2
+t 0 "settings: naming the file" grep -qF "that command changed .claude/settings.json," "$tmp/trip.err"
+rm -rf "settings .claude"
 rm -f .claude/settings.json .claude/settings.local.json
 # detect <line> [VAR=value...]: detect.sh prints exactly that line
 detect() { line=$1; shift; env CLAUDE_PROJECT_DIR="$repo" "$@" "$BASH" "$here/scripts/detect.sh" 2>/dev/null | grep -qx "$line"; }
