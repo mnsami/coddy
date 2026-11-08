@@ -559,7 +559,7 @@ mirror() {
   for f in "$1"/*/SKILL.md; do
     body=$(awk '/^---$/{n++;next} n>=2' "$f"); at=$(rules "$f")
     while IFS= read -r c; do
-      case $c in ''|*'issue.sh" take'*|*'issue.sh" drop'*) continue ;; esac
+      case $c in ''|*'issue.sh" take'|*'issue.sh" take '*|*'issue.sh" drop'|*'issue.sh" drop '*) continue ;; esac
       ok=1
       while IFS= read -r r; do
         # shellcheck disable=SC2053 # the rule is a glob, as Claude Code matches it
@@ -609,6 +609,8 @@ t 1 "skills: an injected script without its rule fails" skadd next "\`bash \"\${
 t 1 "skills: a rule no body uses fails" skrule next "Bash($R frobnicate *)" mirror
 t 1 "skills: an MCP tool named in backticks without its entry fails" skadd next '`create_pull_request`' mirror
 t 0 "skills: a body calling take or drop without a rule passes" skadd next "\`$R take 7\` and \`$R drop 7 --force\`" mirror
+t 1 "skills: a body calling takeover without a rule fails" skadd next "\`$R takeover 7\`" mirror
+t 1 "skills: a body calling dropall without a rule fails" skadd next "\`$R dropall\`" mirror
 t 1 "skills: a take rule fails" skrule next "Bash($R take *)" gated
 t 1 "skills: a take rule written with :* fails" skrule next "Bash($R take:*)" gated
 t 1 "skills: a drop rule fails" skrule next "Bash($R drop 7 --force)" gated
