@@ -2041,7 +2041,15 @@ t 1 "hooks: a session's first snap prunes marks over a day old" test -e .git/cod
 t 0 "hooks: and keeps a newer one" test -e .git/coddy/.snap-sess-b
 hsnap '../../a/b'
 t 0 "hooks: a session id is kept to a plain word inside .git/coddy" test -e .git/coddy/.snap-ab
-rm -rf .git/coddy/.snap-*
+# BusyBox's rm has no -d: the refresh and the prune remove a directory mark
+# by rmdir, so neither leaves it, nor a false hooks: off.
+mkdir "$tmp/nod"; printf '#!/bin/sh\nfor a; do case "$a" in --) break ;; -*d*) echo "rm: unrecognized option: d" >&2; exit 1 ;; esac; done\nexec "%s" "$@"\n' "$(command -v rm)" > "$tmp/nod/rm"; chmod +x "$tmp/nod/rm"
+t 1 "hooks: the stand-in rm rejects -d" "$tmp/nod/rm" -df "$tmp/nod/none"
+mkdir .git/coddy/.snap-olddir; touch -t 202001010000 .git/coddy/.snap-olddir; PATH="$tmp/nod:$PATH" hsnap sess-a
+t 1 "hooks: with an rm that has no -d, a session's first snap prunes a day-old directory mark" test -e .git/coddy/.snap-olddir
+touch -t 202001010000 .git/coddy/.snap-sess-a; PATH="$tmp/nod:$PATH" hsnap sess-a
+t 1 "hooks: and refreshes the session's own, so claim does not say the hooks are off" off run claim 43
+rm -rf .git/coddy/.snap-* "$tmp/nod"
 # Claude Code's settings files, which can turn the hooks off: a shell write
 # of anything but permissions.allow trips, and is left as it is.
 # setting <expected exit> <name> <file> <json>: snap, a shell write of json to file, trip
@@ -2068,6 +2076,8 @@ setting 0 "settings: the file Claude Code makes for an allow rule, empty deny an
 rm .claude/settings.local.json
 setting 2 "settings: one made holding hooks trips" .claude/settings.local.json '{"hooks":{},"permissions":{"allow":["Bash(ls)"]}}'
 printf '{%s}\n' "$al" > .claude/settings.json
+setting 2 "settings: a permissions.allow of NaN, which jq reads and Claude Code cannot parse, trips" .claude/settings.json '{"permissions":{"allow":NaN,"deny":["Bash(rm)"]}}'
+printf '{%s}\n' "$al" > .claude/settings.json
 wire snap w; rm .claude/settings.json; wire trip w 2>"$tmp/trip.err"; r=$?
 t 0 "settings: deleting one trips" test "$r" = 2
 printf '{%s}\n' "$al" > .claude/settings.json
@@ -2082,6 +2092,13 @@ mkdir "settings .claude"; printf '{"disableAllHooks":true}\n' > "settings .claud
 wire snap w; printf '{"disableAllHooks":true}\n' > .claude/settings.json; wire trip w 2>"$tmp/trip.err"; r=$?
 t 0 "settings: a dirty file of the same name and hash under the root hides no change" test "$r" = 2
 t 0 "settings: naming the file" grep -qF "that command changed .claude/settings.json," "$tmp/trip.err"
+# Nor does a link there to a big dirty file of that name: a settings file
+# over 64 KiB is read by its stat, marked as no dirty path's line is.
+head -c 1048577 /dev/zero > "settings .claude/settings.json"; printf '{%s}\n' "$al" > .claude/settings.json
+wire snap w; rm .claude/settings.json; ln -s "../settings .claude/settings.json" .claude/settings.json; wire trip w 2>"$tmp/trip.err"; r=$?
+t 0 "settings: a link to a big dirty file whose line reads as the settings file's trips" test "$r" = 2
+t 0 "settings: naming the file" grep -qF "that command changed .claude/settings.json, the agent's" "$tmp/trip.err"
+rm .claude/settings.json
 rm -rf "settings .claude"
 rm -f .claude/settings.json .claude/settings.local.json
 # detect <line> [VAR=value...]: detect.sh prints exactly that line

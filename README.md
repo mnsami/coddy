@@ -261,15 +261,15 @@ the listing it checks the coddy path against fails.
 It also compares `.claude/settings.json` and `.claude/settings.local.json`,
 git-ignored or not, where a change can turn coddy's hooks off or change what
 runs outside the sandbox, and reports a change a command made there, a
-delete included, other than to `permissions.allow`, which Claude Code writes
-itself when you allow a command for good. It does not put the file back:
-Claude is told to have you check it. Its ceilings:
+delete included, other than to a `permissions.allow` list of strings, which
+Claude Code writes itself when you allow a command for good. It does not put
+the file back: Claude is told to have you check it. Its ceilings:
 
 - An Edit or Write of a settings file is held only by Claude Code's own
   prompt for its protected paths, which `bypassPermissions` and auto mode
   skip.
-- A shell write of `permissions.allow` is not seen, an `Edit` allow rule
-  there included.
+- A shell write of a `permissions.allow` list of strings is not seen, an
+  `Edit` allow rule there included.
 - `~/.claude/settings.json`, managed settings and a worktree's own
   `.claude/settings*.json` are not compared, nor a subdirectory's, which
   a session opened in that subdirectory loads.
