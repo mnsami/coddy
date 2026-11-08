@@ -653,6 +653,11 @@ done
 # A .. after a link goes where git's open goes, not where the name says.
 ln -s "$repo/.claude" "$tmp/hl"
 t 2 "home: snap refuses a HOME that reaches the root through a link and .." hook snap "$(payload true)" HOME="$tmp/hl/.."
+# git reads HOME=- as a directory named - where it runs, the root; cd as the last one.
+mkdir ./-; cp .gitconfig ./-/
+t 2 "home: snap refuses HOME=-, a directory in the root to git" hook snap "$(payload true)" HOME=-
+t 2 "home: snap refuses XDG_CONFIG_HOME=- the same way" hook snap "$(payload true)" XDG_CONFIG_HOME=-
+rm -r ./-
 t 1 "home: and no fsmonitor ran" test -e "$tmp/planted"
 printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml; cp .claude/coddy.yml "$tmp/conf.home"
 hook snap "$(payload true)" >/dev/null; rm .claude/coddy.yml

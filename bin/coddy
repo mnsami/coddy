@@ -1505,11 +1505,13 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # open goes), or by name where it is not there yet, is one
   # a command can write, so the hooks run no git there, in either guard
   # mode (snap before its first git call, trip after putting the config
-  # back), hm naming the variable.
+  # back), hm naming the variable. A lone - is a directory named - to git,
+  # run at the root, and the directory cd came from to cd, even after --.
   homes() {
-    local v x
+    local v x y
     for v in HOME XDG_CONFIG_HOME; do
-      [ -n "${!v-}" ] && { x=$(cd -P -- "$R" 2>/dev/null && cd -P -- "${!v}" 2>/dev/null && pwd -P) || x=$(abspath "${!v}" "$R"); } || continue
+      y=${!v-}; [ "$y" != - ] || y=./-
+      [ -n "$y" ] && { x=$(cd -P -- "$R" 2>/dev/null && cd -P -- "$y" 2>/dev/null && pwd -P) || x=$(abspath "$y" "$R"); } || continue
       while [ -n "$x" ]; do
         [ "$x" -ef "$R" ] && { hm="$v ($(q "${!v}")) lies in the project at $(q "$R"), where a shell command can write the git config git reads from there, whose core.fsmonitor would run a program outside the sandbox, so coddy runs no git and refuses every shell command until $v names a directory outside the project."; return 1; }
         x=${x%/*}
