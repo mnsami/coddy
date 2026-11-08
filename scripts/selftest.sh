@@ -2063,6 +2063,11 @@ done
 t 0 "settings: .claude/settings.local.json is git-ignored here" git check-ignore -q .claude/settings.local.json
 printf '{}\n' > .claude/settings.json
 setting 0 "settings: a permissions.allow added where none was is quiet" .claude/settings.json '{"permissions":{"allow":["Bash(ls)"]}}'
+rm .claude/settings.local.json
+setting 0 "settings: the file Claude Code makes for an allow rule, empty deny and ask included, is quiet" .claude/settings.local.json '{"permissions":{"allow":["Bash(ls)"],"deny":[],"ask":[]}}'
+rm .claude/settings.local.json
+setting 2 "settings: one made holding hooks trips" .claude/settings.local.json '{"hooks":{},"permissions":{"allow":["Bash(ls)"]}}'
+printf '{%s}\n' "$al" > .claude/settings.json
 wire snap w; rm .claude/settings.json; wire trip w 2>"$tmp/trip.err"; r=$?
 t 0 "settings: deleting one trips" test "$r" = 2
 printf '{%s}\n' "$al" > .claude/settings.json
