@@ -562,6 +562,7 @@ mirror() {
       case $c in ''|*'issue.sh" take'*|*'issue.sh" drop'*) continue ;; esac
       ok=1
       while IFS= read -r r; do
+        # shellcheck disable=SC2053 # the rule is a glob, as Claude Code matches it
         case $r in Bash\(*\)) p=${r#Bash(}; p=${p%)}; case $p in *:\*) p="${p%:\*} *" ;; esac; [[ $c == $p ]] && ok=0 ;; esac
       done <<< "$at"
       [ $ok = 0 ] || { echo "$f: no rule for: $c" >&2; bad=1; }
@@ -584,8 +585,12 @@ gated() {
     [ -n "$(rules "$f")" ] || return 1
     while IFS= read -r r; do
       [ "$r" != Bash ] || return 1
-      case $r in Bash\(*\)) p=${r#Bash(}; p=${p%)}; case $p in *:\*) p="${p%:\*} *" ;; esac ;; *) continue ;; esac
+      case $r in Bash\(*\)) p=${r#Bash(}; p=${p%)} ;; *) continue ;; esac
+      # take or drop as the first word after the shim or coddy, whatever follows
+      [[ $p =~ (issue\.sh\"?|coddy)\ +(take|drop)($|[\ :*]) ]] && return 1
+      case $p in *:\*) p="${p%:\*} *" ;; esac
       for c in 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" take 7' 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" drop 7 --force' 'coddy take 7' 'coddy drop 7 --force'; do
+        # shellcheck disable=SC2053 # the rule is a glob, as Claude Code matches it
         [[ $c == $p ]] && return 1
       done
     done <<< "$(rules "$f")"
@@ -607,6 +612,10 @@ t 0 "skills: a body calling take or drop without a rule passes" skadd next "\`$R
 t 1 "skills: a take rule fails" skrule next "Bash($R take *)" gated
 t 1 "skills: a take rule written with :* fails" skrule next "Bash($R take:*)" gated
 t 1 "skills: a drop rule fails" skrule next "Bash($R drop 7 --force)" gated
+t 1 "skills: a drop rule on another operand fails" skrule next "Bash($R drop 7)" gated
+t 1 "skills: a bare take rule fails" skrule next "Bash($R take)" gated
+t 1 "skills: a coddy drop rule fails" skrule next "Bash(coddy drop 7)" gated
+t 1 "skills: a take rule on the shim path fails" skrule next 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" take 42)' gated
 t 1 "skills: a rule broader than take and drop fails" skrule next "Bash($R *)" gated
 t 1 "skills: a coddy rule covering them fails" skrule next "Bash(coddy *)" gated
 t 1 "skills: a bare Bash fails" skrule next "Bash" gated
