@@ -1332,8 +1332,10 @@ t 0 "hooks: snap runs with .git/coddy a link" msnap sess-l
 t 1 "hooks: and makes no mark through it" test -e "$tmp/coddy.out/.snap-sess-l"
 rm .git/coddy; mv "$tmp/coddy.real" .git/coddy
 mkdir "$tmp/slowf"; printf '#!/bin/sh\ncase " $* " in *" -mmin "*) echo $$ >> "%s"; sleep 60 & echo $! >> "%s"; wait ;; esac\nexec "%s" "$@"\n' "$tmp/slow/pids" "$tmp/slow/pids" "$(command -v find)" > "$tmp/slowf/find"; chmod +x "$tmp/slowf/find"
-: > "$tmp/slow/pids"; SECONDS=0; msnap sess-p CODDY_BUDGET=2 PATH="$tmp/slowf:$PATH" >/dev/null 2>&1; r=$?
-t 0 "hooks: a slow prune of day-old marks holds snap no longer than the fingerprint's budget" test "$r:$((SECONDS <= 8))" = 0:1
+# A budget of 4, not 2: half of it is the admin dirs' check's, which by now
+# has worktree 1's entry to read, and a half of 1 may end at once.
+: > "$tmp/slow/pids"; SECONDS=0; msnap sess-p CODDY_BUDGET=4 PATH="$tmp/slowf:$PATH" >/dev/null 2>&1; r=$?
+t 0 "hooks: a slow prune of day-old marks holds snap no longer than the fingerprint's budget" test "$r:$((SECONDS <= 10))" = 0:1
 t 0 "hooks: that prune was started" test -s "$tmp/slow/pids"
 t 1 "hooks: and none of it is left running" left
 t 0 "hooks: the session's mark is there all the same" test -d .git/coddy/.snap-sess-p
