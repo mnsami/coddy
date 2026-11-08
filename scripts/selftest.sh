@@ -580,6 +580,8 @@ mirror() {
 gated() {
   local f r p c
   for f in "$1"/*/SKILL.md; do
+    # a list-form allowed-tools has no single-line value: unread, so a failure
+    [ -n "$(rules "$f")" ] || return 1
     while IFS= read -r r; do
       [ "$r" != Bash ] || return 1
       case $r in Bash\(*\)) p=${r#Bash(}; p=${p%)}; case $p in *:\*) p="${p%:\*} *" ;; esac ;; *) continue ;; esac
@@ -593,6 +595,7 @@ gated() {
 sk() { rm -rf "$tmp/sk"; cp -R "$here/skills" "$tmp/sk"; }
 skadd() { sk; printf '%s\n' "$2" >> "$tmp/sk/$1/SKILL.md"; "${@:3}" "$tmp/sk"; }
 skrule() { sk; sed "s|^allowed-tools: .*|&, $2|" "$here/skills/$1/SKILL.md" > "$tmp/sk/$1/SKILL.md"; "${@:3}" "$tmp/sk"; }
+gatedlist() { sk; sed 's|^allowed-tools: .*|allowed-tools:\n  - Bash|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; gated "$tmp/sk"; }
 R='bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh"'
 t 0 "skills: every body and allowed-tools agree, both ways" mirror "$here/skills"
 t 0 "skills: no rule pre-approves take or drop" gated "$here/skills"
@@ -607,6 +610,7 @@ t 1 "skills: a drop rule fails" skrule next "Bash($R drop 7 --force)" gated
 t 1 "skills: a rule broader than take and drop fails" skrule next "Bash($R *)" gated
 t 1 "skills: a coddy rule covering them fails" skrule next "Bash(coddy *)" gated
 t 1 "skills: a bare Bash fails" skrule next "Bash" gated
+t 1 "skills: an allowed-tools in list form, unread, fails" gatedlist
 # A hook blocks only on exit 2, so the shim makes every other exit of guard
 # or snap a 2 with a message, a core it cannot read included, and a coddy
 # crash blocks the call; trip keeps its own.
