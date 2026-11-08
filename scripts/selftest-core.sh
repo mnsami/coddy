@@ -1228,7 +1228,9 @@ for w in "an entry in the project:$repo:$repo/nm" "one in the root, from a subdi
   IFS=: read -r a r e <<<"$w"
   t 0 "doctor: the bash the hooks run, past $a" says "^bash: $(pbash) [0-9]*\.[0-9]*\.[0-9]*\$" sh -c 'cd "$1" && PATH="$2:$PATH" CODDY_ROOT="$1" "$3" "$4" doctor' - "$r" "$e" "$BASH" "$here/bin/coddy"
 done
-rm -r "$repo/nm"
+mkdir -p "$repo/sub/.git/objects" "$repo/sub/.git/refs"; echo junk > "$repo/sub/.git/HEAD"
+t 0 "doctor: the bash the hooks run, past one in the root, from a subdirectory whose .git is no repository" says "^bash: $(pbash) [0-9]*\.[0-9]*\.[0-9]*\$" sh -c 'cd "$1" && PATH="$2:$PATH" CODDY_ROOT="$1" "$3" "$4" doctor' - "$repo/sub" "$repo/nm" "$BASH" "$here/bin/coddy"
+rm -r "$repo/sub/.git" "$repo/nm"
 mkdir "$tmp/nobash"; for x in sed head uname tr git readlink; do p=$(command -v "$x") && ln -s "$p" "$tmp/nobash/$x"; done
 t 0 "doctor: no bash on PATH" says '^bash: missing$' env PATH="$tmp/nobash" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
 t 0 "doctor: and exits 0 for it" env PATH="$tmp/nobash" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor

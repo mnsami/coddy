@@ -592,12 +592,30 @@ past() {
   t 0 "launcher: link past $w" from "$d" hook link '' "$@"
   t 1 "launcher: and none of them ran a planted one past $w" test -e "$tmp/planted"
 }
+# An entry whose physical spelling holds a colon would split into a relative one (nm).
+mkdir "$tmp/c:nm"; ln -s "$tmp/c:nm" "$tmp/cl"
 for b in "" "$tmp/sysbash:"; do
+  past "an entry spelled physically with a colon${b:+, under /bin/bash}" . "PATH=$tmp/cl:$b$PATH"
   past "a relative entry${b:+, under /bin/bash}" . "PATH=nm:$b$PATH"
   past "an empty entry${b:+, under /bin/bash}" . "PATH=:$b$PATH"
   past "an entry in the project${b:+, under /bin/bash}" . "PATH=$repo/nm:$b$PATH"
   past "an entry in the root, from a subdirectory${b:+, under /bin/bash}" sub "CLAUDE_PROJECT_DIR=$repo/sub" "PATH=$repo/nm:$b$PATH"
 done
+# A .git in that subdirectory that git walks past (a HEAD that reads as
+# neither a ref nor an object id), or a link, which root resolution refuses,
+# stops the launcher no lower than the root's checkout; and a project
+# outside git that a /.worktrees/ path names is the root's too.
+mkdir -p sub/.git/objects sub/.git/refs; echo junk > sub/.git/HEAD
+for b in "" "$tmp/sysbash:"; do
+  past "an entry in the root, from a subdirectory whose .git is no repository${b:+, under /bin/bash}" sub "CLAUDE_PROJECT_DIR=$repo/sub" "PATH=$repo/nm:$b$PATH"
+done
+rm -r sub/.git; ln -s "$repo/.git" sub/.git; rm -f "$tmp/planted"
+t 2 "launcher: snap refuses from a subdirectory whose .git is a link" from sub hook snap "$(payload true "$repo/sub")" "CLAUDE_PROJECT_DIR=$repo/sub" "PATH=$repo/nm:$PATH"
+t 1 "launcher: and ran nothing planted past it" test -e "$tmp/planted"
+rm sub/.git; mkdir -p "$tmp/jo/.worktrees/x"; cp -R nm "$tmp/jo/nm"; echo 'tracker: github' > "$tmp/jo/.coddy.yml"
+from "$tmp/jo/.worktrees/x" hook guard "$agent" "CLAUDE_PROJECT_DIR=$tmp/jo/.worktrees/x" "PATH=$tmp/jo/nm:$PATH" >/dev/null 2>&1
+t 1 "launcher: from a worktree of a project outside git, ran nothing planted in the project" test -e "$tmp/planted"
+rm -r "$tmp/jo"
 # It is POSIX sh, and runs under macOS's /bin/sh and under dash.
 for sh in /bin/sh /bin/dash; do
   [ -x "$sh" ] || continue
