@@ -1518,6 +1518,18 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
       done
     done
   }
+  # git, and jj where the root holds a .jj, as the fingerprint runs them,
+  # left on PATH past unpath: one installed in the project alone (a .venv,
+  # devbox or nix-shell toolchain) is dropped, and without it every call
+  # fails quietly and the tripwire runs blind, so the hooks refuse, in
+  # either guard mode, where homes does, hm naming the tool.
+  tools() {
+    local x
+    for x in git jj; do
+      [ "$x" = git ] || [ -d "$root/.jj" ] || continue
+      command -v "$x" >/dev/null 2>&1 || { hm="no $x is on PATH outside the project, where the coddy hooks find their tools (one installed in the project alone, by a .venv, devbox or nix-shell, is one a shell command can write), so coddy cannot fingerprint the main checkout and refuses every shell command until $x is installed outside the project."; return 1; }
+    done
+  }
   # Hook context of fixed text alone (no quote, backslash or control
   # character), without jq.
   ctx() { printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$*"; }
@@ -1555,6 +1567,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
       { code=2; die "$cname is over 64 KiB, more than coddy keeps a copy of to put it back when a shell command changes it, so coddy refuses every shell command until it is brought under 64 KiB with /coddy:config."; }
     oddly
     homes || { code=2; die "$hm"; }
+    tools || { code=2; die "$hm"; }
     common
     admin || { code=2; die "$st"; }
     b=$(cfg default_branch); b="${b:-main}" ok=1
@@ -1679,7 +1692,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   msg=$msg$cap
   confpath
   [ -z "$odd" ] || { rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*; oddly "$msg"; }
-  homes || { rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*; die "$msg$hm"; }
+  homes && tools || { rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*; die "$msg$hm"; }
   admin || { msg="$msg$st The git worktrees could not be listed for that command, so one it made is named by its admin dir alone, and one it moved, renamed or re-created is not named: check by hand. " nowt=1; }
   # Only lines that are new count, so undoing a change never trips the wire.
   # Every line is unique by design, so a repeat is no new line: git lists a

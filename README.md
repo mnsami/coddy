@@ -73,8 +73,10 @@ You also need:
   and find their tools there, past every entry that is empty, relative or
   inside the project, where a command could plant a `bash`, `git` or `jq`
   that would run outside the sandbox. So tools that live only in the project
-  (`.venv/bin`, devbox) do not count, and with no `bash` left every edit and
-  shell command is refused. `coddy doctor` prints which `bash` they run.
+  (`.venv/bin`, devbox, nix-shell) do not count: with no `bash` left every
+  edit and shell command is refused, and with no `git` left, or no `jj` where
+  the project holds a `.jj`, every shell command. `coddy doctor` prints which
+  `bash` they run.
 - `jq`. The edit guard needs it and blocks every edit without a working one.
 - Optionally `jj` ([Jujutsu](https://jj-vcs.github.io)), for `worktree: jj`;
   `worktree: git`, the default, needs nothing more. `/coddy:onboard`
@@ -203,7 +205,10 @@ a path is compared the way it was before, so one rewritten in place to the
 same size within the change time's resolution is not seen. Changes
 inside a submodule's work tree in the main checkout are not seen, and a
 submodule is seen once, when it leaves the commit recorded for it, not
-again while it stays off it.
+again while it stays off it. It hashes a changed file as it is, running no
+clean filter, but `git status`, which it runs to find them, still runs the
+clean filter of a driver set up in your git config on a modified tracked
+file whose `.gitattributes` names that driver.
 It also lists every git worktree and jj workspace outside
 `.worktrees/<issue>/` and `.claude/worktrees/`, and reports a new one,
 however the command made it: its path, whether the command made it or moved,

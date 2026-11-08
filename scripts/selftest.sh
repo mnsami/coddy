@@ -55,8 +55,8 @@ EOF
 chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log"
 # A ps that is not there, as in a container image without procps: on PATH first when a case asks.
 mkdir "$tmp/nops"; printf '#!/bin/sh\nexit 127\n' > "$tmp/nops/ps"; chmod +x "$tmp/nops/ps"
-# A PATH with everything snap needs but jq.
-mkdir "$tmp/nojq"; for x in bash sed awk cat grep git cmp sort comm tr cut cksum mkdir cp rm head sleep stat xargs wc; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
+# A PATH with everything snap needs but jq (jj too, once the root holds a .jj).
+mkdir "$tmp/nojq"; for x in bash sed awk cat grep git jj cmp sort comm tr cut cksum mkdir cp rm head sleep stat xargs wc; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
 # A jq that fails whatever it is asked: on PATH first when a case asks.
 mkdir "$tmp/badjq"; printf '#!/bin/sh\nexit 1\n' > "$tmp/badjq/jq"; chmod +x "$tmp/badjq/jq"
 # kept <what>: sweep leaves worktree $p alone
@@ -673,6 +673,36 @@ t 2 "home: trip refuses HOME=<root>" hook trip '{"tool_use_id":"sh"}' HOME="$rep
 t 0 "home: after putting the config back" cmp -s .claude/coddy.yml "$tmp/conf.home"
 t 1 "home: and no fsmonitor ran there either" test -e "$tmp/planted"
 rm -r .gitconfig .claude/xdg "$tmp/away" "$tmp/hl"; cp "$tmp/exclude" .git/info/exclude
+# The fingerprint's git, and jj where the root holds a .jj, installed in the
+# project alone (a .venv, devbox or nix-shell toolchain) is dropped from the
+# hooks' PATH: snap refuses, in either guard mode, naming the tool, and trip
+# the command that ran, after putting the config back, rather than compare
+# two empty fingerprints.
+mkdir "$tmp/nogit" "$tmp/gitonly" nm; ln -s "$(command -v git)" "$tmp/gitonly/git"; ln -s "$(command -v git)" nm/git
+for x in bash sed awk cat grep cmp sort comm tr cut cksum mkdir cp rm head sleep stat xargs wc jq find readlink mktemp; do p=$(command -v "$x") && ln -s "$p" "$tmp/nogit/$x"; done
+p=$(command -v jj) && ln -s "$p" nm/jj; printf '/nm/\n' >> .git/info/exclude
+for v in block warn; do
+  printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
+  t 2 "tools: $v, snap refuses with git in the project alone" hook snap "$(payload true)" PATH="$repo/nm:$tmp/nogit"
+  t 0 "tools: $v, and names it" says '^coddy: no git is on PATH outside the project' hook snap "$(payload true)" PATH="$repo/nm:$tmp/nogit"
+  t 0 "tools: $v, snap needs no jj where the root holds no .jj" hook snap "$(payload true)" PATH="$repo/nm:$tmp/gitonly:$tmp/nogit"
+  mkdir .jj
+  t 2 "tools: $v, snap refuses with jj in the project alone where the root holds a .jj" hook snap "$(payload true)" PATH="$repo/nm:$tmp/gitonly:$tmp/nogit"
+  t 0 "tools: $v, and names it" says '^coddy: no jj is on PATH outside the project' hook snap "$(payload true)" PATH="$repo/nm:$tmp/gitonly:$tmp/nogit"
+  rmdir .jj
+done
+printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml; cp .claude/coddy.yml "$tmp/conf.tools"
+hook snap "$(payload true)" >/dev/null; echo x > stray.txt
+t 2 "tools: trip refuses a stray file with git in the project alone" hook trip '{"tool_use_id":"sh"}' PATH="$repo/nm:$tmp/nogit"
+hook snap "$(payload true)" >/dev/null; rm .claude/coddy.yml
+hook trip '{"tool_use_id":"sh"}' PATH="$repo/nm:$tmp/nogit" 2>"$tmp/tools.err"
+t 0 "tools: trip puts the config back first" cmp -s .claude/coddy.yml "$tmp/conf.tools"
+t 0 "tools: and names git" grep -q 'no git is on PATH outside the project' "$tmp/tools.err"
+hook snap "$(payload true)" >/dev/null; mkdir .jj
+hook trip '{"tool_use_id":"sh"}' PATH="$repo/nm:$tmp/gitonly:$tmp/nogit" 2>"$tmp/tools.err"; got=$?
+t 0 "tools: trip refuses a command that left a .jj at the root with jj in the project alone" test "$got" = 2
+t 0 "tools: and names jj" grep -q 'no jj is on PATH outside the project' "$tmp/tools.err"
+rm -r .jj nm stray.txt "$tmp/nogit" "$tmp/gitonly"; cp "$tmp/exclude" .git/info/exclude
 t 1 "create rejects a bad issue id" run create "../x" feat/x
 t 1 "claim needs a worktree first" run claim 99
 
