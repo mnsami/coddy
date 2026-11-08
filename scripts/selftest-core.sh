@@ -1128,7 +1128,7 @@ t 0 "removed config: snap names the config and the hooks directory" says 'no con
 t 1 "removed config: and writes no not-onboarded snapshot" test -e "$snapfile"
 tm=$(guard "$repo/README.md" 2>&1)
 t 0 "removed config: guard names the config and the hooks directory" grep -q 'no config file is at .coddy.yml or .claude/coddy.yml, yet .git/hooks/coddy is there' <<<"$tm"
-t 0 "removed config: and both ways out, in words" grep -q 'write .coddy.yml with the Write tool.*remove the claim locks under .git/coddy and the .git/hooks/coddy directory, and set core.hooksPath back' <<<"$tm"
+t 0 "removed config: and both ways out, in words" grep -q 'write .coddy.yml with the Write tool.*remove the claim locks under .git/coddy and the .git/hooks/coddy directory, and set core.hooksPath back.*when that is empty or missing, unset core.hooksPath, never set it to an empty value' <<<"$tm"
 t 1 "removed config: with no command to paste" grep -qE 'git config |rm -|`' <<<"$tm"
 t 0 "removed config: and that a tracked config comes back from HEAD in your own terminal" grep -qF 'when git tracks it, restore it from HEAD with git in your own terminal' <<<"$tm"
 t 2 "removed config: guard refuses a path outside the project too" guard "$tmp/elsewhere.txt"

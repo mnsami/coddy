@@ -370,7 +370,7 @@ left() {
     done
     [ -n "$l" ] || return 1
   fi
-  tm="no config file is at .coddy.yml or $legacy, yet $l is there, which only a project in the workflow leaves, so the config was removed, not never written, and coddy refuses every edit, shell command, commit and push until either the config is back (write .coddy.yml with the Write tool, which asks you first, or, when git tracks it, restore it from HEAD with git in your own terminal) or you finish leaving the workflow from your own terminal: remove the claim locks under .git/coddy and the .git/hooks/coddy directory, and set core.hooksPath back to the coddy.previousHooksPath that .git/config records, or unset it when none is recorded."
+  tm="no config file is at .coddy.yml or $legacy, yet $l is there, which only a project in the workflow leaves, so the config was removed, not never written, and coddy refuses every edit, shell command, commit and push until either the config is back (write .coddy.yml with the Write tool, which asks you first, or, when git tracks it, restore it from HEAD with git in your own terminal) or you finish leaving the workflow from your own terminal: remove the claim locks under .git/coddy and the .git/hooks/coddy directory, and set core.hooksPath back to the coddy.previousHooksPath that .git/config records, or, when that is empty or missing, unset core.hooksPath, never set it to an empty value."
 }
 self="${0##*/}" # how the caller names this command: coddy, or a shim's name
 code=1

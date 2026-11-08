@@ -388,9 +388,10 @@ review_rounds: 3             # optional; 1-5 (default 3)
 - To leave the workflow, from your own terminal delete the file, the claim
   locks under `.git/coddy` and the `.git/hooks/coddy` directory, and set
   `core.hooksPath` back to the `coddy.previousHooksPath` that `.git/config`
-  records, or unset it when none is. While a claim lock or the hooks
-  directory is left, a missing config reads as removed and the hooks refuse
-  everything. Every other skill refuses to run without the file.
+  records, or, when that is empty or missing, unset `core.hooksPath`, never
+  set it to an empty value. While a claim lock or the hooks directory is
+  left, a missing config reads as removed and the hooks refuse everything.
+  Every other skill refuses to run without the file.
 
 ## Related projects
 
