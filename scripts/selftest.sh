@@ -56,7 +56,7 @@ chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log"
 # A ps that is not there, as in a container image without procps: on PATH first when a case asks.
 mkdir "$tmp/nops"; printf '#!/bin/sh\nexit 127\n' > "$tmp/nops/ps"; chmod +x "$tmp/nops/ps"
 # A PATH with everything snap needs but jq (jj too, once the root holds a .jj).
-mkdir "$tmp/nojq"; for x in bash sed awk cat grep git jj cmp sort comm tr cut cksum mkdir cp rm head sleep stat xargs wc readlink; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
+mkdir "$tmp/nojq"; for x in bash sed awk cat grep git jj cmp sort comm tr cut cksum mkdir cp rm head sleep stat xargs wc readlink mktemp; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
 # A jq that fails whatever it is asked: on PATH first when a case asks.
 mkdir "$tmp/badjq"; printf '#!/bin/sh\nexit 1\n' > "$tmp/badjq/jq"; chmod +x "$tmp/badjq/jq"
 # kept <what>: sweep leaves worktree $p alone
@@ -2020,6 +2020,58 @@ away wire snap w; echo x > stray.txt; t 2 "hook: trip after a cd out of the proj
 away wire snap w; rm .claude/coddy.yml; t 2 "hook: trip after a cd out of the project restores a deleted config" away wire trip w
 t 0 "hook: and the config came back" same
 wire snap w; t 0 "hook: a cd out of the project is not a change" away wire trip w
+# snap leaves a mark for its session in .git/coddy, which create and claim
+# read through the shim from any TMPDIR (a sandbox's differs): none from
+# this session in the last 60 s means its hooks did not run, which they say.
+# hsnap <session> [TMPDIR]: snap, as Claude Code runs it for that session
+hsnap() { printf '{"session_id":"%s","tool_use_id":"w"}' "$1" | TMPDIR=${2:-${TMPDIR:-/tmp}} run snap >/dev/null 2>&1; }
+off() { says '^hooks: off: .*disableAllHooks.*allowManagedHooksOnly.*coddy@coddy.*2\.1\.139' "$@"; }
+rm -f .git/coddy/.snap-*
+t 0 "hooks: create with no snap for this session says the hooks are off, with the causes" off run create 43 feat/43-thing
+t 0 "hooks: so does claim" off run claim 43
+hsnap sess-b
+t 0 "hooks: another session's snap does not quiet it" off run create 43 feat/43-thing
+mkdir "$tmp/sbx"; hsnap sess-a "$tmp/sbx"
+t 1 "hooks: right after this session's snap under another TMPDIR, create does not say it" off run create 43 feat/43-thing
+t 1 "hooks: nor claim" off run claim 43
+touch -t 202001010000 .git/coddy/.snap-sess-a
+t 0 "hooks: a mark over 60 s old is hooks off" off run claim 43
+: > .git/coddy/.snap-old; touch -t 202001010000 .git/coddy/.snap-old; hsnap sess-c
+t 1 "hooks: a session's first snap prunes marks over a day old" test -e .git/coddy/.snap-old
+t 0 "hooks: and keeps a newer one" test -e .git/coddy/.snap-sess-b
+hsnap '../../a/b'
+t 0 "hooks: a session id is kept to a plain word inside .git/coddy" test -e .git/coddy/.snap-ab
+rm -f .git/coddy/.snap-*
+# Claude Code's settings files, which can turn the hooks off: a shell write
+# of anything but permissions.allow trips, and is left as it is.
+# setting <expected exit> <name> <file> <json>: snap, a shell write of json to file, trip
+setting() { wire snap w; printf '%s\n' "$4" > "$3"; wire trip w 2>"$tmp/trip.err"; r=$?; t 0 "$2" test "$r" = "$1"; }
+al='"permissions":{"allow":["Bash(ls)"],"deny":["Bash(rm)"]}'
+echo .claude/settings.local.json >> .git/info/exclude
+for f in .claude/settings.json .claude/settings.local.json; do
+  printf '{%s}\n' "$al" > "$f"
+  for kv in '"hooks":{"PreToolUse":[]}' '"env":{"X":"1"}' '"disableAllHooks":true' '"enabledPlugins":{"coddy@coddy":false}'; do
+    k=${kv%%:*}; setting 2 "settings: a shell write of ${k//\"/} into $f trips" "$f" "{$kv,$al}"
+    t 0 "settings: naming the file and what a change there can do" grep -qF "that command changed $f, the agent's settings for this project, where a change can turn coddy's hooks off or change what runs outside the sandbox" "$tmp/trip.err"
+    t 0 "settings: and left as the command wrote it" grep -qF "$kv" "$f"
+    printf '{%s}\n' "$al" > "$f"
+  done
+  setting 2 "settings: permissions.defaultMode in $f trips" "$f" '{"permissions":{"allow":["Bash(ls)"],"deny":["Bash(rm)"],"defaultMode":"bypassPermissions"}}'
+  printf '{%s}\n' "$al" > "$f"
+  setting 0 "settings: a change to permissions.allow alone in $f, keys reordered and spaced, is quiet" "$f" '{ "permissions" : { "deny" : ["Bash(rm)"], "allow" : ["Bash(ls)", "Bash(cat)"] } }'
+done
+t 0 "settings: .claude/settings.local.json is git-ignored here" git check-ignore -q .claude/settings.local.json
+printf '{}\n' > .claude/settings.json
+setting 0 "settings: a permissions.allow added where none was is quiet" .claude/settings.json '{"permissions":{"allow":["Bash(ls)"]}}'
+wire snap w; rm .claude/settings.json; wire trip w 2>"$tmp/trip.err"; r=$?
+t 0 "settings: deleting one trips" test "$r" = 2
+printf '{%s}\n' "$al" > .claude/settings.json
+PATH="$tmp/nojq" wire snap w; PATH="$tmp/nojq" wire trip w 2>/dev/null; r=$?
+t 0 "settings: without jq, no change is quiet" test "$r" = 0
+PATH="$tmp/nojq" wire snap w; printf '{%s}\n' '"permissions":{"allow":["Bash(cat)"],"deny":["Bash(rm)"]}' > .claude/settings.json; PATH="$tmp/nojq" wire trip w 2>"$tmp/trip.err"; r=$?
+t 0 "settings: without jq, a change to permissions.allow alone trips, by the whole file's hash" test "$r" = 2
+t 0 "settings: naming the file" grep -qF "that command changed .claude/settings.json," "$tmp/trip.err"
+rm -f .claude/settings.json .claude/settings.local.json
 # detect <line> [VAR=value...]: detect.sh prints exactly that line
 detect() { line=$1; shift; env CLAUDE_PROJECT_DIR="$repo" "$@" "$BASH" "$here/scripts/detect.sh" 2>/dev/null | grep -qx "$line"; }
 detect_remote() {

@@ -1311,6 +1311,11 @@ mv "$hooks" "$tmp/hooks.aside"
 tripped 0 "tripwire: without .git/hooks/coddy, a core.hooksPath change is quiet" 'git config core.hooksPath .husky/_'
 mv "$tmp/hooks.aside" "$hooks"; git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
 t 0 "tripwire: start put them back" test "$(git config core.hooksPath)" = "$hooks"
+# hooks: off is for an adapter that runs the shell hooks (CODDY_HOOKS) alone:
+# the core run without it never says it, and with it names what it holds.
+t 1 "hooks: start without CODDY_HOOKS never says the hooks are off" says 'hooks: off' run start 1 feat/1-thing
+t 1 "hooks: nor claim" says 'hooks: off' run claim 1
+CODDY_HOOKS="the causes." t 0 "hooks: with it and no snap mark for the session, start does, naming them" says '^hooks: off: .* the causes\.$' run start 1 feat/1-thing
 # A moved checkout's core.hooksPath names coddy's hooks by the old path: start
 # keeps the record of the one before rather than taking that one for it.
 mv1="$tmp/mv1" mv2="$tmp/mv2"

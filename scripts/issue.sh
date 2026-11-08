@@ -45,6 +45,10 @@ case "${1-}" in guard|snap|trip|link) ;; *)
   case "$(pwd -P)/" in "${real:-//}"/*) ;; *) CLAUDE_PROJECT_DIR=$PWD ;; esac
   unset real ;;
 esac
+# CODDY_HOOKS: Claude Code runs coddy's shell hooks, so start and claim print
+# hooks: off, and these causes, when snap left no mark for this session
+# before them.
+CODDY_HOOKS="Likely causes: disableAllHooks set in a settings file or passed with --settings; managed settings with allowManagedHooksOnly whose enabledPlugins does not force-enable coddy@coddy; a Claude Code older than 2.1.139, which cannot run coddy's hooks."
 CODDY_ROOT="${CLAUDE_PROJECT_DIR-}" CODDY_SESSION="${CLAUDE_CODE_SESSION_ID-}" CODDY_PID="${CLAUDE_PID-}" CODDY_AGENT_DIR=.claude
-export CODDY_ROOT CODDY_SESSION CODDY_PID CODDY_AGENT_DIR
+export CODDY_ROOT CODDY_SESSION CODDY_PID CODDY_AGENT_DIR CODDY_HOOKS
 . "${0%/*}/../bin/coddy"
