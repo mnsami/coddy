@@ -68,8 +68,13 @@ edit guard does run (the core called another way) it refuses every edit.
 
 You also need:
 
-- bash 3.2 or later. The hooks run the first `bash` on Claude Code's `PATH`
-  (on macOS that may be `/bin/bash`, 3.2); `coddy doctor` prints which one.
+- bash 3.2 or later. The hooks start under `/bin/sh` and run the first
+  `bash` on Claude Code's `PATH` (on macOS that may be `/bin/bash`, 3.2),
+  and find their tools there, past every entry that is empty, relative or
+  inside the project, where a command could plant a `bash`, `git` or `jq`
+  that would run outside the sandbox. So tools that live only in the project
+  (`.venv/bin`, devbox) do not count, and with no `bash` left every edit and
+  shell command is refused. `coddy doctor` prints which `bash` they run.
 - `jq`. The edit guard needs it and blocks every edit without a working one.
 - Optionally `jj` ([Jujutsu](https://jj-vcs.github.io)), for `worktree: jj`;
   `worktree: git`, the default, needs nothing more. `/coddy:onboard`
@@ -163,7 +168,7 @@ When the hooks keep refusing, there are three ways out: run the command
 from your own terminal, disable the plugin
 (`claude plugin disable coddy@coddy`), or start a session with every hook
 off (`claude --settings '{"disableAllHooks": true}'`). On native Windows,
-or a host without `bash` or `/usr/bin/env`, the hooks cannot start, which
+or a host without `/usr/bin/env` or `/bin/sh`, the hooks cannot start, which
 from Claude Code 2.1.295 refuses every edit and shell command, so disable
 the plugin there.
 
@@ -255,8 +260,8 @@ none of them off. The hooks run coddy through a launcher, a link in the
 plugin's data directory that each Claude Code session points at the current
 install, so an update leaves them as they are; never a `coddy` on `PATH`.
 They run it under a `bash` from `PATH`, and it finds its tools there, past
-every entry that is relative or inside the repository; the old hook gets
-`PATH` as it was. `/coddy:start` refuses to write hooks that would run a
+every entry that is relative or inside the repository, as the Claude Code
+hooks do; the old hook gets `PATH` as it was. `/coddy:start` refuses to write hooks that would run a
 coddy inside the project or a worktree of it, which a sandboxed command
 could rewrite. A hook whose coddy is gone
 refuses and says, in words, what puts it back, that `--no-verify` skips it

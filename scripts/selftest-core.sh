@@ -260,6 +260,22 @@ mkdir s2d && ln -s "$repo/s2d" "$tmp/s2"
 t 2 "guard reads .. by name, so one after a link back into the project is not .coddy.yml" guard "$tmp/s2/../.coddy.yml"
 rm -r s2d "$tmp/s2"
 t 2 "guard blocks the main checkout" guard "$repo/README.md"
+# The hooks drop every PATH entry at or under the root they resolve before
+# they run a tool, so one opened in a subdirectory, whose launcher went by
+# that directory, runs no jq or sed planted in the root.
+mkdir nm; for x in sed jq; do printf '#!/bin/sh\necho %s >> "%s/planted"\nexit 0\n' "$x" "$tmp" > "nm/$x"; chmod +x "nm/$x"; done
+PATH="$repo/nm:$PATH" CODDY_ROOT="$repo/sub" t 0 "hooks: guard from a subdirectory reads the payload past a jq in the root" says 'edits belong in an issue worktree' guard "$repo/README.md"
+PATH="$repo/nm:$PATH" CODDY_ROOT="$repo/sub" wire snap w; echo x > stray.txt
+PATH="$repo/nm:$PATH" CODDY_ROOT="$repo/sub" t 2 "hooks: snap and trip from a subdirectory, past a jq and a sed in the root, still trip" wire trip w
+t 1 "hooks: and none ran a planted one" test -e "$tmp/planted"
+rm -r nm stray.txt
+# The fingerprint hashes a dirty file as it is: a clean filter the
+# attributes name is a program, and none runs.
+git config filter.mark.clean "echo x >> '$tmp/filtered'; cat"; echo 'filtered.txt filter=mark' > .git/info/attributes; echo x > filtered.txt
+tripped 0 "fingerprint: a dirty file under a clean filter, unchanged, is quiet" 'true'
+tripped 2 "fingerprint: and changed, trips" 'echo y > filtered.txt'
+t 1 "fingerprint: and no clean filter ran" test -e "$tmp/filtered"
+rm .git/info/attributes filtered.txt; git config --unset filter.mark.clean
 PATH="$tmp/nojq" t 2 "guard without jq fails closed" guard "$repo/.coddy.yml"
 echo 'guard: warn' >> .coddy.yml
 t 0 "warn: guard still asks on .coddy.yml" asks "$repo/.coddy.yml"
@@ -1202,15 +1218,25 @@ t 0 "doctor: a CDPATH does not move it" sh -c "cd '$here' && CDPATH='$gh' HOME='
 mkdir -p "$tmp/dl/real/bin" "$tmp/dl/x"; cp "$here/bin/coddy" "$tmp/dl/real/bin/"; ln -s ../real/bin "$tmp/dl/x/bin"
 t 0 "doctor: through a linked bin/, the real install dir" says "^install: $(cd "$tmp/dl/real" && pwd -P)\$" env CODDY_ROOT="$tmp" "$tmp/dl/x/bin/coddy" doctor
 t 0 "doctor: outside a project, the five install lines alone" test "$(CODDY_ROOT="$tmp" "$here/bin/coddy" doctor | wc -l)" -eq 5
-t 0 "doctor: the bash on PATH" says "^bash: $(command -v bash) [0-9]*\.[0-9]*\.[0-9]*\$" env CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
+# The bash the hooks run: the first on PATH, its directory spelled
+# physically, past every entry that is empty, relative or in the project.
+pbash() { local d; d=$(command -v bash) && d=$(cd -P "${d%/*}" && pwd -P) && echo "$d/bash"; }
+ptmp=$(cd -P "$tmp" && pwd -P); mkdir "$tmp/np"
+t 0 "doctor: the bash on PATH" says "^bash: $(pbash) [0-9]*\.[0-9]*\.[0-9]*\$" env CODDY_ROOT="$tmp" "$here/bin/coddy" doctor
+mkdir "$repo/nm"; printf '#!/bin/sh\necho 9.9.9\n' > "$repo/nm/bash"; chmod +x "$repo/nm/bash"
+for w in "an entry in the project:$repo:$repo/nm" "one in the root, from a subdirectory:$repo/sub:$repo/nm" "a relative entry:$repo:nm" "an empty entry:$repo/nm:"; do
+  IFS=: read -r a r e <<<"$w"
+  t 0 "doctor: the bash the hooks run, past $a" says "^bash: $(pbash) [0-9]*\.[0-9]*\.[0-9]*\$" sh -c 'cd "$1" && PATH="$2:$PATH" CODDY_ROOT="$1" "$3" "$4" doctor' - "$r" "$e" "$BASH" "$here/bin/coddy"
+done
+rm -r "$repo/nm"
 mkdir "$tmp/nobash"; for x in sed head uname tr git readlink; do p=$(command -v "$x") && ln -s "$p" "$tmp/nobash/$x"; done
 t 0 "doctor: no bash on PATH" says '^bash: missing$' env PATH="$tmp/nobash" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
 t 0 "doctor: and exits 0 for it" env PATH="$tmp/nobash" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
 mkdir "$tmp/c"$'\n'"b"; ln -s "$BASH" "$tmp/c"$'\n'"b/bash"
-t 0 "doctor: a bash whose path holds a line break, on one line" says "^bash: $tmp/cb/bash [0-9]*\.[0-9]*\.[0-9]*\$" env PATH="$tmp/c"$'\n'"b:$PATH" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
-t 0 "doctor: a function named bash is not the bash on PATH" says "^bash: $(command -v bash) [0-9]*\.[0-9]*\.[0-9]*\$" env 'BASH_FUNC_bash%%=() { echo 9.9.9; }' CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
+t 0 "doctor: a bash whose path holds a line break, on one line" says "^bash: $ptmp/cb/bash [0-9]*\.[0-9]*\.[0-9]*\$" env PATH="$tmp/c"$'\n'"b:$PATH" CODDY_ROOT="$tmp/np" "$BASH" "$here/bin/coddy" doctor
+t 0 "doctor: a function named bash is not the bash on PATH" says "^bash: $(pbash) [0-9]*\.[0-9]*\.[0-9]*\$" env 'BASH_FUNC_bash%%=() { echo 9.9.9; }' CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
 mkdir "$tmp/fakebash"; printf '#!/bin/sh\necho ..\n' > "$tmp/fakebash/bash"; chmod +x "$tmp/fakebash/bash"
-t 0 "doctor: a bash that prints no version reads unknown" says "^bash: $tmp/fakebash/bash unknown\$" env PATH="$tmp/fakebash:$PATH" CODDY_ROOT="$tmp" "$BASH" "$here/bin/coddy" doctor
+t 0 "doctor: a bash that prints no version reads unknown" says "^bash: $ptmp/fakebash/bash unknown\$" env PATH="$tmp/fakebash:$PATH" CODDY_ROOT="$tmp/np" "$BASH" "$here/bin/coddy" doctor
 
 # doctor in a project: a line per check, ok or the problem with its fix; exit 1 on any; writes nothing.
 dp="$tmp/dp"; git init -q --bare "$tmp/dorigin.git"; git clone -q "$tmp/dorigin.git" "$dp" 2>/dev/null

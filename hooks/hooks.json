@@ -4,7 +4,7 @@
       {
         "matcher": "startup|resume",
         "hooks": [
-          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "OSTYPE", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "link", "${CLAUDE_PLUGIN_DATA}"] }
+          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "POSIX_PEDANTIC", "-u", "OSTYPE", "/bin/sh", "${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh", "link", "${CLAUDE_PLUGIN_DATA}"] }
         ]
       }
     ],
@@ -12,13 +12,13 @@
       {
         "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
-          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "OSTYPE", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "guard"], "onFailure": "block", "timeout": 10 }
+          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "POSIX_PEDANTIC", "-u", "OSTYPE", "/bin/sh", "${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh", "guard"], "onFailure": "block", "timeout": 10 }
         ]
       },
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "OSTYPE", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "snap"], "onFailure": "block", "timeout": 60 }
+          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "POSIX_PEDANTIC", "-u", "OSTYPE", "/bin/sh", "${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh", "snap"], "onFailure": "block", "timeout": 60 }
         ]
       }
     ],
@@ -26,7 +26,7 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "OSTYPE", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "trip"] }
+          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "POSIX_PEDANTIC", "-u", "OSTYPE", "/bin/sh", "${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh", "trip"] }
         ]
       }
     ],
@@ -34,7 +34,7 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "OSTYPE", "bash", "-p", "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "trip"] }
+          { "type": "command", "command": "/usr/bin/env", "args": ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "POSIX_PEDANTIC", "-u", "OSTYPE", "/bin/sh", "${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh", "trip"] }
         ]
       }
     ]
