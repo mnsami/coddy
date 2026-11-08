@@ -1271,9 +1271,11 @@ gitwts() {
 # A jj workspace listing that failed failed for real: a jj repository is
 # here (.jj/repo) and the jj on PATH names a workspace's root (0.38 on).
 # No jj, an empty .jj or an older jj lists no workspace, as it always has.
+# Its version is read outside the repository: a repo config a command broke
+# fails jj there, --version included.
 jjfailed() {
   local re='^jj ([0-9]{1,6})\.([0-9]{1,6})'
-  [ -e .jj/repo ] && [[ $(jj --version 2>/dev/null) =~ $re ]] && { [ "${BASH_REMATCH[1]}" != 0 ] || [ "${BASH_REMATCH[2]}" -ge 38 ]; }
+  [ -e .jj/repo ] && [[ $(cd / && jj --version 2>/dev/null) =~ $re ]] && { [ "${BASH_REMATCH[1]}" != 0 ] || [ "${BASH_REMATCH[2]}" -ge 38 ]; }
 }
 # ins, for inproj: the root, where the call began and every worktree of the
 # repository, git's and, under worktree: jj, jj's (listed as snap lists
@@ -1380,9 +1382,10 @@ out() {
 # that fails, its own exit read in the process substitution (bash 3.2 has
 # no wait for one) and written past the reader on fd 8: git status
 # ("unchecked status"), git worktree list ("unchecked list", gitwts's
-# status) and jj workspace list ("unchecked jj", as jjfailed has it). A
-# failed listing is no empty one, which would hide the command's change or
-# name a worktree that was there before as made. The count of dirty
+# status) and jj workspace list ("unchecked jj", as jjfailed has it), git's
+# two where the root holds a .git (a plain jj root has none, and git fails
+# there by design). A failed listing is no empty one, which would hide the
+# command's change or name a worktree that was there before as made. The count of dirty
 # paths goes to fd 5 once git status has listed them. A dirty path that is
 # not clean is printed
 # quoted (q), so none spans two lines. A submodule shows as one gone line
@@ -1429,7 +1432,7 @@ snap() {
     r=${p#"$R"}
     [ "$r" != "$p" ] && clean "$r" && { [ -z "$r" ] || { coddywt "$p" && real "$p"; }; } ||
       out "git worktree at $(q "$p") (git worktree remove)" "$k" "$g"
-  done < <([ -n "$nowt" ] || gitwts || echo 'unchecked list' >&8)
+  done < <([ -n "$nowt" ] || gitwts || [ ! -d .git ] || echo 'unchecked list' >&8)
   [ -z "$C" ] || for d in "$C"/worktrees/*/ "$C"/worktrees/.[!.]*/ "$C"/worktrees/..?*/; do [ ! -d "$d" ] || { d=${d%/}; printf -v g 'git %q' "${d##*/}"; echo "$g" >&3
     [ -z "$nowt" ] || [[ $seen == *$'\n'"$g"$'\n'* ]] || out "git worktree whose admin dir is $(q "$d") (git worktree remove)" "$g" ""; }; done
   # No colour or pager, whatever the config says. One listing: each name,
@@ -1459,7 +1462,7 @@ snap() {
       if [ ! -f "$p" ]; then clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"
       else case "$p" in *$'\n'*) nl[nn]=$p; nn=$((nn+1)) ;; *) files[n]=$p; n=$((n+1)) ;; esac; fi
     done
-  done < <(hgit status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null || echo 'unchecked status' >&8)
+  done < <(hgit status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null || [ ! -d .git ] || echo 'unchecked status' >&8)
   { echo "$dp" >&5; } 2>/dev/null
   [ "$((n + nn))" -gt 0 ] || return 0
   sflav

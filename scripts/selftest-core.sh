@@ -504,6 +504,8 @@ printf '#!/bin/sh\ncase " $* " in *" ${FAIL:?} "*) exit 128 ;; esac\nexec "%s" "
 printf '#!/bin/sh\n[ "$1" != --version ] || { echo "jj 0.46.0"; exit 0; }\nexit 1\n' > "$tmp/jjnew/jj"
 printf '#!/bin/sh\n[ "$1" != --version ] || { echo "jj 0.37.0"; exit 0; }\nexit 1\n' > "$tmp/jjold/jj"
 printf '#!/bin/sh\nexit 127\n' > "$tmp/nojj/jj"; chmod +x "$tmp/fsrc/git" "$tmp/jjnew/jj" "$tmp/jjold/jj" "$tmp/nojj/jj"
+# A repo config jj cannot read fails it inside the repository, --version included.
+mkdir "$tmp/jjbad"; printf '#!/bin/sh\n[ "$1" != --version ] || [ -e .jj/repo ] || { echo "jj 0.46.0"; exit 0; }\nexit 1\n' > "$tmp/jjbad/jj"; chmod +x "$tmp/jjbad/jj"
 # unchecked <source> <the call, as named> <stub dir> [stub dir for a snap that works]:
 # the source failing at snap and trip, twice, then at trip alone
 unchecked() {
@@ -522,10 +524,16 @@ unchecked() {
 FAIL=status unchecked "git status" "git status" "$tmp/fsrc"
 FAIL='worktree list' unchecked "git worktree list" "git worktree list" "$tmp/fsrc"
 mkdir -p .jj/repo; unchecked "jj workspace list in a jj repository" "jj workspace list" "$tmp/jjnew" "$tmp/nojj"
+unchecked "jj workspace list on a repo config jj cannot read" "jj workspace list" "$tmp/jjbad" "$tmp/nojj"
 PATH="$tmp/jjold:$PATH" tripped 0 "unchecked: a jj before 0.38 failing lists no workspace, as before" 'true'
 PATH="$tmp/nojj:$PATH" tripped 0 "unchecked: no jj lists no workspace, as before" 'true'
 rmdir .jj/repo; PATH="$tmp/jjnew:$PATH" tripped 0 "unchecked: an empty .jj lists no workspace, as before" 'true'
 rmdir .jj
+# A root with no .git (a plain jj root) has no git to fail: git status and
+# git worktree list failing there by design leave the run checked.
+mkdir "$tmp/nogit"; cp .coddy.yml "$tmp/nogit/"
+CODDY_ROOT="$tmp/nogit" tripped 0 "unchecked: a root with no .git runs checked, as before" 'true'
+rm -r "$tmp/nogit"
 # A git worktree there before, its listing failing at snap alone, is named
 # neither made nor moved: the run is unchecked.
 git worktree add -q --detach "$tmp/owt"
@@ -549,7 +557,7 @@ out=$(wire trip w 2>&1); r=$?
 t 0 "unchecked: and trip reports it" test "$r" = 2
 t 0 "unchecked: as a fingerprint that failed, not a snapshot the command touched" grep -q 'ran unchecked: .*since the fingerprint failed' <<<"$out"
 tripped 0 "unchecked: the next command is checked afresh" 'true'
-rm -r "$tmp/fsrc" "$tmp/nosort" "$tmp/jjnew" "$tmp/jjold" "$tmp/nojj"
+rm -r "$tmp/fsrc" "$tmp/nosort" "$tmp/jjnew" "$tmp/jjold" "$tmp/nojj" "$tmp/jjbad"
 # A file git cannot read in its place is a change like any other.
 report "config: an unreadable file in its place trips" 'echo "guard: warn" > .coddy.yml && chmod 000 .coddy.yml'
 t 0 "config: and is restored" same .coddy.yml
