@@ -630,7 +630,15 @@ for p in "none:$tmp/nobash" "one in the project alone:$repo/nm" "a relative one 
   t 2 "launcher: refuses with no bash on PATH outside the project, ${p%%:*}" hook guard "$agent" PATH="${p#*:}"
   t 0 "launcher: and says so, ${p%%:*}" says 'no bash on PATH outside the project at' hook guard "$agent" PATH="${p#*:}"
 done
-rm -r nm sub bash git sed jq "$tmp/nobash"
+# A bash it picks that cannot run (an interpreter that is gone, a file that is
+# no program) is refused the same way, exit 2, never /bin/sh's own 1, 126 or 127.
+mkdir "$tmp/badint" "$tmp/badbin"; printf '#!/nonexistent/sh\n' > "$tmp/badint/bash"; printf '\177ELF\001\001\001\000\000\000' > "$tmp/badbin/bash"; chmod +x "$tmp/badint/bash" "$tmp/badbin/bash"
+for d in badint badbin; do
+  t 2 "launcher: guard refuses when the bash it picks cannot run ($d)" hook guard "$agent" PATH="$tmp/$d:$PATH"
+  t 2 "launcher: snap refuses when the bash it picks cannot run ($d)" hook snap "$(payload true)" PATH="$tmp/$d:$PATH"
+  t 0 "launcher: and says so ($d)" says 'cannot run, so the coddy guard hook' hook guard "$agent" PATH="$tmp/$d:$PATH"
+done
+rm -r nm sub bash git sed jq "$tmp/nobash" "$tmp/badint" "$tmp/badbin"
 # git and jj read the user's config from HOME and XDG_CONFIG_HOME: one in the
 # project, whose core.fsmonitor would leave a mark, makes snap refuse before
 # its first git call, in either guard mode, naming the variable, and trip

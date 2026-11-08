@@ -13,7 +13,10 @@
 # topmost one holding a .git at all and, with none git takes, the project a
 # /.worktrees/ path names, since root resolution walks past a .git that is
 # no repository, a link or a commondir, and a command can plant those. The rest
-# is kept in its physical spelling, and the first bash left runs; bin/coddy
+# is kept in its physical spelling, and the first bash left runs, once a -c :
+# of it has: one that cannot run is refused, exit 2, as no bash is, since
+# /bin/sh's own exit for an exec that fails (1, 126, 127) blocks nothing;
+# a bash that goes between the two still gets that exit. bin/coddy
 # drops those at or under the root it resolves too (unpath, the same walk).
 # Shell builtins alone until then. POSIX sh, run without -p, which dash and
 # BusyBox reject.
@@ -43,4 +46,5 @@ done
 [ -n "$b" ] || { printf '%s\n' "coddy: no bash on PATH outside the project at $r, so the coddy ${1-} hook cannot run, and the call is refused. An entry that is empty, relative or lies in the project is skipped, since a command in the project could plant a bash there." >&2; exit 2; }
 PATH=$n
 export PATH
+"$b" -p -c : </dev/null >/dev/null 2>&1 || { printf '%s\n' "coddy: the bash at $b, the first on PATH outside the project, cannot run, so the coddy ${1-} hook cannot run, and the call is refused." >&2; exit 2; }
 exec "$b" -p "${0%/*}/issue.sh" "$@"
