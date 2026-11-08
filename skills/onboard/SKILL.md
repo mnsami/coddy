@@ -16,7 +16,7 @@ A `git_dir:` line in Detected → stop and show that line as it is; write nothin
 
 `os: windows` → stop and write nothing: say coddy runs on macOS, Linux and WSL, not on native Windows (Git Bash, MSYS2, Cygwin).
 
-`config: present` or `legacy_config: present` → stop and write nothing: the project is onboarded already (`.coddy.yml`, or `.claude/coddy.yml` from an earlier version); run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" migrate` (read-only): a `changed:` line → it is behind: bring it up to date with `/coddy:migrate`; non-zero → say what it printed; else a setting changes with `/coddy:config`; starting over is deleting the config, and `.claude/coddy/onboard-answers.json` when it is there (left behind, it resumes every saved step as answered), by hand, then `/coddy:onboard` again.
+`config: present` or `legacy_config: present` → stop and write nothing: the project is onboarded already (`.coddy.yml`, or `.claude/coddy.yml` from an earlier version); run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" migrate` (read-only): a `changed:` line → it is behind: bring it up to date with `/coddy:migrate`; non-zero → say what it printed; else a setting changes with `/coddy:config`; starting over is, from the user's own terminal, deleting the config, the claim locks under `.git/coddy`, the `.git/hooks/coddy` directory and `.claude/coddy/onboard-answers.json` when it is there (left behind, it resumes every saved step as answered), and setting `core.hooksPath` back to the `coddy.previousHooksPath` that `.git/config` records, or unsetting it when none is (the config alone removed, coddy refuses every edit and command), then `/coddy:onboard` again.
 
 ## Config schema: `.coddy.yml`
 

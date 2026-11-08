@@ -370,7 +370,7 @@ left() {
     done
     [ -n "$l" ] || return 1
   fi
-  tm="no config file is at .coddy.yml or $legacy, yet $l is there, which only a project in the workflow leaves, so the config was removed, not never written, and coddy refuses every edit, shell command, commit and push until either the config is back (write .coddy.yml with the Write tool, which asks you first) or you finish leaving the workflow from your own terminal: remove the claim locks under .git/coddy and the .git/hooks/coddy directory, and set core.hooksPath back to the coddy.previousHooksPath that .git/config records, or unset it when none is recorded."
+  tm="no config file is at .coddy.yml or $legacy, yet $l is there, which only a project in the workflow leaves, so the config was removed, not never written, and coddy refuses every edit, shell command, commit and push until either the config is back (write .coddy.yml with the Write tool, which asks you first, or, when git tracks it, restore it from HEAD with git in your own terminal) or you finish leaving the workflow from your own terminal: remove the claim locks under .git/coddy and the .git/hooks/coddy directory, and set core.hooksPath back to the coddy.previousHooksPath that .git/config records, or unset it when none is recorded."
 }
 self="${0##*/}" # how the caller names this command: coddy, or a shim's name
 code=1
@@ -701,7 +701,8 @@ if [ "${1-}" = guard ]; then
   nf="the edit guard could not follow $f to where the edit lands (a cd or readlink failed, a link or directory into /proc or /dev/fd, more than 40 links, a path past 4096 bytes, a .. after a missing directory, or more than $budget seconds)."
   nm=$(byname "$f" && printf x) && nm=${nm%?x} && at=$(phys "$nm" new) && at=${at%x} || die "$nf"
   pr=$(cd "$root" && pwd -P && printf x) && pr=${pr%?x} || pr=$root
-  ask() { jqh -cn --arg m "Editing $1 changes the coddy guardrails. Allow it only if you asked for this change (/coddy:config)." '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'; exit 0; }
+  # Removed (tamp), /coddy:config stops on NOT_ONBOARDED, so the ask names none.
+  ask() { local m="Editing $1 changes the coddy guardrails. Allow it only if you asked for this change (/coddy:config)."; [ -z "$tamp" ] || m="Writing $1 puts back the coddy config that was removed, and with it the coddy guardrails. Allow it only if you asked for this change."; jqh -cn --arg m "$m" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'; exit 0; }
   lc=$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')
   if [ "$nm" -ef "$root/.coddy.yml" ] || { [ "${at%/*}" -ef "$pr" ] && [ "$lc" = .coddy.yml ]; }; then ask .coddy.yml; fi
   # Removed (tamp): putting a config back is the one edit allowed, the

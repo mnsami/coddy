@@ -1130,8 +1130,10 @@ tm=$(guard "$repo/README.md" 2>&1)
 t 0 "removed config: guard names the config and the hooks directory" grep -q 'no config file is at .coddy.yml or .claude/coddy.yml, yet .git/hooks/coddy is there' <<<"$tm"
 t 0 "removed config: and both ways out, in words" grep -q 'write .coddy.yml with the Write tool.*remove the claim locks under .git/coddy and the .git/hooks/coddy directory, and set core.hooksPath back' <<<"$tm"
 t 1 "removed config: with no command to paste" grep -qE 'git config |rm -|`' <<<"$tm"
+t 0 "removed config: and that a tracked config comes back from HEAD in your own terminal" grep -qF 'when git tracks it, restore it from HEAD with git in your own terminal' <<<"$tm"
 t 2 "removed config: guard refuses a path outside the project too" guard "$tmp/elsewhere.txt"
 t 0 "removed config: a Write of .coddy.yml is asked" asks "$repo/.coddy.yml"
+t 1 "removed config: naming no /coddy:config, which stops without a config" grep -qF '/coddy:config' <<<"$out"
 lasks() { out=$(guard "$1") && jq -e '.hookSpecificOutput.permissionDecision == "ask" and (.hookSpecificOutput.permissionDecisionReason | contains(".claude/coddy.yml"))' <<<"$out"; }
 t 0 "removed config: and one of .claude/coddy.yml" lasks "$repo/.claude/coddy.yml"
 t 2 "removed config: but no other edit under .claude/" guard "$repo/.claude/notes.md"
