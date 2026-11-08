@@ -554,7 +554,7 @@ wire snap w; echo x > stray.txt; t 2 "hooks: the PostToolUseFailure entry trips 
 # not checked here.
 rules() { sed -n 's/^allowed-tools: //p' "$1" | tr ',' '\n' | sed 's/^ *//;s/ *$//'; }
 mirror() {
-  local f body at all r p c short bad=0
+  local f body at all r p c calls ok short bad=0
   all=$(for f in "$1"/*/SKILL.md; do rules "$f"; done | sed -n 's/^mcp__.*__//p' | sort -u)
   for f in "$1"/*/SKILL.md; do
     body=$(awk '/^---$/{n++;next} n>=2' "$f"); at=$(rules "$f")
@@ -567,9 +567,19 @@ mirror() {
       done <<< "$at"
       [ $ok = 0 ] || { echo "$f: no rule for: $c" >&2; bad=1; }
     done <<< "$(printf '%s\n' "$body" | grep -o 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/[a-z]*\.sh"[^`]*')"
+    calls=$(printf '%s\n' "$body" | grep -o -e 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/[a-z]*\.sh"[^`]*' -e '`[^`]*`' | tr -d '`')
     while IFS= read -r r; do
-      case $r in mcp__*) p=${r##*__} ;; Bash\(*\)) p=${r#Bash(}; p=${p%)}; p=${p%:\*}; p=${p% \*} ;; *) p=$r ;; esac
-      printf '%s\n' "$body" | grep -qF -- "$p" || { echo "$f: unused rule: $r" >&2; bad=1; }
+      ok=1
+      case $r in
+        mcp__*) printf '%s\n' "$body" | grep -qF -- "${r##*__}" && ok=0 ;;
+        Bash\(*\)) p=${r#Bash(}; p=${p%)}; case $p in *:\*) p="${p%:\*} *" ;; esac
+          while IFS= read -r c; do
+            # shellcheck disable=SC2053 # the rule is a glob, as Claude Code matches it
+            [[ $c == $p ]] && { ok=0; break; }
+          done <<< "$calls" ;;
+        *) printf '%s\n' "$body" | grep -qF -- "$r" && ok=0 ;;
+      esac
+      [ $ok = 0 ] || { echo "$f: unused rule: $r" >&2; bad=1; }
     done <<< "$at"
     while IFS= read -r short; do
       [ -n "$short" ] || continue
@@ -608,6 +618,8 @@ t 1 "skills: an issue.sh verb called without its rule fails" skadd next "\`$R fr
 t 1 "skills: an injected script without its rule fails" skadd next "\`bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/detect.sh\"\`" mirror
 t 1 "skills: a rule no body uses fails" skrule next "Bash($R frobnicate *)" mirror
 t 1 "skills: an MCP tool named in backticks without its entry fails" skadd next '`create_pull_request`' mirror
+t 1 "skills: a claim rule with no operand, whose body calls always have one, fails" skrule start "Bash($R claim)" mirror
+t 1 "skills: a rule cut short of any call fails" skrule start "Bash($R cre *)" mirror
 t 0 "skills: a body calling take or drop without a rule passes" skadd next "\`$R take 7\` and \`$R drop 7 --force\`" mirror
 t 1 "skills: a body calling takeover without a rule fails" skadd next "\`$R takeover 7\`" mirror
 t 1 "skills: a body calling dropall without a rule fails" skadd next "\`$R dropall\`" mirror
