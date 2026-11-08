@@ -1148,6 +1148,9 @@ t 0 "removed config: a branch or base record, swept/ or a dot name is no leftove
 wire snap w; t 0 "removed config: and snap writes the not-onboarded snapshot" grep -qx NOT_ONBOARDED "$snapfile"; wire trip w
 t 0 "removed config: and githook hands off" run githook pre-commit
 rm .git/coddy/zz.base .git/coddy/.zz.tmp; [ -z "$sw" ] || rmdir .git/coddy/swept
+: > .git/coddy/9
+t 2 "removed config: a claim marker from before locks is a leftover too" guard "$repo/README.md"
+rm .git/coddy/9
 mv "$tmp/hooks-aside" "$hooks"
 t 2 "removed config: the git hooks directory alone is enough for guard" guard "$repo/README.md"
 t 2 "removed config: and for snap" wire snap w
