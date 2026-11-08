@@ -650,13 +650,16 @@ for v in block warn; do
   t "$w" "home: $v, guard is as it was on the main checkout under HOME=<root>" hook guard "$main" HOME="$repo"
   t 0 "home: $v, a HOME outside the project changes nothing" hook snap "$(payload true)" HOME="$tmp/away"
 done
+# A .. after a link goes where git's open goes, not where the name says.
+ln -s "$repo/.claude" "$tmp/hl"
+t 2 "home: snap refuses a HOME that reaches the root through a link and .." hook snap "$(payload true)" HOME="$tmp/hl/.."
 t 1 "home: and no fsmonitor ran" test -e "$tmp/planted"
 printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml; cp .claude/coddy.yml "$tmp/conf.home"
 hook snap "$(payload true)" >/dev/null; rm .claude/coddy.yml
 t 2 "home: trip refuses HOME=<root>" hook trip '{"tool_use_id":"sh"}' HOME="$repo"
 t 0 "home: after putting the config back" cmp -s .claude/coddy.yml "$tmp/conf.home"
 t 1 "home: and no fsmonitor ran there either" test -e "$tmp/planted"
-rm -r .gitconfig .claude/xdg "$tmp/away"; cp "$tmp/exclude" .git/info/exclude
+rm -r .gitconfig .claude/xdg "$tmp/away" "$tmp/hl"; cp "$tmp/exclude" .git/info/exclude
 t 1 "create rejects a bad issue id" run create "../x" feat/x
 t 1 "claim needs a worktree first" run claim 99
 

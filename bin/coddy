@@ -1501,14 +1501,15 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   }
   # git and jj read the user's config from HOME and XDG_CONFIG_HOME, and a
   # program it names (core.fsmonitor) runs outside the sandbox: one at or
-  # under the root, physically, or by name where it is not there yet, is one
+  # under the root, physically (cd -P, so a .. after a link goes where git's
+  # open goes), or by name where it is not there yet, is one
   # a command can write, so the hooks run no git there, in either guard
   # mode (snap before its first git call, trip after putting the config
   # back), hm naming the variable.
   homes() {
     local v x
     for v in HOME XDG_CONFIG_HOME; do
-      [ -n "${!v-}" ] && x=$(abspath "${!v}" "$R") || continue
+      [ -n "${!v-}" ] && { x=$(cd -P -- "$R" 2>/dev/null && cd -P -- "${!v}" 2>/dev/null && pwd -P) || x=$(abspath "${!v}" "$R"); } || continue
       while [ -n "$x" ]; do
         [ "$x" -ef "$R" ] && { hm="$v ($(q "${!v}")) lies in the project at $(q "$R"), where a shell command can write the git config git reads from there, whose core.fsmonitor would run a program outside the sandbox, so coddy runs no git and refuses every shell command until $v names a directory outside the project."; return 1; }
         x=${x%/*}
