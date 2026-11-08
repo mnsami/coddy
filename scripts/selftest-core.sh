@@ -5,7 +5,7 @@
 # under scripts/ and the full lifecycle are selftest.sh's.
 # Usage: bash scripts/selftest-core.sh
 set -u
-for v in "${!CLAUDE_@}"; do unset "$v" 2>/dev/null; done; unset CODDY_AGENT_DIR CODDY_EXEC 2>/dev/null
+for v in "${!CLAUDE_@}"; do unset "$v" 2>/dev/null; done; unset CODDY_AGENT_DIR CODDY_EXEC CODDY_HOOKS 2>/dev/null
 # macOS ships no timeout: perl's alarm, which the exec keeps, stands in (a run cut short exits 142, not 124)
 command -v timeout >/dev/null || timeout() { perl -e 'alarm shift; exec { $ARGV[0] } @ARGV or exit 127' "$@"; }
 here="$(cd "$(dirname "$0")/.." && pwd)"
