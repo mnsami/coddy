@@ -55,8 +55,8 @@ EOF
 chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log"
 # A ps that is not there, as in a container image without procps: on PATH first when a case asks.
 mkdir "$tmp/nops"; printf '#!/bin/sh\nexit 127\n' > "$tmp/nops/ps"; chmod +x "$tmp/nops/ps"
-# A PATH with everything snap needs but jq.
-mkdir "$tmp/nojq"; for x in bash sed awk cat grep git cmp sort comm tr cut cksum mkdir cp rm head sleep stat xargs wc; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
+# A PATH with everything snap needs but jq (jj too, once the root holds a .jj).
+mkdir "$tmp/nojq"; for x in bash sed awk cat grep git jj cmp sort comm tr cut cksum mkdir cp rm head sleep stat xargs wc readlink; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
 # A jq that fails whatever it is asked: on PATH first when a case asks.
 mkdir "$tmp/badjq"; printf '#!/bin/sh\nexit 1\n' > "$tmp/badjq/jq"; chmod +x "$tmp/badjq/jq"
 # kept <what>: sweep leaves worktree $p alone
@@ -516,15 +516,16 @@ t 2 "guard rejects .. paths hidden behind a newline" guard "$repo/.claude/x\\n/.
 mkdir -p .git/coddy/66 && echo "sess-f " > .git/coddy/66/owner # a claim run without CLAUDE_PID
 t 0 "guard reads an owner without a pid as running, as claim does" says "(pid , running)" guard "$repo/.worktrees/66/a.txt" sess-b
 rm -r .git/coddy/66
-# hook <verb> <payload> <NAME=value...>: that verb's first entry in
-# hooks/hooks.json, run as Claude Code runs exec form (no shell,
+# hook <verb> <payload> <NAME=value...>: the first entry in hooks/hooks.json
+# naming that verb, run as Claude Code runs exec form (no shell,
 # ${CLAUDE_PLUGIN_ROOT} substituted), with the variables a .claude/settings.json
-# env can put in its environment
-hook() { local v=$1 p=$2; shift 2; eval "set -- \"\$@\" $(jq -r --arg v "$v" --arg r "$here" 'first(.hooks[][].hooks[] | select(.args[-1]? == $v)) | [.command] + .args | map(split("${CLAUDE_PLUGIN_ROOT}") | join($r)) | @sh' "$here/hooks/hooks.json")"; printf %s "$p" | env CLAUDE_PROJECT_DIR="$repo" "$@"; }
-t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u FUNCNEST -u POSIXLY_CORRECT -u OSTYPE bash -p" jq -e '[.hooks[][].hooks[]] | all(.command == "/usr/bin/env" and .args[:12] == ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "OSTYPE", "bash", "-p"])' "$here/hooks/hooks.json"
+# env can put in its environment (a later CLAUDE_PROJECT_DIR wins)
+hook() { local v=$1 p=$2; shift 2; eval "set -- \"\$@\" $(jq -r --arg v "$v" --arg r "$here" 'first(.hooks[][].hooks[] | select(.args | index($v))) | [.command] + .args | map(split("${CLAUDE_PLUGIN_ROOT}") | join($r)) | @sh' "$here/hooks/hooks.json")"; printf %s "$p" | env CLAUDE_PROJECT_DIR="$repo" "$@"; }
+t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u FUNCNEST -u POSIXLY_CORRECT -u POSIX_PEDANTIC -u OSTYPE /bin/sh and the launcher" jq -e '[.hooks[][].hooks[]] | all(.command == "/usr/bin/env" and .args[:14] == ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "POSIX_PEDANTIC", "-u", "OSTYPE", "/bin/sh", "${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh"])' "$here/hooks/hooks.json"
+t 0 "hooks: the launcher is executable" test -x "$here/scripts/hook.sh"
 # On startup and resume alone: a /clear or compact in a session still running
 # an install an update replaced would point the launcher back at it.
-t 0 "hooks: SessionStart runs link with the plugin's data dir, on startup and resume alone" jq -e '.hooks.SessionStart | length == 1 and .[0].matcher == "startup|resume" and .[0].hooks[0].args[-3:] == ["${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh", "link", "${CLAUDE_PLUGIN_DATA}"]' "$here/hooks/hooks.json"
+t 0 "hooks: SessionStart runs link with the plugin's data dir, on startup and resume alone" jq -e '.hooks.SessionStart | length == 1 and .[0].matcher == "startup|resume" and .[0].hooks[0].args[-3:] == ["${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh", "link", "${CLAUDE_PLUGIN_DATA}"]' "$here/hooks/hooks.json"
 # guard and snap block on a failure, a timeout or a hook that cannot start
 # included (Claude Code 2.1.295 or later); trip and link set neither.
 t 0 "hooks: guard and snap block on a failure, with a 10 s and a 60 s timeout" jq -e '[.hooks.PreToolUse[].hooks[] | [.args[-1], .onFailure, .timeout]] == [["guard", "block", 10], ["snap", "block", 60]]' "$here/hooks/hooks.json"
@@ -558,7 +559,9 @@ for b in "" "$tmp/sysbash:"; do
   # bash takes OSTYPE from the environment, so one an env sets would refuse every edit.
   t 0 "hooks: OSTYPE=msys${b:+ under /bin/bash} leaves guard as it was" hook guard "{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/.claude/x\"}}" OSTYPE=msys PATH="$b$PATH"
   t 0 "hooks: snap${b:+ under /bin/bash} lets a command through" hook snap "$(payload true)" PATH="$b$PATH"
-  for e in SHELLOPTS=noexec BASHOPTS=failglob FUNCNEST=1 POSIXLY_CORRECT=1 GREP_OPTIONS=-V TMOUT=0.000001 "BASH_ENV=$tmp/exit0" 'BASH_FUNC_jq%%=() { printf /tmp/elsewhere; }'; do
+  # bash before 5.1 takes POSIX_PEDANTIC, as it does POSIXLY_CORRECT, for posix mode.
+  t 0 "hooks: POSIX_PEDANTIC=1${b:+ under /bin/bash} leaves snap letting a command through" hook snap "$(payload true)" POSIX_PEDANTIC=1 PATH="$b$PATH"
+  for e in SHELLOPTS=noexec BASHOPTS=failglob FUNCNEST=1 POSIXLY_CORRECT=1 POSIX_PEDANTIC=1 GREP_OPTIONS=-V TMOUT=0.000001 "BASH_ENV=$tmp/exit0" 'BASH_FUNC_jq%%=() { printf /tmp/elsewhere; }'; do
     w="$e${b:+ under /bin/bash}"
     t 2 "hooks: $w leaves guard on" hook guard "{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/README.md\"}}" "$e" PATH="$b$PATH"
     t 2 "hooks: $w leaves snap on" hook snap "$(payload 'git worktree add ../x')" "$e" PATH="$b$PATH"
@@ -568,6 +571,172 @@ for b in "" "$tmp/sysbash:"; do
     wire snap w; echo x > stray.txt; t 2 "hooks: $w leaves trip on" hook trip '{"tool_use_id":"w"}' "$e" PATH="$b$PATH"; rm stray.txt
   done
 done
+# The launcher (scripts/hook.sh) runs no bash, git, sed or jq a command in
+# the project could plant first on PATH: behind a relative entry, an empty
+# one (the hook's working directory, here the root) or an absolute one in the
+# project, by its spelling or a link on the way (nl, a link in the project to
+# a directory outside it, and via, one outside through nl), nor, for a
+# session opened in a subdirectory, one in the root it resolves to. Each
+# planted one leaves a mark, and none may.
+cp .git/info/exclude "$tmp/exclude"; printf '/nm/\n/nl\n/bash\n/git\n/sed\n/jq\n/.gitconfig\n' >> .git/info/exclude
+mkdir nm sub; for x in bash git sed jq; do printf '#!/bin/sh\necho %s >> "%s/planted"\nexit 0\n' "$x" "$tmp" > "nm/$x"; chmod +x "nm/$x"; cp "nm/$x" "$x"; done
+mkdir "$tmp/lo"; cp nm/* "$tmp/lo/"; ln -s "$tmp/lo" nl; ln -s "$repo/nl" "$tmp/via"
+agent="{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/.claude/x\"}}" main="{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/README.md\"}}"
+# from <dir> <command...>: the command, run from that directory
+from() { (cd "$1" && "${@:2}"); }
+# past <what> <dir> <NAME=value...>: every hook, run from dir, lets through and
+# refuses as it would with nothing planted, and runs nothing planted
+past() {
+  local w=$1 d=$2; shift 2; rm -f "$tmp/planted"
+  t 0 "launcher: guard lets the agent dir through past $w" from "$d" hook guard "$agent" "$@"
+  t 2 "launcher: guard blocks the main checkout past $w" from "$d" hook guard "$main" "$@"
+  t 0 "launcher: snap lets a command through past $w" from "$d" hook snap "$(payload true "$repo/$d")" "$@"
+  echo x > stray.txt; t 2 "launcher: trip still trips on a stray file past $w" from "$d" hook trip '{"tool_use_id":"sh"}' "$@"; rm stray.txt
+  t 0 "launcher: link past $w" from "$d" hook link '' "$@"
+  t 1 "launcher: and none of them ran a planted one past $w" test -e "$tmp/planted"
+}
+# An entry whose physical spelling holds a colon would split into a relative one (nm).
+mkdir "$tmp/c:nm"; ln -s "$tmp/c:nm" "$tmp/cl"
+for b in "" "$tmp/sysbash:"; do
+  past "an entry spelled physically with a colon${b:+, under /bin/bash}" . "PATH=$tmp/cl:$b$PATH"
+  past "a relative entry${b:+, under /bin/bash}" . "PATH=nm:$b$PATH"
+  past "an empty entry${b:+, under /bin/bash}" . "PATH=:$b$PATH"
+  past "an entry in the project${b:+, under /bin/bash}" . "PATH=$repo/nm:$b$PATH"
+  past "an entry in the root, from a subdirectory${b:+, under /bin/bash}" sub "CLAUDE_PROJECT_DIR=$repo/sub" "PATH=$repo/nm:$b$PATH"
+  past "an entry in the project that is a link out of it${b:+, under /bin/bash}" . "PATH=$repo/nl:$b$PATH"
+  past "an entry outside through a link in the project${b:+, under /bin/bash}" . "PATH=$tmp/via:$b$PATH"
+  past "an entry outside through a link in the root, from a subdirectory${b:+, under /bin/bash}" sub "CLAUDE_PROJECT_DIR=$repo/sub" "PATH=$tmp/via:$b$PATH"
+done
+# A .git in that subdirectory that git walks past (a HEAD that reads as
+# neither a ref nor an object id), or a link, which root resolution refuses,
+# stops the launcher no lower than the root's checkout; and a project
+# outside git that a /.worktrees/ path names is the root's too.
+mkdir -p sub/.git/objects sub/.git/refs; echo junk > sub/.git/HEAD
+for b in "" "$tmp/sysbash:"; do
+  past "an entry in the root, from a subdirectory whose .git is no repository${b:+, under /bin/bash}" sub "CLAUDE_PROJECT_DIR=$repo/sub" "PATH=$repo/nm:$b$PATH"
+done
+rm -r sub/.git; ln -s "$repo/.git" sub/.git; rm -f "$tmp/planted"
+t 2 "launcher: snap refuses from a subdirectory whose .git is a link" from sub hook snap "$(payload true "$repo/sub")" "CLAUDE_PROJECT_DIR=$repo/sub" "PATH=$repo/nm:$PATH"
+t 1 "launcher: and ran nothing planted past it" test -e "$tmp/planted"
+rm sub/.git; mkdir -p "$tmp/jo/.worktrees/x"; cp -R nm "$tmp/jo/nm"; echo 'tracker: github' > "$tmp/jo/.coddy.yml"
+from "$tmp/jo/.worktrees/x" hook guard "$agent" "CLAUDE_PROJECT_DIR=$tmp/jo/.worktrees/x" "PATH=$tmp/jo/nm:$PATH" >/dev/null 2>&1
+t 1 "launcher: from a worktree of a project outside git, ran nothing planted in the project" test -e "$tmp/planted"
+rm -r "$tmp/jo"
+# It is POSIX sh, and runs under macOS's /bin/sh and under dash.
+for sh in /bin/sh /bin/dash; do
+  [ -x "$sh" ] || continue
+  rm -f "$tmp/planted"
+  t 0 "launcher: under $sh, guard lets the agent dir through" sh -c 'printf %s "$1" | CLAUDE_PROJECT_DIR="$2" PATH="nm:$PATH" "$3" "$4" guard' - "$agent" "$repo" "$sh" "$here/scripts/hook.sh"
+  t 2 "launcher: under $sh, guard blocks the main checkout" sh -c 'printf %s "$1" | CLAUDE_PROJECT_DIR="$2" PATH="nm:$PATH" "$3" "$4" guard' - "$main" "$repo" "$sh" "$here/scripts/hook.sh"
+  t 1 "launcher: under $sh, and ran nothing planted" test -e "$tmp/planted"
+done
+# A HEAD padded with 32 MB of spaces and no newline, which git still takes
+# (it reads 255 bytes to take the repository and trims the rest), stalls no
+# hook: the launcher reads 255 bytes of it, under either sh, and unpath 1024
+# characters, under either bash.
+hr=$(git symbolic-ref HEAD); cp .git/HEAD "$tmp/HEAD"; { printf 'ref: %s' "$hr"; head -c 32000000 /dev/zero | tr '\0' ' '; } > .git/HEAD
+for sh in /bin/sh /bin/dash; do
+  [ -x "$sh" ] || continue
+  for b in "" "$tmp/sysbash:"; do
+    for v in guard snap trip; do
+      p=$agent; [ "$v" = guard ] || p=$(payload true)
+      SECONDS=0; printf %s "$p" | CLAUDE_PROJECT_DIR="$repo" PATH="$b$PATH" "$sh" "$here/scripts/hook.sh" "$v" >/dev/null 2>&1; got=$?
+      t 0 "launcher: under $sh${b:+ and /bin/bash}, $v reads a HEAD padded past 32 MB within seconds" test "$got:$((SECONDS <= 4))" = 0:1
+    done
+  done
+done
+cp "$tmp/HEAD" .git/HEAD
+# With no bash left it refuses, in plain text.
+mkdir "$tmp/nobash"
+for p in "none:$tmp/nobash" "one in the project alone:$repo/nm" "a relative one alone:nm:$tmp/nobash"; do
+  t 2 "launcher: refuses with no bash on PATH outside the project, ${p%%:*}" hook guard "$agent" PATH="${p#*:}"
+  t 0 "launcher: and says so, ${p%%:*}" says 'no bash on PATH outside the project at' hook guard "$agent" PATH="${p#*:}"
+done
+# A bash it picks that cannot run (an interpreter that is gone, a file that is
+# no program) is refused the same way, exit 2, never /bin/sh's own 1, 126 or 127.
+mkdir "$tmp/badint" "$tmp/badbin"; printf '#!/nonexistent/sh\n' > "$tmp/badint/bash"; printf '\177ELF\001\001\001\000\000\000' > "$tmp/badbin/bash"; chmod +x "$tmp/badint/bash" "$tmp/badbin/bash"
+for d in badint badbin; do
+  t 2 "launcher: guard refuses when the bash it picks cannot run ($d)" hook guard "$agent" PATH="$tmp/$d:$PATH"
+  t 2 "launcher: snap refuses when the bash it picks cannot run ($d)" hook snap "$(payload true)" PATH="$tmp/$d:$PATH"
+  t 0 "launcher: and says so ($d)" says 'cannot run, so the coddy guard hook' hook guard "$agent" PATH="$tmp/$d:$PATH"
+done
+rm -r nm nl sub bash git sed jq "$tmp/lo" "$tmp/via" "$tmp/nobash" "$tmp/badint" "$tmp/badbin"
+# git and jj read the user's config from HOME and XDG_CONFIG_HOME: one in the
+# project, whose core.fsmonitor would leave a mark, makes snap refuse before
+# its first git call, in either guard mode, naming the variable, and trip
+# after putting the config back; guard is as it was, and a HOME outside
+# changes nothing.
+printf '#!/bin/sh\necho fsmonitor >> "%s/planted"\nexit 1\n' "$tmp" > "$tmp/fsm"; chmod +x "$tmp/fsm"
+mkdir -p .claude/xdg/git "$tmp/away"; printf '[core]\n\tfsmonitor = %s\n' "$tmp/fsm" > .gitconfig; cp .gitconfig .claude/xdg/git/config; rm -f "$tmp/planted"
+for v in block warn; do
+  printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
+  for h in "HOME=$repo" "XDG_CONFIG_HOME=$repo/.claude/xdg" "HOME=$repo/.claude/none"; do
+    w="${h%%=*}=${h#*="$repo"}"; w=${w/=/=<root>}
+    t 2 "home: $v, snap refuses $w" hook snap "$(payload true)" "$h"
+    t 0 "home: $v, and names ${h%%=*}: $w" says "^coddy: ${h%%=*} ('$repo" hook snap "$(payload true)" "$h"
+    t 0 "home: $v, guard lets the agent dir through under $w" hook guard "$agent" "$h"
+  done
+  w=2; [ "$v" = block ] || w=0
+  t "$w" "home: $v, guard is as it was on the main checkout under HOME=<root>" hook guard "$main" HOME="$repo"
+  t 0 "home: $v, a HOME outside the project changes nothing" hook snap "$(payload true)" HOME="$tmp/away"
+done
+# A .. after a link goes where git's open goes, not where the name says.
+ln -s "$repo/.claude" "$tmp/hl"
+t 2 "home: snap refuses a HOME that reaches the root through a link and .." hook snap "$(payload true)" HOME="$tmp/hl/.."
+# git reads HOME=- as a directory named - where it runs, the root; cd as the last one.
+mkdir ./-; cp .gitconfig ./-/
+t 2 "home: snap refuses HOME=-, a directory in the root to git" hook snap "$(payload true)" HOME=-
+t 2 "home: snap refuses XDG_CONFIG_HOME=- the same way" hook snap "$(payload true)" XDG_CONFIG_HOME=-
+rm -r ./-
+t 1 "home: and no fsmonitor ran" test -e "$tmp/planted"
+printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml; cp .claude/coddy.yml "$tmp/conf.home"
+hook snap "$(payload true)" >/dev/null; rm .claude/coddy.yml
+t 2 "home: trip refuses HOME=<root>" hook trip '{"tool_use_id":"sh"}' HOME="$repo"
+t 0 "home: after putting the config back" cmp -s .claude/coddy.yml "$tmp/conf.home"
+t 1 "home: and no fsmonitor ran there either" test -e "$tmp/planted"
+# Root resolution's git runs before that check, and git takes trace2.* (a
+# file it appends to) from the user's config alone: none of the three hooks
+# reads it from there.
+printf '[trace2]\n\tnormalTarget = %s\n' "$tmp/t2" >> .gitconfig; cp .gitconfig .claude/xdg/git/config
+for h in "HOME=$repo" "XDG_CONFIG_HOME=$repo/.claude/xdg"; do
+  w="${h%%=*}=${h#*="$repo"}"; w=${w/=/=<root>}
+  for v in guard snap trip; do
+    case "$v" in guard) p=$agent ;; snap) p=$(payload true) ;; *) p='{"tool_use_id":"sh"}' ;; esac
+    rm -f "$tmp/t2"; hook "$v" "$p" "$h" >/dev/null 2>&1
+    t 1 "home: $v under $w writes no trace2 target that config names" test -e "$tmp/t2"
+  done
+done
+rm -r .gitconfig .claude/xdg "$tmp/away" "$tmp/hl"; cp "$tmp/exclude" .git/info/exclude
+# The fingerprint's git, and jj where the root holds a .jj, installed in the
+# project alone (a .venv, devbox or nix-shell toolchain) is dropped from the
+# hooks' PATH: snap refuses, in either guard mode, naming the tool, and trip
+# the command that ran, after putting the config back, rather than compare
+# two empty fingerprints.
+mkdir "$tmp/nogit" "$tmp/gitonly" nm; ln -s "$(command -v git)" "$tmp/gitonly/git"; ln -s "$(command -v git)" nm/git
+for x in bash sed awk cat grep cmp sort comm tr cut cksum mkdir cp rm head sleep stat xargs wc jq find readlink mktemp; do p=$(command -v "$x") && ln -s "$p" "$tmp/nogit/$x"; done
+p=$(command -v jj) && ln -s "$p" nm/jj; printf '/nm/\n' >> .git/info/exclude
+for v in block warn; do
+  printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
+  t 2 "tools: $v, snap refuses with git in the project alone" hook snap "$(payload true)" PATH="$repo/nm:$tmp/nogit"
+  t 0 "tools: $v, and names it" says '^coddy: no git is on PATH outside the project' hook snap "$(payload true)" PATH="$repo/nm:$tmp/nogit"
+  t 0 "tools: $v, snap needs no jj where the root holds no .jj" hook snap "$(payload true)" PATH="$repo/nm:$tmp/gitonly:$tmp/nogit"
+  mkdir .jj
+  t 2 "tools: $v, snap refuses with jj in the project alone where the root holds a .jj" hook snap "$(payload true)" PATH="$repo/nm:$tmp/gitonly:$tmp/nogit"
+  t 0 "tools: $v, and names it" says '^coddy: no jj is on PATH outside the project' hook snap "$(payload true)" PATH="$repo/nm:$tmp/gitonly:$tmp/nogit"
+  rmdir .jj
+done
+printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml; cp .claude/coddy.yml "$tmp/conf.tools"
+hook snap "$(payload true)" >/dev/null; echo x > stray.txt
+t 2 "tools: trip refuses a stray file with git in the project alone" hook trip '{"tool_use_id":"sh"}' PATH="$repo/nm:$tmp/nogit"
+hook snap "$(payload true)" >/dev/null; rm .claude/coddy.yml
+hook trip '{"tool_use_id":"sh"}' PATH="$repo/nm:$tmp/nogit" 2>"$tmp/tools.err"
+t 0 "tools: trip puts the config back first" cmp -s .claude/coddy.yml "$tmp/conf.tools"
+t 0 "tools: and names git" grep -q 'no git is on PATH outside the project' "$tmp/tools.err"
+hook snap "$(payload true)" >/dev/null; mkdir .jj
+hook trip '{"tool_use_id":"sh"}' PATH="$repo/nm:$tmp/gitonly:$tmp/nogit" 2>"$tmp/tools.err"; got=$?
+t 0 "tools: trip refuses a command that left a .jj at the root with jj in the project alone" test "$got" = 2
+t 0 "tools: and names jj" grep -q 'no jj is on PATH outside the project' "$tmp/tools.err"
+rm -r .jj nm stray.txt "$tmp/nogit" "$tmp/gitonly"; cp "$tmp/exclude" .git/info/exclude
 t 1 "create rejects a bad issue id" run create "../x" feat/x
 t 1 "claim needs a worktree first" run claim 99
 
@@ -776,7 +945,7 @@ git mv MOVED.md README.md
 # A thousand dirty files cost one hash-object, not one each: a git on PATH
 # that logs every hash-object it runs.
 mkdir -p "$tmp/gitshim" "$repo/many"; real=$(command -v git)
-printf '#!/bin/sh\n[ "$1" = hash-object ] && echo x >> "%s"\nexec "%s" "$@"\n' "$tmp/hashes" "$real" > "$tmp/gitshim/git"; chmod +x "$tmp/gitshim/git"
+printf '#!/bin/sh\ncase " $* " in *" hash-object "*) echo x >> "%s" ;; esac\nexec "%s" "$@"\n' "$tmp/hashes" "$real" > "$tmp/gitshim/git"; chmod +x "$tmp/gitshim/git"
 for i in $(seq 1000); do echo "$i" > "many/$i.txt"; done
 : > "$tmp/hashes"; PATH="$tmp/gitshim:$PATH" wire snap many
 t 0 "tripwire: 1000 dirty files are hashed by one hash-object" test "$(wc -l < "$tmp/hashes" | tr -d ' ')" = 1
@@ -1504,8 +1673,8 @@ mkdir "$tmp/oldgit"; real=$(command -v git)
 cat > "$tmp/oldgit/git" <<EOF
 #!/bin/sh
 case "\$*" in
-  "worktree list --porcelain -z") exit 129 ;;
-  "worktree list --porcelain") "$real" worktree list --porcelain -z | tr '\0' '\n'; exit ;;
+  *"worktree list --porcelain -z") exit 129 ;;
+  *"worktree list --porcelain") "$real" worktree list --porcelain -z | tr '\0' '\n'; exit ;;
 esac
 exec "$real" "\$@"
 EOF

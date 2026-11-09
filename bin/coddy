@@ -94,6 +94,42 @@ follow() {
 # command in the project can write, so a coddy there is no coddy for git to
 # run outside the sandbox.
 inproj() { local d=$1 w; while [ -n "$d" ]; do for w in "${ins[@]}"; do [ "$d" -ef "$w" ] && return 0; done; d=${d%/*}; done; return 1; }
+# PATH as the hooks' launcher (scripts/hook.sh) leaves it for directory $1:
+# every entry that is empty, relative, gone or spelled physically with a
+# colon dropped, and every one that lies at or under $1 or the checkout
+# above an absolute $1 (the nearest directory whose .git git takes for a
+# main checkout's, its HEAD read no further than a NUL or 1024 characters,
+# as isgit reads it, so a huge one stalls no hook; else the topmost holding
+# a .git at all and, with none git takes, the project a /.worktrees/ path
+# names: the launcher's walk), by its
+# own spelling, a link on the way (follow) or where it lands, where a
+# command in the project could plant a git or a jq for a hook to run
+# outside the sandbox; the rest in their physical spelling. Nothing left is
+# /dev/null, never empty, which bash reads as the working directory.
+unpath() {
+  local r=$1 t="" w="" k="" c l h='[0-9a-fA-F]' s=$PATH: n="" e ins rp
+  h=$h$h$h$h$h$h$h$h$h$h; h=$h$h$h$h
+  case "$r" in /*) c=$r
+    while [ -n "$c" ]; do
+      if [ -e "$c/.git" ] || [ -L "$c/.git" ]; then
+        t=$c l=""
+        [ ! -L "$c/.git" ] && [ -f "$c/.git/HEAD" ] && [ ! -L "$c/.git/HEAD" ] && [ -x "$c/.git/objects" ] && [ -x "$c/.git/refs" ] && [ ! -e "$c/.git/commondir" ] && [ ! -L "$c/.git/commondir" ] && { IFS= read -r -d '' -n 1024 l || :; } 2>/dev/null < "$c/.git/HEAD"
+        # shellcheck disable=SC2254 # h is a pattern: 40 hex digits
+        case $l in 'ref: refs/'*|'ref:refs/'*|$h*) k=1; break ;; esac
+      fi
+      c=${c%/*}
+    done ;;
+  esac
+  [ -n "$k" ] || case "$r" in */.worktrees/*) w=${r%%/.worktrees/*} ;; esac
+  ins=("$r" "$t" "$w")
+  while [ -n "$s" ]; do
+    e=${s%%:*} s=${s#*:}
+    case "$e" in /*) follow "$e" inproj && [ -d "$rp" ] && ! inproj "$rp" || continue ;; *) continue ;; esac
+    case "$rp" in *:*) continue ;; esac
+    n=$n${n:+:}$rp
+  done
+  PATH=${n:-/dev/null}
+}
 
 # The platform uname -s printed ($1) names: macos, linux, windows (Cygwin,
 # MSYS2, Git Bash; WSL is linux) or unknown.
@@ -117,9 +153,10 @@ if [ "${1-}" = doctor ]; then
   echo "via: $([ "$d" = "$h" ] && echo get.sh || echo other)"
   echo "version: ${v:-unknown}"
   echo "commit: ${c:-none}"
-  # the bash the hooks run, first on PATH (type -P: a function named bash is not it), as it reports
+  # the bash the hooks run, first on PATH as their launcher leaves it for the
+  # project (unpath; type -P: a function named bash is not it), as it reports
   # its own version, unknown when that is no x.y.z; informational, never bad
-  u=$(type -P bash) && { c=$("$u" -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}.${BASH_VERSINFO[2]}"' 2>/dev/null); [[ $c =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || c=""; u="$u ${c:-unknown}"; }
+  u=$(unpath "${CODDY_ROOT:-$PWD}" && type -P bash) && { c=$("$u" -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}.${BASH_VERSINFO[2]}"' 2>/dev/null); [[ $c =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || c=""; u="$u ${c:-unknown}"; }
   echo "bash: $(printf %s "${u:-missing}" | tr -d '[:cntrl:]')"
   inst=$d bad=0 u=$(uname -s 2>/dev/null | tr -d '[:cntrl:]')
   [ "$(osname "$u")" != windows ] || { echo "platform: windows ($u) is not supported: coddy runs on macOS, Linux and WSL"; bad=1; }
@@ -224,8 +261,16 @@ upcfg() {
   while [ -n "$g" ] && ! { [ -d "$g/.git" ] && { [ -f "$g/.coddy.yml" ] || [ -f "$g/$legacy" ]; }; }; do case "$g" in */*) g=${g%/*} ;; *) g="" ;; esac; done
   [ -z "$g" ] || root=$g
 }
+# Root resolution's git. The hooks run it outside the sandbox before homes
+# can check where HOME and XDG_CONFIG_HOME lie, and git takes trace2.* (a
+# file it appends to, the config's own text included) from the user's
+# config alone, so theirs reads none: both at /dev/null, where git finds no
+# file. One that fails for want of the user's safe.directory leaves the root
+# to the walk.
+case "${1-}" in guard|snap|trip) hk=1 ;; *) hk="" ;; esac
+rgit() { if [ -n "$hk" ]; then HOME=/dev/null XDG_CONFIG_HOME=/dev/null git "$@"; else git "$@"; fi; }
 dir="${CODDY_ROOT:-$PWD}" odd="" proj="" back="" groot="" stop=""
-if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "$dir" && cd "$common/.." && pwd); then
+if common=$(rgit -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "$dir" && cd "$common/.." && pwd); then
   proj=1 groot=$root rel=$(cd "$dir" && pwd -P); g=$rel
   pg=$(cd "$groot" && pwd -P); case "$rel/" in "${pg%/}"/*) [ "$(cd "$dir" && cd "$common" 2>/dev/null && pwd -P)" != "${pg%/}/.git" ] || stop=$pg ;; esac
   walk files
@@ -292,6 +337,10 @@ glmsg="is a file naming a git dir elsewhere, and coddy does not run its hooks in
 # the .git that is odd is the checkout's own gitdir: file.
 absorbed=""
 if [ "$odd" = "$root/.git" ] && [ ! -e "$odd" ] && [ ! -L "$odd" ] && [ -n "$back" ] && gitlink "$back/.git"; then odd=$back/.git absorbed=1; fi
+# The hooks run outside any sandbox, so from here they find their tools past
+# every PATH entry at or under the root too: their launcher went by the
+# directory the session opened in.
+case "${1-}" in guard|snap|trip) unpath "$root" ;; esac
 # The bare repository a session started inside (git's common dir from the start, physical).
 bare() { (cd "$dir" && cd "$common" && pwd -P) || printf %s "$odd"; }
 # The git_dir: line config, status and detect print, and doctor, in place of their output.
@@ -1162,12 +1211,21 @@ json() {
   done
   printf '%s\n' "$o"
 }
+# git as the shell hooks' fingerprint runs it, outside any sandbox: with no
+# optional lock, so git status writes no index for a file whose stat
+# changed, which would fire post-index-change, and with no hooks directory,
+# since core.hooksPath may name one in the project (husky's .husky/_, a
+# .githooks), where a command can plant a hook. GIT_OPTIONAL_LOCKS=0 is
+# --no-optional-locks, which a git before 2.15 rejects. The fingerprint's
+# read of core.hooksPath itself runs plain git: a config read takes no lock
+# and fires no hook.
+hgit() { GIT_OPTIONAL_LOCKS=0 git -c core.hooksPath=/dev/null "$@"; }
 # git worktree list --porcelain -z, or, from a git before 2.36, without -z:
 # each path as one field, and one not followed by its HEAD or bare line
 # taken with the lines up to it, so it holds a line break and is never
 # skipped as coddy's (clean).
 gitwts() {
-  git worktree list --porcelain -z 2>/dev/null && return
+  hgit worktree list --porcelain -z 2>/dev/null && return
   local l p=""
   while IFS= read -r l; do
     case "$l" in
@@ -1175,7 +1233,7 @@ gitwts() {
       "worktree "*) p=${p:+$p$'\n'}$l ;;
       *) [ -z "$p" ] || p+=$'\n'$l ;;
     esac
-  done < <(git worktree list --porcelain 2>/dev/null)
+  done < <(hgit worktree list --porcelain 2>/dev/null)
   [ -z "$p" ] || printf '%s\n\0' "$p"
 }
 # ins, for inproj: the root, where the call began and every worktree of the
@@ -1257,7 +1315,8 @@ out() {
 # control character, quote or backslash (clean), is held to the test before
 # an entry is skipped as the root or coddy's own. No line is a command.
 # Every dirty file up to 1 MiB is hashed by one git hash-object, until 32
-# MiB have been, in git status order; a path holding a newline is misread by
+# MiB have been, in git status order, as it is (--no-filters: a clean filter
+# the attributes name is a program); a path holding a newline is misread by
 # --stdin-paths. One over 1 MiB, or past the 32, is not read: its line ends
 # in big:<size>:<ctime>:<inode>, one word as a hash is, so trip's report
 # drops it the same way, from one stat of every dirty file (stat's flavour
@@ -1300,12 +1359,12 @@ sflav() {
 }
 snap() {
   cd "$root" 2>/dev/null || return 0
-  git merge-base --is-ancestor "refs/heads/$b" "refs/remotes/origin/$b" 2>/dev/null ||
-    { tip=$(git rev-parse -q --verify "refs/heads/$b" 2>/dev/null) && echo "commits on $b $tip"; }
-  at=$(git symbolic-ref -q --short HEAD 2>/dev/null); h=$(git rev-parse HEAD 2>/dev/null)
+  hgit merge-base --is-ancestor "refs/heads/$b" "refs/remotes/origin/$b" 2>/dev/null ||
+    { tip=$(hgit rev-parse -q --verify "refs/heads/$b" 2>/dev/null) && echo "commits on $b $tip"; }
+  at=$(hgit symbolic-ref -q --short HEAD 2>/dev/null); h=$(hgit rev-parse HEAD 2>/dev/null)
   if [ -n "$at" ]; then
     [ "$at" = "$b" ] || echo "branch $at $h"
-  elif ! git merge-base --is-ancestor HEAD "refs/remotes/origin/$b" 2>/dev/null; then
+  elif ! hgit merge-base --is-ancestor HEAD "refs/remotes/origin/$b" 2>/dev/null; then
     echo "detached HEAD $h"
   fi
   [ ! -d .git/hooks/coddy ] || { hp=$(git config core.hooksPath 2>/dev/null)
@@ -1349,7 +1408,7 @@ snap() {
       if [ ! -f "$p" ]; then clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"
       else case "$p" in *$'\n'*) nl[nn]=$p; nn=$((nn+1)) ;; *) files[n]=$p; n=$((n+1)) ;; esac; fi
     done
-  done < <(git status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null)
+  done < <(hgit status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null)
   { echo "$dp" >&5; } 2>/dev/null
   [ "$((n + nn))" -gt 0 ] || return 0
   sflav
@@ -1370,7 +1429,7 @@ snap() {
       { k = substr($0, index($0, ":") + 1); print ((k in v) ? v[k] : "-") " " $0 }')
   for p in ${nl[@]+"${nl[@]}"}; do small[k]=":$p"; k=$((k+1)); done
   [ "$k" -gt 0 ] || return 0
-  printf '%s\n' "${small[@]#*:}" | git hash-object --stdin-paths 2>/dev/null |
+  printf '%s\n' "${small[@]#*:}" | hgit hash-object --no-filters --stdin-paths 2>/dev/null |
     { i=0; while IFS= read -r hash; do r=${small[i]}; p=${r#*:}; [ -z "${r%%:*}" ] || printf 'h %s\n' "$p" >&6; clean "$p" || p=$(q "$p"); printf '%s %s\n' "$p" "$hash"; i=$((i+1)); done
       while [ "$i" -lt "$k" ]; do r=${small[i]}; i=$((i+1)); [ -z "${r%%:*}" ] || big "${r#*:}" "${r%%:*}"; done; }
 }
@@ -1459,6 +1518,37 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     done
     wait "$j"
   }
+  # git and jj read the user's config from HOME and XDG_CONFIG_HOME, and a
+  # program it names (core.fsmonitor) runs outside the sandbox: one at or
+  # under the root, physically (cd -P, so a .. after a link goes where git's
+  # open goes), or by name where it is not there yet, is one
+  # a command can write, so the hooks run no git there, in either guard
+  # mode (snap before its first git call, trip after putting the config
+  # back), hm naming the variable. A lone - is a directory named - to git,
+  # run at the root, and the directory cd came from to cd, even after --.
+  homes() {
+    local v x y
+    for v in HOME XDG_CONFIG_HOME; do
+      y=${!v-}; [ "$y" != - ] || y=./-
+      [ -n "$y" ] && { x=$(cd -P -- "$R" 2>/dev/null && cd -P -- "$y" 2>/dev/null && pwd -P) || x=$(abspath "$y" "$R"); } || continue
+      while [ -n "$x" ]; do
+        [ "$x" -ef "$R" ] && { hm="$v ($(q "${!v}")) lies in the project at $(q "$R"), where a shell command can write the git config git reads from there, whose core.fsmonitor would run a program outside the sandbox, so coddy runs no git and refuses every shell command until $v names a directory outside the project."; return 1; }
+        x=${x%/*}
+      done
+    done
+  }
+  # git, and jj where the root holds a .jj, as the fingerprint runs them,
+  # left on PATH past unpath: one installed in the project alone (a .venv,
+  # devbox or nix-shell toolchain) is dropped, and without it every call
+  # fails quietly and the tripwire runs blind, so the hooks refuse, in
+  # either guard mode, where homes does, hm naming the tool.
+  tools() {
+    local x
+    for x in git jj; do
+      [ "$x" = git ] || [ -d "$root/.jj" ] || continue
+      command -v "$x" >/dev/null 2>&1 || { hm="no $x is on PATH outside the project, where the coddy hooks find their tools (one installed in the project alone, by a .venv, devbox or nix-shell, is one a shell command can write), so coddy cannot fingerprint the main checkout and refuses every shell command until $x is installed outside the project."; return 1; }
+    done
+  }
   # Hook context of fixed text alone (no quote, backslash or control
   # character), without jq.
   ctx() { printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$*"; }
@@ -1495,6 +1585,8 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     [ "$(head -c 65537 -- "$conf" 2>/dev/null | wc -c)" -le 65536 ] ||
       { code=2; die "$cname is over 64 KiB, more than coddy keeps a copy of to put it back when a shell command changes it, so coddy refuses every shell command until it is brought under 64 KiB with /coddy:config."; }
     oddly
+    homes || { code=2; die "$hm"; }
+    tools || { code=2; die "$hm"; }
     common
     admin || { code=2; die "$st"; }
     b=$(cfg default_branch); b="${b:-main}" ok=1
@@ -1619,6 +1711,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   msg=$msg$cap
   confpath
   [ -z "$odd" ] || { rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*; oddly "$msg"; }
+  homes && tools || { rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*; die "$msg$hm"; }
   admin || { msg="$msg$st The git worktrees could not be listed for that command, so one it made is named by its admin dir alone, and one it moved, renamed or re-created is not named: check by hand. " nowt=1; }
   # Only lines that are new count, so undoing a change never trips the wire.
   # Every line is unique by design, so a repeat is no new line: git lists a
