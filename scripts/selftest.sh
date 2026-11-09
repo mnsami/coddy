@@ -653,6 +653,11 @@ t 1 "skills: a continuation line holding a take rule fails the gate" skcont gate
 t 1 "skills: a continuation line fails the mirror" skcont mirror
 t 1 "skills: a quoted allowed-tools value fails the gate" skquote gated
 t 1 "skills: a quoted allowed-tools value fails the mirror" skquote mirror
+# The other openers atform rejects: skopen <replacement of the value, \1 being it> <check>.
+skopen() { sk; sed "s#^allowed-tools: \\(.*\\)#allowed-tools: $1#" "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; shift; "$@" "$tmp/sk"; }
+for op in "single-quoted:'\\1'" "> block scalar:>"$'\\\n'"  \\1" "| block scalar:|"$'\\\n'"  \\1" "flow sequence:[\\1]" "flow mapping:{\\1}"; do
+  for ck in gated mirror; do t 1 "skills: a ${op%%:*} allowed-tools value fails the $ck" skopen "${op#*:}" "$ck"; done
+done
 t 1 "skills: a take rule cut at a comma inside its parentheses fails" skrule next "Bash(x, coddy take *)" gated
 # A hook blocks only on exit 2, so the shim makes every other exit of guard
 # or snap a 2 with a message, a core it cannot read included, and a coddy
