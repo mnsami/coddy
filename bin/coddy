@@ -1254,8 +1254,10 @@ json() {
 # .githooks), where a command can plant a hook. GIT_OPTIONAL_LOCKS=0 is
 # --no-optional-locks, which a git before 2.15 rejects. The fingerprint's
 # read of core.hooksPath itself runs plain git: a config read takes no lock
-# and fires no hook.
-hgit() { GIT_OPTIONAL_LOCKS=0 git -c core.hooksPath=/dev/null "$@"; }
+# and fires no hook. Fd 8, the fingerprint's line past its reader (fp), is
+# closed in git itself: on the function's call, bash 3.2 leaves its saved
+# copy open in git, and in a child git leaves running.
+hgit() { GIT_OPTIONAL_LOCKS=0 git -c core.hooksPath=/dev/null "$@" 8>&-; }
 # git worktree list --porcelain -z, or, from a git before 2.36, without -z:
 # each path as one field, and one not followed by its HEAD or bare line
 # taken with the lines up to it, so it holds a line break and is never
@@ -1454,7 +1456,7 @@ snap() {
     r=${p#"$R"}
     [ "$r" != "$p" ] && clean "$r" && { [ -z "$r" ] || { coddywt "$p" && real "$p"; }; } ||
       out "git worktree at $(q "$p") (git worktree remove)" "$k" "$g"
-  done < <([ -n "$nowt" ] || gitwts 8>&- || pjj || echo 'unchecked list' >&8)
+  done < <([ -n "$nowt" ] || gitwts || pjj || echo 'unchecked list' >&8)
   [ -z "$C" ] || for d in "$C"/worktrees/*/ "$C"/worktrees/.[!.]*/ "$C"/worktrees/..?*/; do [ ! -d "$d" ] || { d=${d%/}; printf -v g 'git %q' "${d##*/}"; echo "$g" >&3
     [ -z "$nowt" ] || [[ $seen == *$'\n'"$g"$'\n'* ]] || out "git worktree whose admin dir is $(q "$d") (git worktree remove)" "$g" ""; }; done
   # No colour or pager, whatever the config says. One listing: each name,
@@ -1484,7 +1486,7 @@ snap() {
       if [ ! -f "$p" ]; then clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"
       else case "$p" in *$'\n'*) nl[nn]=$p; nn=$((nn+1)) ;; *) files[n]=$p; n=$((n+1)) ;; esac; fi
     done
-  done < <(hgit status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null 8>&- || pjj || echo 'unchecked status' >&8)
+  done < <(hgit status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null || pjj || echo 'unchecked status' >&8)
   { echo "$dp" >&5; } 2>/dev/null
   [ "$((n + nn))" -gt 0 ] || return 0
   sflav
