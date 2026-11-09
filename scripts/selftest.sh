@@ -589,7 +589,7 @@ mirror() {
   return $bad
 }
 gated() {
-  local f r p c
+  local f r p q c
   for f in "$1"/*/SKILL.md; do
     # a list-form allowed-tools has no single-line value: unread, so a failure
     [ -n "$(rules "$f")" ] || return 1
@@ -597,9 +597,11 @@ gated() {
       [ "$r" != Bash ] || return 1
       case $r in Bash\(*\)) p=${r#Bash(}; p=${p%)} ;; *) continue ;; esac
       # take or drop as the first word after the shim or coddy, whatever follows
-      [[ $p =~ (issue\.sh\"?|coddy)\ +(take|drop)($|[\ :*]) ]] && return 1
+      # (quotes stripped first, so a quoted path, shim or verb reads as the bare one)
+      q=${p//\"/}; q=${q//\'/}
+      [[ $q =~ (issue\.sh|coddy)[[:space:]]+(take|drop)($|[[:space:]:*]) ]] && return 1
       case $p in *:\*) p="${p%:\*} *" ;; esac
-      for c in 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" take 7' 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" drop 7 --force' 'coddy take 7' 'coddy drop 7 --force'; do
+      for c in 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" take 7' 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" drop 7 --force' 'coddy take 7' 'coddy drop 7 --force' '"${CLAUDE_PLUGIN_ROOT}/bin/coddy" take 7' 'bash "${CLAUDE_PLUGIN_ROOT}/bin/coddy" drop 7 --force'; do
         # shellcheck disable=SC2053 # the rule is a glob, as Claude Code matches it
         [[ $c == $p ]] && return 1
       done
@@ -630,6 +632,11 @@ t 1 "skills: a drop rule on another operand fails" skrule next "Bash($R drop 7)"
 t 1 "skills: a bare take rule fails" skrule next "Bash($R take)" gated
 t 1 "skills: a coddy drop rule fails" skrule next "Bash(coddy drop 7)" gated
 t 1 "skills: a take rule on the shim path fails" skrule next 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" take 42)' gated
+t 1 "skills: a take rule on the quoted core path fails" skrule next 'Bash("${CLAUDE_PLUGIN_ROOT}/bin/coddy" take *)' gated
+t 1 "skills: a drop rule on the core path run by bash fails" skrule next 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/bin/coddy" drop *)' gated
+t 1 "skills: a take rule on a single-quoted shim path fails" skrule next "Bash(bash '\${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh' take *)" gated
+t 1 "skills: a take rule with a quoted verb fails" skrule next "Bash($R \"take\" *)" gated
+t 1 "skills: a drop rule with a tab before the verb fails" skrule next "Bash($R$(printf '\t')drop *)" gated
 t 1 "skills: a rule broader than take and drop fails" skrule next "Bash($R *)" gated
 t 1 "skills: a coddy rule covering them fails" skrule next "Bash(coddy *)" gated
 t 1 "skills: a bare Bash fails" skrule next "Bash" gated
