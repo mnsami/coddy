@@ -1492,8 +1492,8 @@ snap() {
     if [ ! -f "$f" ]; then v=$(kind "$f")
     elif [ "$(head -c 1048577 -- "$f" 2>/dev/null | wc -c)" -gt 1048576 ]; then sflav; v=$(stat -L "${sf[@]}" -- "$f" 2>/dev/null); v=stat:${v%%:*}; v=${v// /:}
     elif v=$(jqh -cS 'if any(..; type == "number" and (isnan or isinfinite)) then error("nonfinite") else . end | if (.permissions.allow | type) == "array" and (.permissions.allow | all(type == "string")) then del(.permissions.allow) else . end | del(.permissions[]? | select(. == [])) | if .permissions == {} then del(.permissions) else . end' < "$f" 2>/dev/null); then
-      [ "$v" = '{}' ] && v=absent || v=jq:$(printf '%s\n' "$v" | git hash-object --stdin 2>/dev/null)
-    else v=raw:$(git hash-object --stdin < "$f" 2>/dev/null); fi
+      [ "$v" = '{}' ] && v=absent || v=jq:$(printf '%s\n' "$v" | hgit hash-object --stdin 2>/dev/null)
+    else v=raw:$(hgit hash-object --stdin < "$f" 2>/dev/null); fi
     clean "$f" || f=$(q "$f")
     echo "settings $f $v"; echo "settings settings $f $v" >&4
   done
