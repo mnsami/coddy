@@ -694,6 +694,18 @@ hook snap "$(payload true)" >/dev/null; rm .claude/coddy.yml
 t 2 "home: trip refuses HOME=<root>" hook trip '{"tool_use_id":"sh"}' HOME="$repo"
 t 0 "home: after putting the config back" cmp -s .claude/coddy.yml "$tmp/conf.home"
 t 1 "home: and no fsmonitor ran there either" test -e "$tmp/planted"
+# Root resolution's git runs before that check, and git takes trace2.* (a
+# file it appends to) from the user's config alone: none of the three hooks
+# reads it from there.
+printf '[trace2]\n\tnormalTarget = %s\n' "$tmp/t2" >> .gitconfig; cp .gitconfig .claude/xdg/git/config
+for h in "HOME=$repo" "XDG_CONFIG_HOME=$repo/.claude/xdg"; do
+  w="${h%%=*}=${h#*="$repo"}"; w=${w/=/=<root>}
+  for v in guard snap trip; do
+    case "$v" in guard) p=$agent ;; snap) p=$(payload true) ;; *) p='{"tool_use_id":"sh"}' ;; esac
+    rm -f "$tmp/t2"; hook "$v" "$p" "$h" >/dev/null 2>&1
+    t 1 "home: $v under $w writes no trace2 target that config names" test -e "$tmp/t2"
+  done
+done
 rm -r .gitconfig .claude/xdg "$tmp/away" "$tmp/hl"; cp "$tmp/exclude" .git/info/exclude
 # The fingerprint's git, and jj where the root holds a .jj, installed in the
 # project alone (a .venv, devbox or nix-shell toolchain) is dropped from the

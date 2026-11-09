@@ -261,8 +261,16 @@ upcfg() {
   while [ -n "$g" ] && ! { [ -d "$g/.git" ] && { [ -f "$g/.coddy.yml" ] || [ -f "$g/$legacy" ]; }; }; do case "$g" in */*) g=${g%/*} ;; *) g="" ;; esac; done
   [ -z "$g" ] || root=$g
 }
+# Root resolution's git. The hooks run it outside the sandbox before homes
+# can check where HOME and XDG_CONFIG_HOME lie, and git takes trace2.* (a
+# file it appends to, the config's own text included) from the user's
+# config alone, so theirs reads none: both at /dev/null, where git finds no
+# file. One that fails for want of the user's safe.directory leaves the root
+# to the walk.
+case "${1-}" in guard|snap|trip) hk=1 ;; *) hk="" ;; esac
+rgit() { if [ -n "$hk" ]; then HOME=/dev/null XDG_CONFIG_HOME=/dev/null git "$@"; else git "$@"; fi; }
 dir="${CODDY_ROOT:-$PWD}" odd="" proj="" back="" groot="" stop=""
-if common=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "$dir" && cd "$common/.." && pwd); then
+if common=$(rgit -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "$dir" && cd "$common/.." && pwd); then
   proj=1 groot=$root rel=$(cd "$dir" && pwd -P); g=$rel
   pg=$(cd "$groot" && pwd -P); case "$rel/" in "${pg%/}"/*) [ "$(cd "$dir" && cd "$common" 2>/dev/null && pwd -P)" != "${pg%/}/.git" ] || stop=$pg ;; esac
   walk files
