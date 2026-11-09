@@ -554,8 +554,9 @@ wire snap w; echo x > stray.txt; t 2 "hooks: the PostToolUseFailure entry trips 
 # not checked here.
 rules() { sed -n 's/^allowed-tools: //p' "$1" | tr ',' '\n' | sed 's/^ *//;s/ *$//'; }
 # allowed-tools must be one plain line: a continuation line or a value opening
-# with a quote, >, |, [ or { is a form rules() does not read, so it fails.
-atform() { awk -v q="'" '/^allowed-tools:/{f=1; v=substr($0,15); sub(/^ +/,"",v); if (v ~ ("^[" q "\">|[{]")) exit 1; next} f{exit ($0 ~ /^[ \t]/)}' "$1"; }
+# with a quote, >, |, [, {, * or & is a form rules() does not read, so it fails;
+# blank lines are skipped before the indentation test, as YAML folds them in.
+atform() { awk -v q="'" '/^allowed-tools:/{f=1; v=substr($0,15); sub(/^ +/,"",v); if (v ~ ("^[" q "\">|[{*&]")) exit 1; next} f{if ($0 ~ /^[ \t]*$/) next; exit ($0 ~ /^[ \t]/)}' "$1"; }
 mirror() {
   local f body at all r p c calls ok short bad=0
   all=$(for f in "$1"/*/SKILL.md; do rules "$f"; done | sed -n 's/^mcp__.*__//p' | sort -u)
@@ -620,6 +621,7 @@ skadd() { sk; printf '%s\n' "$2" >> "$tmp/sk/$1/SKILL.md"; "${@:3}" "$tmp/sk"; }
 skrule() { sk; sed "s|^allowed-tools: .*|&, $2|" "$here/skills/$1/SKILL.md" > "$tmp/sk/$1/SKILL.md"; "${@:3}" "$tmp/sk"; }
 gatedlist() { sk; sed 's|^allowed-tools: .*|allowed-tools:\n  - Bash|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; gated "$tmp/sk"; }
 skcont() { sk; sed 's|^allowed-tools: .*|&\n  Bash(coddy take *)|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; "$@" "$tmp/sk"; }
+skblank() { sk; sed 's|^allowed-tools: .*|&\n\n  Bash(coddy take *)|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; "$@" "$tmp/sk"; }
 skquote() { sk; sed 's|^allowed-tools: \(.*\)|allowed-tools: "\1"|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; "$@" "$tmp/sk"; }
 R='bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh"'
 t 0 "skills: every body and allowed-tools agree, both ways" mirror "$here/skills"
@@ -651,11 +653,13 @@ t 1 "skills: a bare Bash fails" skrule next "Bash" gated
 t 1 "skills: an allowed-tools in list form, unread, fails" gatedlist
 t 1 "skills: a continuation line holding a take rule fails the gate" skcont gated
 t 1 "skills: a continuation line fails the mirror" skcont mirror
+t 1 "skills: a blank line before a continuation fails the gate" skblank gated
+t 1 "skills: a blank line before a continuation fails the mirror" skblank mirror
 t 1 "skills: a quoted allowed-tools value fails the gate" skquote gated
 t 1 "skills: a quoted allowed-tools value fails the mirror" skquote mirror
 # The other openers atform rejects: skopen <replacement of the value, \1 being it> <check>.
 skopen() { sk; sed "s#^allowed-tools: \\(.*\\)#allowed-tools: $1#" "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; shift; "$@" "$tmp/sk"; }
-for op in "single-quoted:'\\1'" "> block scalar:>"$'\\\n'"  \\1" "| block scalar:|"$'\\\n'"  \\1" "flow sequence:[\\1]" "flow mapping:{\\1}"; do
+for op in "single-quoted:'\\1'" "> block scalar:>"$'\\\n'"  \\1" "| block scalar:|"$'\\\n'"  \\1" "flow sequence:[\\1]" "flow mapping:{\\1}" "alias:*\\1" "anchor:\\&\\1"; do
   for ck in gated mirror; do t 1 "skills: a ${op%%:*} allowed-tools value fails the $ck" skopen "${op#*:}" "$ck"; done
 done
 t 1 "skills: a take rule cut at a comma inside its parentheses fails" skrule next "Bash(x, coddy take *)" gated
