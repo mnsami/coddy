@@ -549,8 +549,8 @@ wire snap w; echo x > stray.txt; t 2 "hooks: the PostToolUseFailure entry trips 
 # and issue.sh verb a body calls has a rule that glob-matches it (a trailing :*
 # read as " *", as Claude Code does), each rule is used by its own body, and
 # each MCP tool a body names in backticks, of those any skill allows, is in its
-# own allowed-tools. take and drop are prompt-gated: no rule may pre-approve
-# them, and a body may call them without one. MCP names drifting upstream is
+# own allowed-tools. take and drop are prompt-gated: gated() below allows only
+# a closed list of rule shapes, and a body may call them without a rule. MCP names drifting upstream is
 # not checked here.
 rules() { sed -n 's/^allowed-tools: //p' "$1" | tr ',' '\n' | sed 's/^ *//;s/ *$//'; }
 # allowed-tools must be one plain line: a continuation line or a value opening
@@ -593,32 +593,24 @@ mirror() {
   done
   return $bad
 }
+# take and drop are prompt-gated by an allowlist: every rule naming issue.sh,
+# coddy or a path under scripts/ must equal, character for character, one shape
+# below. A new pre-approved form is added here on purpose; take and drop never.
+SH='bash "${CLAUDE_PLUGIN_ROOT}/scripts'
+shapes=("Bash($SH/config.sh\")" "Bash($SH/detect.sh\")")
+for v in 'claim *' 'create *' 'diff *' 'exclude answers' 'exclude config' 'forget answers' 'log *' 'mark *' migrate 'push *' 'state *' status sweep 'verify *'; do shapes+=("Bash($SH/issue.sh\" $v)"); done
 gated() {
-  local f r p q c gatere='(issue\.sh|coddy)[[:space:]]+(take|drop)($|[[:space:]:*)])'
+  local f r s ok
   for f in "$1"/*/SKILL.md; do
     # a list-form allowed-tools has no single-line value: unread, so a failure
     [ -n "$(rules "$f")" ] || return 1
     atform "$f" || return 1
     while IFS= read -r r; do
       [ "$r" != Bash ] || return 1
-      # take or drop as the first word after the shim or coddy, whatever follows,
-      # on every fragment, Bash(...) or not (quotes stripped first, so a quoted
-      # path, shim or verb reads as the bare one)
-      q=${r//\"/}; q=${q//\'/}
-      [[ $q =~ $gatere ]] && return 1
-      case $r in Bash\(*\)) p=${r#Bash(}; p=${p%)} ;; *) continue ;; esac
-      case $p in *:\*) p="${p%:\*} *" ;; esac
-      # every spelling of the shim and the core, crossed with both verbs and
-      # several operands, tested against the rule with its quotes stripped
-      p=${p//\"/}; p=${p//\'/}
-      for c in 'bash ${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh' '${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh' 'coddy' '${CLAUDE_PLUGIN_ROOT}/bin/coddy' 'bash ${CLAUDE_PLUGIN_ROOT}/bin/coddy'; do
-        for v in take drop; do
-          for o in '' ' 7' ' 42' ' 7 --force'; do
-            # shellcheck disable=SC2053 # the rule is a glob, as Claude Code matches it
-            [[ "$c $v$o" == $p ]] && return 1
-          done
-        done
-      done
+      case $r in *issue.sh*|*coddy*|*scripts/*) ;; *) continue ;; esac
+      ok=1
+      for s in "${shapes[@]}"; do [ "$r" = "$s" ] && ok=0; done
+      [ $ok = 0 ] || return 1
     done <<< "$(rules "$f")"
   done
   return 0
@@ -643,26 +635,14 @@ t 0 "skills: a body calling take or drop without a rule passes" skadd next "\`$R
 t 1 "skills: a body calling takeover without a rule fails" skadd next "\`$R takeover 7\`" mirror
 t 1 "skills: a body calling dropall without a rule fails" skadd next "\`$R dropall\`" mirror
 t 1 "skills: a take rule fails" skrule next "Bash($R take *)" gated
-t 1 "skills: a take rule written with :* fails" skrule next "Bash($R take:*)" gated
 t 1 "skills: a drop rule fails" skrule next "Bash($R drop 7 --force)" gated
-t 1 "skills: a drop rule on another operand fails" skrule next "Bash($R drop 7)" gated
-t 1 "skills: a bare take rule fails" skrule next "Bash($R take)" gated
-t 1 "skills: a coddy drop rule fails" skrule next "Bash(coddy drop 7)" gated
-t 1 "skills: a take rule on the shim path fails" skrule next 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" take 42)' gated
-t 1 "skills: a take rule on the quoted core path fails" skrule next 'Bash("${CLAUDE_PLUGIN_ROOT}/bin/coddy" take *)' gated
-t 1 "skills: a drop rule on the core path run by bash fails" skrule next 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/bin/coddy" drop *)' gated
-t 1 "skills: a take rule on a single-quoted shim path fails" skrule next "Bash(bash '\${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh' take *)" gated
-t 1 "skills: a take rule with a quoted verb fails" skrule next "Bash($R \"take\" *)" gated
-t 1 "skills: a drop rule with a tab before the verb fails" skrule next "Bash($R$(printf '\t')drop *)" gated
-t 1 "skills: a rule broader than take and drop fails" skrule next "Bash($R *)" gated
-t 1 "skills: a coddy rule covering them fails" skrule next "Bash(coddy *)" gated
+t 1 "skills: a broad issue.sh rule fails" skrule next "Bash($R *)" gated
+t 1 "skills: a rule on the core path fails" skrule next 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/bin/coddy" status)' gated
+t 1 "skills: an unquoted shim path rule fails" skrule next 'Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh status)' gated
+t 1 "skills: a single-quoted shim path rule fails" skrule next "Bash(bash '\${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh' status)" gated
+t 1 "skills: a form outside the list fails" skrule next "Bash($R frobnicate *)" gated
+t 1 "skills: a coddy rule fails" skrule next "Bash(coddy status)" gated
 t 1 "skills: a bare Bash fails" skrule next "Bash" gated
-t 1 "skills: a rule on the bare shim path fails" skrule next 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" *)' gated
-t 1 "skills: a rule cut at a verb letter on the core fails" skrule next 'Bash("${CLAUDE_PLUGIN_ROOT}/bin/coddy" d*)' gated
-t 1 "skills: a rule cut at a verb letter on bash and the core fails" skrule next 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/bin/coddy" t*)' gated
-t 1 "skills: an unquoted shim path rule fails" skrule next 'Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh *)' gated
-t 1 "skills: a bare core path rule fails" skrule next 'Bash(${CLAUDE_PLUGIN_ROOT}/bin/coddy *)' gated
-t 1 "skills: a rule with a wildcard before the operand fails" skrule next "Bash($R * 4*)" gated
 t 1 "skills: an allowed-tools in list form, unread, fails" gatedlist
 t 1 "skills: a continuation line holding a take rule fails the gate" skcont gated
 t 1 "skills: a continuation line fails the mirror" skcont mirror
