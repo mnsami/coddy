@@ -630,6 +630,22 @@ for sh in /bin/sh /bin/dash; do
   t 2 "launcher: under $sh, guard blocks the main checkout" sh -c 'printf %s "$1" | CLAUDE_PROJECT_DIR="$2" PATH="nm:$PATH" "$3" "$4" guard' - "$main" "$repo" "$sh" "$here/scripts/hook.sh"
   t 1 "launcher: under $sh, and ran nothing planted" test -e "$tmp/planted"
 done
+# A HEAD padded with 32 MB of spaces and no newline, which git still takes
+# (it reads 255 bytes to take the repository and trims the rest), stalls no
+# hook: the launcher reads 255 bytes of it, under either sh, and unpath 1024
+# characters, under either bash.
+hr=$(git symbolic-ref HEAD); cp .git/HEAD "$tmp/HEAD"; { printf 'ref: %s' "$hr"; head -c 32000000 /dev/zero | tr '\0' ' '; } > .git/HEAD
+for sh in /bin/sh /bin/dash; do
+  [ -x "$sh" ] || continue
+  for b in "" "$tmp/sysbash:"; do
+    for v in guard snap trip; do
+      p=$agent; [ "$v" = guard ] || p=$(payload true)
+      SECONDS=0; printf %s "$p" | CLAUDE_PROJECT_DIR="$repo" PATH="$b$PATH" "$sh" "$here/scripts/hook.sh" "$v" >/dev/null 2>&1; got=$?
+      t 0 "launcher: under $sh${b:+ and /bin/bash}, $v reads a HEAD padded past 32 MB within seconds" test "$got:$((SECONDS <= 4))" = 0:1
+    done
+  done
+done
+cp "$tmp/HEAD" .git/HEAD
 # With no bash left it refuses, in plain text.
 mkdir "$tmp/nobash"
 for p in "none:$tmp/nobash" "one in the project alone:$repo/nm" "a relative one alone:nm:$tmp/nobash"; do

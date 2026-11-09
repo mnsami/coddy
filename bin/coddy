@@ -98,8 +98,10 @@ inproj() { local d=$1 w; while [ -n "$d" ]; do for w in "${ins[@]}"; do [ "$d" -
 # every entry that is empty, relative, gone or spelled physically with a
 # colon dropped, and every one that lies at or under $1 or the checkout
 # above an absolute $1 (the nearest directory whose .git git takes for a
-# main checkout's, else the topmost holding a .git at all and, with none git
-# takes, the project a /.worktrees/ path names: the launcher's walk), by its
+# main checkout's, its HEAD read no further than a NUL or 1024 characters,
+# as isgit reads it, so a huge one stalls no hook; else the topmost holding
+# a .git at all and, with none git takes, the project a /.worktrees/ path
+# names: the launcher's walk), by its
 # own spelling, a link on the way (follow) or where it lands, where a
 # command in the project could plant a git or a jq for a hook to run
 # outside the sandbox; the rest in their physical spelling. Nothing left is
@@ -111,7 +113,7 @@ unpath() {
     while [ -n "$c" ]; do
       if [ -e "$c/.git" ] || [ -L "$c/.git" ]; then
         t=$c l=""
-        [ ! -L "$c/.git" ] && [ -f "$c/.git/HEAD" ] && [ ! -L "$c/.git/HEAD" ] && [ -x "$c/.git/objects" ] && [ -x "$c/.git/refs" ] && [ ! -e "$c/.git/commondir" ] && [ ! -L "$c/.git/commondir" ] && { IFS= read -r l || :; } 2>/dev/null < "$c/.git/HEAD"
+        [ ! -L "$c/.git" ] && [ -f "$c/.git/HEAD" ] && [ ! -L "$c/.git/HEAD" ] && [ -x "$c/.git/objects" ] && [ -x "$c/.git/refs" ] && [ ! -e "$c/.git/commondir" ] && [ ! -L "$c/.git/commondir" ] && { IFS= read -r -d '' -n 1024 l || :; } 2>/dev/null < "$c/.git/HEAD"
         # shellcheck disable=SC2254 # h is a pattern: 40 hex digits
         case $l in 'ref: refs/'*|'ref:refs/'*|$h*) k=1; break ;; esac
       fi
