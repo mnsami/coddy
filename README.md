@@ -233,6 +233,7 @@ a jj repository with a jj on `PATH` that does not report a version before
 before the command or after it, is
 never read as an empty listing, and neither is a fingerprint that fails on
 its own: the command is reported as unchecked, naming the call that failed.
+So is a command that moves or removes the root's `.git`.
 While one keeps failing (a bad line in a staged nested repository's config,
 a corrupt index), every command runs unchecked and nothing it changes is
 named. Each command's check starts from a fingerprint taken just before it,

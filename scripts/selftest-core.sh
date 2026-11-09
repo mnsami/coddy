@@ -543,6 +543,13 @@ rmdir .jj
 mkdir "$tmp/nogit"; cp .coddy.yml "$tmp/nogit/"
 CODDY_ROOT="$tmp/nogit" tripped 0 "unchecked: a root with no .git runs checked, as before" 'true'
 rm -r "$tmp/nogit"
+# One whose .git snap saw and the command moved aside is held to it: the
+# run is unchecked, its git calls failing there read as no empty listing.
+wire snap w >/dev/null; mv .git "$tmp/g"; echo x >> README.md; out=$(wire trip w 2>&1); r=$?
+mv "$tmp/g" .git; git checkout -q README.md
+t 0 "unchecked: a .git the command moved aside, with an edit, trips" test "$r" = 2
+t 0 "unchecked: saying its .git is gone" grep -q 'could not be fingerprinted after that command ran, since its .git is gone' <<<"$out"
+tripped 0 "unchecked: the next command is checked afresh" 'true'
 # A git worktree there before, its listing failing at snap alone, is named
 # neither made nor moved: the run is unchecked.
 git worktree add -q --detach "$tmp/owt"

@@ -1390,7 +1390,10 @@ out() {
 # ("unchecked status"), git worktree list ("unchecked list", gitwts's
 # status) and jj workspace list ("unchecked jj", as jjfailed has it), git's
 # two where the root holds a .git (a plain jj root has none, and git fails
-# there by design). A failed listing is no empty one, which would hide the
+# there by design). snap's alone (gd) says, as the line "git dir", that the
+# root held one, which trip holds the root to: a command that moved or
+# removed it leaves git nothing to list. A failed listing is no empty one,
+# which would hide the
 # command's change or name a worktree that was there before as made. The count of dirty
 # paths goes to fd 5 once git status has listed them. A dirty path that is
 # not clean is printed
@@ -1419,6 +1422,7 @@ sflav() {
 snap() {
   cd "$root" 2>/dev/null || return 0
   exec 8>&1
+  [ -z "$gd" ] || [ ! -d .git ] || echo 'git dir'
   hgit merge-base --is-ancestor "refs/heads/$b" "refs/remotes/origin/$b" 2>/dev/null ||
     { tip=$(hgit rev-parse -q --verify "refs/heads/$b" 2>/dev/null) && echo "commits on $b $tip"; }
   at=$(hgit symbolic-ref -q --short HEAD 2>/dev/null); h=$(hgit rev-parse HEAD 2>/dev/null)
@@ -1518,7 +1522,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # onboarding gate: it runs at the root, whose .git is, past oddly, a real
   # directory with no commondir, whatever directory the session opened in
   # (a subdirectory whose .git is garbage, a bare repository nested in the
-  # project). seen and nowt are trip's alone (out, snap).
+  # project). seen and nowt are trip's alone (out, snap), gd snap's.
   common() { C=$(cd "$R/.git" 2>/dev/null && pwd -P); }
   # git worktree list, which the fingerprint runs, reads gitdir, HEAD, locked
   # and commondir in every admin dir under $C/worktrees/, a dot-named one
@@ -1631,7 +1635,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     done < <(grep -xE 'unchecked (stat|status|list|jj|fp)' "$1")
     [ -n "$w" ] && echo "$w"
   }
-  seen="" nowt="" vf=/dev/null
+  seen="" nowt="" vf=/dev/null gd=""
   case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
   file="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
   # Both config paths are kept, present or not: a .coddy.yml the command
@@ -1683,7 +1687,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # command that touched the snapshot; a record that could not be written
     # (a link planted at its name) drops the snapshot, as does an unchecked
     # record that cannot be. Its verdicts go to $file.v, for trip.
-    fp "$file" 3>"$file.wt" 4>/dev/null 5>"$file.n" 6>"$file.v"; r=$?
+    gd=1; fp "$file" 3>"$file.wt" 4>/dev/null 5>"$file.n" 6>"$file.v"; r=$?
     if [ "$r" = 3 ]; then
       rm -f "$file"; echo unchecked > "$file" || ok=""
       nd=""; [ ! -f "$file.n" ] || nd=$(head -c 20 "$file.n")
@@ -1827,6 +1831,8 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   drop() { rm -f "$file" ${now:+"$now"}; [ "$lab" = /dev/null ] || rm -f "$lab"; [ -n "$keep" ] || rm -f "$file".*; }
   grep -qx unchecked "$file" && { drop; die "${msg}that command ran unchecked: the main checkout took more than $fpb seconds to fingerprint before it ran ($tl), so what it changed there, and a worktree it made, could not be seen. $ck"; }
   w=$(why "$file") && { drop; die "${msg}that command ran unchecked: the main checkout could not be fingerprinted before it ran, since $w, so what it changed there, and a worktree it made, could not be seen. $ck"; }
+  # A .git snap saw (git dir) and the command moved or removed: no git runs.
+  ! grep -qx 'git dir' "$file" || [ -d "$root/.git" ] || { drop; die "${msg}the main checkout could not be fingerprinted after that command ran, since its .git is gone, so what it changed there could not be checked. $ck"; }
   [ ! -f "$file.wt" ] || seen=$'\n'$(cat "$file.wt")$'\n'
   [ ! -f "$file.v" ] || vf=$file.v
   lab=$(mktemp 2>/dev/null) || lab=/dev/null
