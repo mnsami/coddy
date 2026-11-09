@@ -553,10 +553,14 @@ wire snap w; echo x > stray.txt; t 2 "hooks: the PostToolUseFailure entry trips 
 # them, and a body may call them without one. MCP names drifting upstream is
 # not checked here.
 rules() { sed -n 's/^allowed-tools: //p' "$1" | tr ',' '\n' | sed 's/^ *//;s/ *$//'; }
+# allowed-tools must be one plain line: a continuation line or a value opening
+# with a quote, >, |, [ or { is a form rules() does not read, so it fails.
+atform() { awk -v q="'" '/^allowed-tools:/{f=1; v=substr($0,15); sub(/^ +/,"",v); if (v ~ ("^[" q "\">|[{]")) exit 1; next} f{exit ($0 ~ /^[ \t]/)}' "$1"; }
 mirror() {
   local f body at all r p c calls ok short bad=0
   all=$(for f in "$1"/*/SKILL.md; do rules "$f"; done | sed -n 's/^mcp__.*__//p' | sort -u)
   for f in "$1"/*/SKILL.md; do
+    atform "$f" || { echo "$f: allowed-tools is not a plain line" >&2; bad=1; }
     body=$(awk '/^---$/{n++;next} n>=2' "$f"); at=$(rules "$f")
     while IFS= read -r c; do
       case $c in ''|*'issue.sh" take'|*'issue.sh" take '*|*'issue.sh" drop'|*'issue.sh" drop '*) continue ;; esac
@@ -589,17 +593,19 @@ mirror() {
   return $bad
 }
 gated() {
-  local f r p q c
+  local f r p q c gatere='(issue\.sh|coddy)[[:space:]]+(take|drop)($|[[:space:]:*)])'
   for f in "$1"/*/SKILL.md; do
     # a list-form allowed-tools has no single-line value: unread, so a failure
     [ -n "$(rules "$f")" ] || return 1
+    atform "$f" || return 1
     while IFS= read -r r; do
       [ "$r" != Bash ] || return 1
+      # take or drop as the first word after the shim or coddy, whatever follows,
+      # on every fragment, Bash(...) or not (quotes stripped first, so a quoted
+      # path, shim or verb reads as the bare one)
+      q=${r//\"/}; q=${q//\'/}
+      [[ $q =~ $gatere ]] && return 1
       case $r in Bash\(*\)) p=${r#Bash(}; p=${p%)} ;; *) continue ;; esac
-      # take or drop as the first word after the shim or coddy, whatever follows
-      # (quotes stripped first, so a quoted path, shim or verb reads as the bare one)
-      q=${p//\"/}; q=${q//\'/}
-      [[ $q =~ (issue\.sh|coddy)[[:space:]]+(take|drop)($|[[:space:]:*]) ]] && return 1
       case $p in *:\*) p="${p%:\*} *" ;; esac
       for c in 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" take 7' 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" drop 7 --force' 'coddy take 7' 'coddy drop 7 --force' '"${CLAUDE_PLUGIN_ROOT}/bin/coddy" take 7' 'bash "${CLAUDE_PLUGIN_ROOT}/bin/coddy" drop 7 --force'; do
         # shellcheck disable=SC2053 # the rule is a glob, as Claude Code matches it
@@ -613,6 +619,8 @@ sk() { rm -rf "$tmp/sk"; cp -R "$here/skills" "$tmp/sk"; }
 skadd() { sk; printf '%s\n' "$2" >> "$tmp/sk/$1/SKILL.md"; "${@:3}" "$tmp/sk"; }
 skrule() { sk; sed "s|^allowed-tools: .*|&, $2|" "$here/skills/$1/SKILL.md" > "$tmp/sk/$1/SKILL.md"; "${@:3}" "$tmp/sk"; }
 gatedlist() { sk; sed 's|^allowed-tools: .*|allowed-tools:\n  - Bash|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; gated "$tmp/sk"; }
+skcont() { sk; sed 's|^allowed-tools: .*|&\n  Bash(coddy take *)|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; "$@" "$tmp/sk"; }
+skquote() { sk; sed 's|^allowed-tools: \(.*\)|allowed-tools: "\1"|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; "$@" "$tmp/sk"; }
 R='bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh"'
 t 0 "skills: every body and allowed-tools agree, both ways" mirror "$here/skills"
 t 0 "skills: no rule pre-approves take or drop" gated "$here/skills"
@@ -641,6 +649,11 @@ t 1 "skills: a rule broader than take and drop fails" skrule next "Bash($R *)" g
 t 1 "skills: a coddy rule covering them fails" skrule next "Bash(coddy *)" gated
 t 1 "skills: a bare Bash fails" skrule next "Bash" gated
 t 1 "skills: an allowed-tools in list form, unread, fails" gatedlist
+t 1 "skills: a continuation line holding a take rule fails the gate" skcont gated
+t 1 "skills: a continuation line fails the mirror" skcont mirror
+t 1 "skills: a quoted allowed-tools value fails the gate" skquote gated
+t 1 "skills: a quoted allowed-tools value fails the mirror" skquote mirror
+t 1 "skills: a take rule cut at a comma inside its parentheses fails" skrule next "Bash(x, coddy take *)" gated
 # A hook blocks only on exit 2, so the shim makes every other exit of guard
 # or snap a 2 with a message, a core it cannot read included, and a coddy
 # crash blocks the call; trip keeps its own.
