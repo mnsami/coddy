@@ -550,6 +550,14 @@ mv "$tmp/g" .git; git checkout -q README.md
 t 0 "unchecked: a .git the command moved aside, with an edit, trips" test "$r" = 2
 t 0 "unchecked: saying its .git is gone" grep -q 'could not be fingerprinted after that command ran, since its .git is gone' <<<"$out"
 tripped 0 "unchecked: the next command is checked afresh" 'true'
+# So is one whose .jj/repo snap saw, with a jj that lists fine: moved aside,
+# jj there lists no workspace, which would hide one the command made.
+mkdir -p "$tmp/jjok" .jj/repo; printf '#!/bin/sh\n[ "$1" != --version ] || echo "jj 0.46.0"\n' > "$tmp/jjok/jj"; chmod +x "$tmp/jjok/jj"
+PATH="$tmp/jjok:$PATH" wire snap w >/dev/null; mv .jj "$tmp/j"; out=$(PATH="$tmp/jjok:$PATH" wire trip w 2>&1); r=$?
+rm -r "$tmp/j"
+t 0 "unchecked: a .jj the command moved aside trips" test "$r" = 2
+t 0 "unchecked: saying its .jj is gone" grep -q 'could not be fingerprinted after that command ran, since its .jj is gone' <<<"$out"
+PATH="$tmp/jjok:$PATH" tripped 0 "unchecked: the next command is checked afresh" 'true'
 # A git worktree there before, its listing failing at snap alone, is named
 # neither made nor moved: the run is unchecked.
 git worktree add -q --detach "$tmp/owt"
