@@ -608,9 +608,16 @@ gated() {
       [[ $q =~ $gatere ]] && return 1
       case $r in Bash\(*\)) p=${r#Bash(}; p=${p%)} ;; *) continue ;; esac
       case $p in *:\*) p="${p%:\*} *" ;; esac
-      for c in 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" take 7' 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" drop 7 --force' 'coddy take 7' 'coddy drop 7 --force' '"${CLAUDE_PLUGIN_ROOT}/bin/coddy" take 7' 'bash "${CLAUDE_PLUGIN_ROOT}/bin/coddy" drop 7 --force'; do
-        # shellcheck disable=SC2053 # the rule is a glob, as Claude Code matches it
-        [[ $c == $p ]] && return 1
+      # every spelling of the shim and the core, crossed with both verbs and
+      # several operands, tested against the rule with its quotes stripped
+      p=${p//\"/}; p=${p//\'/}
+      for c in 'bash ${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh' '${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh' 'coddy' '${CLAUDE_PLUGIN_ROOT}/bin/coddy' 'bash ${CLAUDE_PLUGIN_ROOT}/bin/coddy'; do
+        for v in take drop; do
+          for o in '' ' 7' ' 42' ' 7 --force'; do
+            # shellcheck disable=SC2053 # the rule is a glob, as Claude Code matches it
+            [[ "$c $v$o" == $p ]] && return 1
+          done
+        done
       done
     done <<< "$(rules "$f")"
   done
@@ -650,6 +657,12 @@ t 1 "skills: a drop rule with a tab before the verb fails" skrule next "Bash($R$
 t 1 "skills: a rule broader than take and drop fails" skrule next "Bash($R *)" gated
 t 1 "skills: a coddy rule covering them fails" skrule next "Bash(coddy *)" gated
 t 1 "skills: a bare Bash fails" skrule next "Bash" gated
+t 1 "skills: a rule on the bare shim path fails" skrule next 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" *)' gated
+t 1 "skills: a rule cut at a verb letter on the core fails" skrule next 'Bash("${CLAUDE_PLUGIN_ROOT}/bin/coddy" d*)' gated
+t 1 "skills: a rule cut at a verb letter on bash and the core fails" skrule next 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/bin/coddy" t*)' gated
+t 1 "skills: an unquoted shim path rule fails" skrule next 'Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh *)' gated
+t 1 "skills: a bare core path rule fails" skrule next 'Bash(${CLAUDE_PLUGIN_ROOT}/bin/coddy *)' gated
+t 1 "skills: a rule with a wildcard before the operand fails" skrule next "Bash($R * 4*)" gated
 t 1 "skills: an allowed-tools in list form, unread, fails" gatedlist
 t 1 "skills: a continuation line holding a take rule fails the gate" skcont gated
 t 1 "skills: a continuation line fails the mirror" skcont mirror
