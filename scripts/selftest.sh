@@ -523,13 +523,150 @@ rm -r .git/coddy/66
 hook() { local v=$1 p=$2; shift 2; eval "set -- \"\$@\" $(jq -r --arg v "$v" --arg r "$here" 'first(.hooks[][].hooks[] | select(.args | index($v))) | [.command] + .args | map(split("${CLAUDE_PLUGIN_ROOT}") | join($r)) | @sh' "$here/hooks/hooks.json")"; printf %s "$p" | env CLAUDE_PROJECT_DIR="$repo" "$@"; }
 t 0 "hooks: every hook runs in exec form through env -u SHELLOPTS -u BASHOPTS -u FUNCNEST -u POSIXLY_CORRECT -u POSIX_PEDANTIC -u OSTYPE /bin/sh and the launcher" jq -e '[.hooks[][].hooks[]] | all(.command == "/usr/bin/env" and .args[:14] == ["-u", "SHELLOPTS", "-u", "BASHOPTS", "-u", "FUNCNEST", "-u", "POSIXLY_CORRECT", "-u", "POSIX_PEDANTIC", "-u", "OSTYPE", "/bin/sh", "${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh"])' "$here/hooks/hooks.json"
 t 0 "hooks: the launcher is executable" test -x "$here/scripts/hook.sh"
-# On startup and resume alone: a /clear or compact in a session still running
-# an install an update replaced would point the launcher back at it.
-t 0 "hooks: SessionStart runs link with the plugin's data dir, on startup and resume alone" jq -e '.hooks.SessionStart | length == 1 and .[0].matcher == "startup|resume" and .[0].hooks[0].args[-3:] == ["${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh", "link", "${CLAUDE_PLUGIN_DATA}"]' "$here/hooks/hooks.json"
-# guard and snap block on a failure, a timeout or a hook that cannot start
-# included (Claude Code 2.1.295 or later); trip and link set neither.
-t 0 "hooks: guard and snap block on a failure, with a 10 s and a 60 s timeout" jq -e '[.hooks.PreToolUse[].hooks[] | [.args[-1], .onFailure, .timeout]] == [["guard", "block", 10], ["snap", "block", 60]]' "$here/hooks/hooks.json"
-t 0 "hooks: trip and link set no onFailure or timeout" jq -e '[.hooks.SessionStart, .hooks.PostToolUse, .hooks.PostToolUseFailure | .[].hooks[]] | length == 3 and all(has("onFailure") or has("timeout") | not)' "$here/hooks/hooks.json"
+# The whole hooks/hooks.json table, in one equality: event, matcher, type, the
+# verb and its args after the script path, onFailure and timeout. The launcher
+# prefix is asserted above, so a change to it touches that line alone.
+hookwant='[
+ {"e":"SessionStart","m":"startup|resume","t":"command","a":["link","${CLAUDE_PLUGIN_DATA}"],"f":null,"o":null},
+ {"e":"PreToolUse","m":"Edit|Write|NotebookEdit","t":"command","a":["guard"],"f":"block","o":10},
+ {"e":"PreToolUse","m":"Bash","t":"command","a":["snap"],"f":"block","o":60},
+ {"e":"PostToolUse","m":"Bash","t":"command","a":["trip"],"f":null,"o":null},
+ {"e":"PostToolUseFailure","m":"Bash","t":"command","a":["trip"],"f":null,"o":null}]'
+hooktable() { jq -e --argjson w "$hookwant" '[.hooks | to_entries[] | .key as $e | .value[] | .matcher as $m | .hooks[] | {e:$e,m:$m,t:.type,a:((.args | map(endswith("/scripts/hook.sh")) | index(true)) as $i | .args[$i+1:]),f:.onFailure,o:.timeout}] | sort_by(tojson) == ($w | sort_by(tojson))' "$1"; }
+t 0 "hooks: the table is the five entries, with their matchers, verbs, onFailure and timeouts" hooktable "$here/hooks/hooks.json"
+hmut() { jq "$1" "$here/hooks/hooks.json" > "$tmp/hooks.json"; hooktable "$tmp/hooks.json"; }
+t 1 "hooks: a guard matcher shrunk to Edit fails the table" hmut '.hooks.PreToolUse[0].matcher = "Edit"'
+t 1 "hooks: PostToolUseFailure's trip pointed at a nonexistent verb fails it" hmut '.hooks.PostToolUseFailure[0].hooks[0].args[-1] = "nope"'
+t 1 "hooks: both trip entries pointed at one verb fail it" hmut '.hooks.PostToolUse[0].hooks[0].args[-1] = "guard" | .hooks.PostToolUseFailure[0].hooks[0].args[-1] = "guard"'
+t 1 "hooks: PostToolUseFailure removed fails it" hmut 'del(.hooks.PostToolUseFailure)'
+t 1 "hooks: an extra hook entry fails it" hmut '.hooks.PostToolUse += [.hooks.PostToolUse[0]]'
+t 1 "hooks: an extra event fails it" hmut '.hooks.Stop = .hooks.PostToolUse'
+# PostToolUseFailure is the entry a failing command fires, and hook() runs the
+# first trip, PostToolUse's: run this one too, with its payload shape.
+failtrip() { eval "set -- $(jq -r --arg r "$here" '.hooks.PostToolUseFailure[0].hooks[0] | [.command] + .args | map(split("${CLAUDE_PLUGIN_ROOT}") | join($r)) | @sh' "$here/hooks/hooks.json")"; printf '{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_use_id":"w","error":"Exit code 1"}' | env CLAUDE_PROJECT_DIR="$repo" "$@"; }
+wire snap w; echo x > stray.txt; t 2 "hooks: the PostToolUseFailure entry trips on a stray file" failtrip; rm stray.txt
+# Every skill's allowed-tools and body agree, both ways: each injected script
+# and issue.sh verb a body calls has a rule that glob-matches it (a trailing :*
+# read as " *", as Claude Code does), each rule is used by its own body, and
+# each MCP tool a body names in backticks, of those any skill allows, is in its
+# own allowed-tools. take and drop are prompt-gated: gated() below allows only
+# a closed list of rule shapes, and a body may call them without a rule. MCP names drifting upstream is
+# not checked here.
+rules() { sed -n 's/^allowed-tools: //p' "$1" | tr ',' '\n' | sed 's/^ *//;s/ *$//'; }
+# allowed-tools must be one plain line: a continuation line or a value opening
+# with a quote, >, |, [, {, * or & is a form rules() does not read, so it fails;
+# blank lines are skipped before the indentation test, as YAML folds them in.
+atform() { awk -v q="'" '/^allowed-tools:/{f=1; v=substr($0,15); sub(/^ +/,"",v); if (v ~ ("^[" q "\">|[{*&]")) exit 1; next} f{if ($0 ~ /^[ \t]*$/) next; exit ($0 ~ /^[ \t]/)}' "$1"; }
+mirror() {
+  local f body at all r p c calls ok short bad=0
+  all=$(for f in "$1"/*/SKILL.md; do rules "$f"; done | sed -n 's/^mcp__.*__//p' | sort -u)
+  for f in "$1"/*/SKILL.md; do
+    atform "$f" || { echo "$f: allowed-tools is not a plain line" >&2; bad=1; }
+    body=$(awk '/^---$/{n++;next} n>=2' "$f"); at=$(rules "$f")
+    while IFS= read -r c; do
+      case $c in ''|*'issue.sh" take'|*'issue.sh" take '*|*'issue.sh" drop'|*'issue.sh" drop '*) continue ;; esac
+      ok=1
+      while IFS= read -r r; do
+        # shellcheck disable=SC2053 # the rule is a glob, as Claude Code matches it
+        case $r in Bash\(*\)) p=${r#Bash(}; p=${p%)}; case $p in *:\*) p="${p%:\*} *" ;; esac; [[ $c == $p ]] && ok=0 ;; esac
+      done <<< "$at"
+      [ $ok = 0 ] || { echo "$f: no rule for: $c" >&2; bad=1; }
+    done <<< "$(printf '%s\n' "$body" | grep -o 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/[a-z]*\.sh"[^`]*')"
+    calls=$(printf '%s\n' "$body" | grep -o -e 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/[a-z]*\.sh"[^`]*' -e '`[^`]*`' | tr -d '`')
+    while IFS= read -r r; do
+      ok=1
+      case $r in
+        mcp__*) printf '%s\n' "$body" | grep -qF -- "${r##*__}" && ok=0 ;;
+        Bash\(*\)) p=${r#Bash(}; p=${p%)}; case $p in *:\*) p="${p%:\*} *" ;; esac
+          while IFS= read -r c; do
+            # shellcheck disable=SC2053 # the rule is a glob, as Claude Code matches it
+            [[ $c == $p ]] && { ok=0; break; }
+          done <<< "$calls" ;;
+        *) printf '%s\n' "$body" | grep -qF -- "$r" && ok=0 ;;
+      esac
+      [ $ok = 0 ] || { echo "$f: unused rule: $r" >&2; bad=1; }
+    done <<< "$at"
+    while IFS= read -r short; do
+      [ -n "$short" ] || continue
+      ! printf '%s\n' "$body" | grep -qF "\`$short\`" || printf '%s\n' "$at" | grep -q "__$short\$" || { echo "$f: $short is not allowed" >&2; bad=1; }
+    done <<< "$all"
+  done
+  return $bad
+}
+# take and drop are prompt-gated by an allowlist: every Bash rule must equal, character for character, one shape
+# below. A new pre-approved form is added here on purpose; take and drop never.
+SH='bash "${CLAUDE_PLUGIN_ROOT}/scripts'
+shapes=("Bash($SH/config.sh\")" "Bash($SH/detect.sh\")" 'Bash(date +%Y%m%d-%H%M%S)')
+for v in 'claim *' 'create *' 'diff *' 'exclude answers' 'exclude config' 'forget answers' 'log *' 'mark *' migrate 'push *' 'state *' status sweep 'verify *'; do shapes+=("Bash($SH/issue.sh\" $v)"); done
+gated() {
+  local f r s ok
+  for f in "$1"/*/SKILL.md; do
+    # a list-form allowed-tools has no single-line value: unread, so a failure
+    [ -n "$(rules "$f")" ] || return 1
+    atform "$f" || return 1
+    while IFS= read -r r; do
+      # an mcp tool name is the one other fragment; anything else (a space, a tab, a lone *, a bare Bash) is unread by this gate
+      case $r in mcp__*) [[ $r =~ ^mcp__[A-Za-z0-9_-]+$ ]] || return 1; continue ;; esac
+      ok=1
+      for s in "${shapes[@]}"; do [ "$r" = "$s" ] && ok=0; done
+      [ $ok = 0 ] || return 1
+    done <<< "$(rules "$f")"
+  done
+  return 0
+}
+sk() { rm -rf "$tmp/sk"; cp -R "$here/skills" "$tmp/sk"; }
+skadd() { sk; printf '%s\n' "$2" >> "$tmp/sk/$1/SKILL.md"; "${@:3}" "$tmp/sk"; }
+skrule() { sk; sed "s|^allowed-tools: .*|&, $2|" "$here/skills/$1/SKILL.md" > "$tmp/sk/$1/SKILL.md"; "${@:3}" "$tmp/sk"; }
+gatedlist() { sk; sed 's|^allowed-tools: .*|allowed-tools:\n  - Bash|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; gated "$tmp/sk"; }
+skcont() { sk; sed 's|^allowed-tools: .*|&\n  Bash(coddy take *)|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; "$@" "$tmp/sk"; }
+skblank() { sk; sed 's|^allowed-tools: .*|&\n\n  Bash(coddy take *)|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; "$@" "$tmp/sk"; }
+skquote() { sk; sed 's|^allowed-tools: \(.*\)|allowed-tools: "\1"|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; "$@" "$tmp/sk"; }
+R='bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh"'
+t 0 "skills: every body and allowed-tools agree, both ways" mirror "$here/skills"
+t 0 "skills: no rule pre-approves take or drop" gated "$here/skills"
+t 1 "skills: an issue.sh verb called without its rule fails" skadd next "\`$R frobnicate\`" mirror
+t 1 "skills: an injected script without its rule fails" skadd next "\`bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/detect.sh\"\`" mirror
+t 1 "skills: a rule no body uses fails" skrule next "Bash($R frobnicate *)" mirror
+t 1 "skills: an MCP tool named in backticks without its entry fails" skadd next '`create_pull_request`' mirror
+t 1 "skills: a claim rule with no operand, whose body calls always have one, fails" skrule start "Bash($R claim)" mirror
+t 1 "skills: a rule cut short of any call fails" skrule start "Bash($R cre *)" mirror
+t 0 "skills: a body calling take or drop without a rule passes" skadd next "\`$R take 7\` and \`$R drop 7 --force\`" mirror
+t 1 "skills: a body calling takeover without a rule fails" skadd next "\`$R takeover 7\`" mirror
+t 1 "skills: a body calling dropall without a rule fails" skadd next "\`$R dropall\`" mirror
+t 1 "skills: a take rule fails" skrule next "Bash($R take *)" gated
+t 1 "skills: a drop rule fails" skrule next "Bash($R drop 7 --force)" gated
+t 1 "skills: a broad issue.sh rule fails" skrule next "Bash($R *)" gated
+t 1 "skills: a rule on the core path fails" skrule next 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/bin/coddy" status)' gated
+t 1 "skills: an unquoted shim path rule fails" skrule next 'Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh status)' gated
+t 1 "skills: a single-quoted shim path rule fails" skrule next "Bash(bash '\${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh' status)" gated
+t 1 "skills: a form outside the list fails" skrule next "Bash($R frobnicate *)" gated
+t 1 "skills: a coddy rule fails" skrule next "Bash(coddy status)" gated
+t 1 "skills: a bare Bash fails" skrule next "Bash" gated
+t 1 "skills: Bash(*) fails" skrule next 'Bash(*)' gated
+t 1 "skills: Bash(bash *) fails" skrule next 'Bash(bash *)' gated
+t 1 "skills: Bash(bash:*) fails" skrule next 'Bash(bash:*)' gated
+t 1 "skills: a plugin-root wildcard rule fails" skrule next 'Bash(bash "${CLAUDE_PLUGIN_ROOT}*)' gated
+t 1 "skills: an allowed-tools in list form, unread, fails" gatedlist
+t 1 "skills: a continuation line holding a take rule fails the gate" skcont gated
+t 1 "skills: a continuation line fails the mirror" skcont mirror
+t 1 "skills: a blank line before a continuation fails the gate" skblank gated
+t 1 "skills: a blank line before a continuation fails the mirror" skblank mirror
+t 1 "skills: a quoted allowed-tools value fails the gate" skquote gated
+t 1 "skills: a quoted allowed-tools value fails the mirror" skquote mirror
+# The other openers atform rejects: skopen <replacement of the value, \1 being it> <check>.
+skopen() { sk; sed "s#^allowed-tools: \\(.*\\)#allowed-tools: $1#" "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; shift; "$@" "$tmp/sk"; }
+for op in "single-quoted:'\\1'" "> block scalar:>"$'\\\n'"  \\1" "| block scalar:|"$'\\\n'"  \\1" "flow sequence:[\\1]" "flow mapping:{\\1}" "alias:*\\1" "anchor:\\&\\1"; do
+  for ck in gated mirror; do t 1 "skills: a ${op%%:*} allowed-tools value fails the $ck" skopen "${op#*:}" "$ck"; done
+done
+t 1 "skills: a take rule cut at a comma inside its parentheses fails" skrule next "Bash(x, coddy take *)" gated
+# Claude Code also splits on spaces outside parentheses and trims tabs: no fragment is skipped.
+M=mcp__plugin_github_github__get_me
+t 1 "skills: a take rule between two mcp names, space-separated, fails the gate" skrule next "mcp__plugin_github_github__search_issues Bash($R take *) $M" gated
+t 1 "skills: a lone * on ship fails the gate" skrule ship '*' gated
+t 1 "skills: a lone * on triage fails the gate" skrule triage '*' gated
+t 1 "skills: a tab before a take rule fails the gate" skrule next "$(printf '\t')Bash($R take *)" gated
+t 1 "skills: a !!str tag fails the gate" skopen '!!str \1' gated
+t 1 "skills: a comment after the key, then a list, fails the gate" skopen '# note\n  - Bash(coddy take *)' gated
 # A hook blocks only on exit 2, so the shim makes every other exit of guard
 # or snap a 2 with a message, a core it cannot read included, and a coddy
 # crash blocks the call; trip keeps its own.
