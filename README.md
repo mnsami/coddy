@@ -273,6 +273,9 @@ the file back: Claude is told to have you check it. Its ceilings:
 - `~/.claude/settings.json`, managed settings and a worktree's own
   `.claude/settings*.json` are not compared, nor a subdirectory's, which
   a session opened in that subdirectory loads.
+- A settings file over 1 MiB is compared by its size, ctime and inode
+  alone, so every change to it is reported, `permissions.allow` included,
+  and a same-size rewrite that keeps its inode and ctime is not.
 - `hooks: off` reads the session's own mark alone, so a session with its
   hooks off is caught only when it runs `/coddy:start` itself, and a shell
   command can make that mark: it is a check, not a guardrail.

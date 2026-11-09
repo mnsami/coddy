@@ -2077,7 +2077,15 @@ rm .claude/settings.local.json
 setting 2 "settings: one made holding hooks trips" .claude/settings.local.json '{"hooks":{},"permissions":{"allow":["Bash(ls)"]}}'
 printf '{%s}\n' "$al" > .claude/settings.json
 setting 2 "settings: a permissions.allow of NaN, which jq reads and Claude Code cannot parse, trips" .claude/settings.json '{"permissions":{"allow":NaN,"deny":["Bash(rm)"]}}'
+printf '{"statusLine":null,%s}\n' "$al" > .claude/settings.json
+setting 2 "settings: NaN in place of a null, which jq prints as null, trips" .claude/settings.json "{\"statusLine\":NaN,$al}"
 printf '{%s}\n' "$al" > .claude/settings.json
+# A settings.local.json over 64 KiB is still read by jq, up to 1 MiB.
+{ printf '{"permissions":{"allow":["Bash(ls)"'; for i in $(seq 1 5000); do printf ',"Bash(echo %s)"' "$i"; done; printf '],"deny":["Bash(rm)"]}}\n'; } > .claude/settings.local.json
+t 0 "settings: the big settings.local.json is over 64 KiB" test "$(wc -c < .claude/settings.local.json)" -gt 65536
+wire snap w; sed 's/"Bash(ls)"/"Bash(cat)"/' .claude/settings.local.json > "$tmp/big.json"; cat "$tmp/big.json" > .claude/settings.local.json; wire trip w 2>"$tmp/trip.err"; r=$?
+t 0 "settings: a change to permissions.allow alone in a settings.local.json over 64 KiB is quiet" test "$r" = 0
+rm .claude/settings.local.json "$tmp/big.json"
 wire snap w; rm .claude/settings.json; wire trip w 2>"$tmp/trip.err"; r=$?
 t 0 "settings: deleting one trips" test "$r" = 2
 printf '{%s}\n' "$al" > .claude/settings.json
@@ -2093,7 +2101,7 @@ wire snap w; printf '{"disableAllHooks":true}\n' > .claude/settings.json; wire t
 t 0 "settings: a dirty file of the same name and hash under the root hides no change" test "$r" = 2
 t 0 "settings: naming the file" grep -qF "that command changed .claude/settings.json," "$tmp/trip.err"
 # Nor does a link there to a big dirty file of that name: a settings file
-# over 64 KiB is read by its stat, marked as no dirty path's line is.
+# over 1 MiB is read by its stat, marked as no dirty path's line is.
 head -c 1048577 /dev/zero > "settings .claude/settings.json"; printf '{%s}\n' "$al" > .claude/settings.json
 wire snap w; rm .claude/settings.json; ln -s "../settings .claude/settings.json" .claude/settings.json; wire trip w 2>"$tmp/trip.err"; r=$?
 t 0 "settings: a link to a big dirty file whose line reads as the settings file's trips" test "$r" = 2

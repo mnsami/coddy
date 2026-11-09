@@ -1474,24 +1474,24 @@ snap() {
   # The agent's settings files under the agent dir (Claude Code's), which
   # can turn coddy's hooks off or change what runs outside the sandbox: one
   # line each, written on fd 4 too as "settings <line>", which trip tells it
-  # by. A plain file of 64 KiB at most is hashed as jq reads it, keys
-  # sorted, without permissions.allow while it is a list of strings, which
-  # the agent itself writes when the user allows a command for good (any
-  # other value is kept, since jq reads NaN and Infinity, which the agent's
-  # parser rejects, voiding the whole file), nor an empty list under
-  # permissions, as it writes deny and ask, nor a permissions it leaves
-  # empty, one that
-  # leaves {} as absent, so the file the agent makes for an allow rule is no
-  # change, or as its bytes when jq is missing or cannot read it, each hash
-  # after jq: or raw:, so no dirty path's line (a file at "settings
-  # .claude/settings.json" holding that JSON) reads as one and hides its
-  # change; a bigger one by its size, ctime and inode after stat:, which no
+  # by. A plain file of 1 MiB at most, the bound dirty files are hashed to,
+  # is hashed as jq reads it, keys sorted, without permissions.allow while
+  # it is a list of strings, which the agent itself writes when the user
+  # allows a command for good (any other value is kept), nor an empty list
+  # under permissions, as it writes deny and ask, nor a permissions it
+  # leaves empty, one that leaves {} as absent, so the file the agent makes
+  # for an allow rule is no change, or as its bytes when jq is missing or
+  # cannot read it, or reads a number that is not finite anywhere in it
+  # (NaN, Infinity), which jq prints as null or a finite number while the
+  # agent's parser rejects the whole file, each hash after jq: or raw:, so
+  # no dirty path's line (a file at "settings .claude/settings.json"
+  # holding that JSON) reads as one and hides its change; a bigger one by its size, ctime and inode after stat:, which no
   # dirty path's big: line carries, so a link to a big dirty file there does
   # not read as that file's line; anything else by its kind.
   [ -z "${CODDY_AGENT_DIR-}" ] || for f in "$CODDY_AGENT_DIR/settings.json" "$CODDY_AGENT_DIR/settings.local.json"; do
     if [ ! -f "$f" ]; then v=$(kind "$f")
-    elif [ "$(head -c 65537 -- "$f" 2>/dev/null | wc -c)" -gt 65536 ]; then sflav; v=$(stat -L "${sf[@]}" -- "$f" 2>/dev/null); v=stat:${v%%:*}; v=${v// /:}
-    elif v=$(jqh -cS 'if (.permissions.allow | type) == "array" and (.permissions.allow | all(type == "string")) then del(.permissions.allow) else . end | del(.permissions[]? | select(. == [])) | if .permissions == {} then del(.permissions) else . end' < "$f" 2>/dev/null); then
+    elif [ "$(head -c 1048577 -- "$f" 2>/dev/null | wc -c)" -gt 1048576 ]; then sflav; v=$(stat -L "${sf[@]}" -- "$f" 2>/dev/null); v=stat:${v%%:*}; v=${v// /:}
+    elif v=$(jqh -cS 'if any(..; type == "number" and (isnan or isinfinite)) then error("nonfinite") else . end | if (.permissions.allow | type) == "array" and (.permissions.allow | all(type == "string")) then del(.permissions.allow) else . end | del(.permissions[]? | select(. == [])) | if .permissions == {} then del(.permissions) else . end' < "$f" 2>/dev/null); then
       [ "$v" = '{}' ] && v=absent || v=jq:$(printf '%s\n' "$v" | git hash-object --stdin 2>/dev/null)
     else v=raw:$(git hash-object --stdin < "$f" 2>/dev/null); fi
     clean "$f" || f=$(q "$f")
