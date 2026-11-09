@@ -605,8 +605,8 @@ gated() {
     [ -n "$(rules "$f")" ] || return 1
     atform "$f" || return 1
     while IFS= read -r r; do
-      [ "$r" != Bash ] || return 1
-      case $r in Bash\(*) ;; *) continue ;; esac
+      # an mcp tool name is the one other fragment; anything else (a space, a tab, a lone *, a bare Bash) is unread by this gate
+      case $r in mcp__*) [[ $r =~ ^mcp__[A-Za-z0-9_-]+$ ]] || return 1; continue ;; esac
       ok=1
       for s in "${shapes[@]}"; do [ "$r" = "$s" ] && ok=0; done
       [ $ok = 0 ] || return 1
@@ -659,6 +659,14 @@ for op in "single-quoted:'\\1'" "> block scalar:>"$'\\\n'"  \\1" "| block scalar
   for ck in gated mirror; do t 1 "skills: a ${op%%:*} allowed-tools value fails the $ck" skopen "${op#*:}" "$ck"; done
 done
 t 1 "skills: a take rule cut at a comma inside its parentheses fails" skrule next "Bash(x, coddy take *)" gated
+# Claude Code also splits on spaces outside parentheses and trims tabs: no fragment is skipped.
+M=mcp__plugin_github_github__get_me
+t 1 "skills: a take rule between two mcp names, space-separated, fails the gate" skrule next "mcp__plugin_github_github__search_issues Bash($R take *) $M" gated
+t 1 "skills: a lone * on ship fails the gate" skrule ship '*' gated
+t 1 "skills: a lone * on triage fails the gate" skrule triage '*' gated
+t 1 "skills: a tab before a take rule fails the gate" skrule next "$(printf '\t')Bash($R take *)" gated
+t 1 "skills: a !!str tag fails the gate" skopen '!!str \1' gated
+t 1 "skills: a comment after the key, then a list, fails the gate" skopen '# note\n  - Bash(coddy take *)' gated
 # A hook blocks only on exit 2, so the shim makes every other exit of guard
 # or snap a 2 with a message, a core it cannot read included, and a coddy
 # crash blocks the call; trip keeps its own.
