@@ -256,6 +256,22 @@ only when you say so. A config over 64 KiB is more than coddy keeps a copy
 of, so every shell command is refused until `/coddy:config` brings it under
 that.
 
+No config at either path, while a claim lock under `.git/coddy` or the
+`.git/hooks/coddy` directory is still there, means the config was removed,
+not never written. Then every edit, shell command, commit and push is
+refused, in either guard mode, except writing the config back: a Write of
+`.coddy.yml` (or `.claude/coddy.yml`) asks you first. The message names
+what is missing, what was left, and the two ways out in words. A project
+with neither leftover, one never onboarded or one you left by hand, stays
+inert. Its ceilings:
+
+- A background command's changes are not compared, and the config is only
+  compared around each command, so a rewrite between two calls (a
+  `guard: warn` added, a weaker `.claude/coddy.yml` left after `.coddy.yml`
+  is removed) goes unseen.
+- With the sandbox off, one command can remove the config and every
+  leftover, which leaves nothing to tell it from a project never onboarded.
+
 **Git hooks.** `/coddy:start` points git's `core.hooksPath` at
 `.git/hooks/coddy/`. Its `pre-commit` and `pre-push` refuse a commit on the
 default branch, or a push to it, and on any branch no claimed issue owns,
@@ -369,9 +385,13 @@ review_rounds: 3             # optional; 1-5 (default 3)
 - `.claude/coddy.yml`, where earlier versions kept the config, is still read
   while `.coddy.yml` is absent; `/coddy:migrate` moves it. A config without
   `version` is version 0; `/coddy:migrate` brings it up to date.
-- Delete the file yourself to leave the workflow (`.git/coddy`, where claims
-  keep their records, can go with it). Every other skill
-  refuses to run without the file.
+- To leave the workflow, from your own terminal delete the file, the claim
+  locks under `.git/coddy` and the `.git/hooks/coddy` directory, and set
+  `core.hooksPath` back to the `coddy.previousHooksPath` that `.git/config`
+  records, or, when that is empty or missing, unset `core.hooksPath`, never
+  set it to an empty value. While a claim lock or the hooks directory is
+  left, a missing config reads as removed and the hooks refuse everything.
+  Every other skill refuses to run without the file.
 
 ## Related projects
 

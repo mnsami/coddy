@@ -353,6 +353,25 @@ gdmsg() {
 # has put the config back.
 confpath() { if [ -f "$root/.coddy.yml" ]; then conf="$root/.coddy.yml"; else conf="$root/$legacy"; fi; cname="${conf#"$root"/}"; }
 confpath
+# What a started issue leaves: start's git hooks, .git/hooks/coddy (written
+# outside the sandbox), checked first, or a claim under .git/coddy (a lock,
+# or a marker from before locks; the .branch and .base records, dot names
+# and swept/ are none). With neither config beside it the config was
+# removed, not never written, so guard, snap and githook refuse rather than
+# go inert, naming the leftover in $tm. Existence tests alone: no git call,
+# and no config opened, so a FIFO at .coddy.yml hangs nothing.
+left() {
+  local r l=.git/hooks/coddy
+  if [ ! -e "$root/$l" ] && [ ! -L "$root/$l" ]; then
+    l=""
+    for r in "$root"/.git/coddy/*; do
+      case "${r##*/}" in swept|*[!A-Za-z0-9_-]*) continue ;; esac
+      { [ -e "$r" ] || [ -L "$r" ]; } && { l=${r#"$root"/}; break; }
+    done
+    [ -n "$l" ] || return 1
+  fi
+  tm="no config file is at .coddy.yml or $legacy, yet $l is there, which only a project in the workflow leaves, so the config was removed, not never written, and coddy refuses every edit, shell command, commit and push until either the config is back (write .coddy.yml with the Write tool, which asks you first, or, when git tracks it, restore it from HEAD with git in your own terminal) or you finish leaving the workflow from your own terminal: remove the claim locks under .git/coddy and the .git/hooks/coddy directory, and set core.hooksPath back to the coddy.previousHooksPath that .git/config records, or, when that is empty or missing, unset core.hooksPath, never set it to an empty value."
+}
 self="${0##*/}" # how the caller names this command: coddy, or a shim's name
 code=1
 
@@ -565,7 +584,9 @@ if [ "${1-}" = guard ]; then
   # 10 s timeout, past which a Claude Code before 2.1.295 lets the edit
   # through. Reset, not read, as an environment can set SECONDS.
   budget=5 SECONDS=0
-  [ -f "$conf" ] || exit 0
+  # No config: inert, unless a started issue's leftovers say it was removed
+  # (left): then every edit is refused but a Write of a config (below).
+  tamp=""; [ -f "$conf" ] || { left || exit 0; tamp=1; }
   code=2 # exit 2 is what blocks the tool call
   oddly
   # Without jq, with one that fails or with a payload naming no path, the
@@ -680,9 +701,17 @@ if [ "${1-}" = guard ]; then
   nf="the edit guard could not follow $f to where the edit lands (a cd or readlink failed, a link or directory into /proc or /dev/fd, more than 40 links, a path past 4096 bytes, a .. after a missing directory, or more than $budget seconds)."
   nm=$(byname "$f" && printf x) && nm=${nm%?x} && at=$(phys "$nm" new) && at=${at%x} || die "$nf"
   pr=$(cd "$root" && pwd -P && printf x) && pr=${pr%?x} || pr=$root
-  if [ "$nm" -ef "$root/.coddy.yml" ] || { [ "${at%/*}" -ef "$pr" ] && [ "$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')" = .coddy.yml ]; }; then
-    jqh -cn --arg m "Editing .coddy.yml changes the coddy guardrails. Allow it only if you asked for this change (/coddy:config)." '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'
-    exit 0
+  # Removed (tamp), /coddy:config stops on NOT_ONBOARDED, so the ask names none.
+  ask() { local m="Editing $1 changes the coddy guardrails. Allow it only if you asked for this change (/coddy:config)."; [ -z "$tamp" ] || m="Writing $1 puts back the coddy config that was removed, and with it the coddy guardrails. Allow it only if you asked for this change."; jqh -cn --arg m "$m" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'; exit 0; }
+  lc=$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')
+  if [ "$nm" -ef "$root/.coddy.yml" ] || { [ "${at%/*}" -ef "$pr" ] && [ "$lc" = .coddy.yml ]; }; then ask .coddy.yml; fi
+  # Removed (tamp): putting a config back is the one edit allowed, the
+  # legacy one too, asked as .coddy.yml is (the agent dir it lies in is
+  # free otherwise), its directory by identity or, not made yet, by name.
+  if [ -n "$tamp" ]; then
+    lp="$pr/${legacy%/*}"
+    { [ "$nm" -ef "$root/$legacy" ] || { { [ "${at%/*}" -ef "$lp" ] || [ "${at%/*}" = "$lp" ]; } && [ "$lc" = "${legacy##*/}" ]; }; } && ask "$legacy"
+    die "the edit guard refuses $f: $tm"
   fi
   # $1 with its deepest ancestor that is the root directory itself (-ef)
   # spelled $pr: the root has names no link shows (the firmlink above, a
@@ -1578,8 +1607,10 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # through a link a command planted at its name, written before the
     # fingerprint's git calls give one time to; a write that fails drops
     # the snapshot, which trip reports as lost.
+    # No config with a started issue's leftovers (left) is one removed, not
+    # never written: every command is refused, in either guard mode.
     set -C; rm -f "$file" "$file".*
-    [ -f "$conf" ] || { echo NOT_ONBOARDED > "$file" || rm -f "$file"; exit 0; }
+    [ -f "$conf" ] || { ! left || { code=2; die "$tm"; }; echo NOT_ONBOARDED > "$file" || rm -f "$file"; exit 0; }
     # Its size read from 64 KiB and a byte at most, before anything reads
     # the config, so a huge or sparse one is refused at once.
     [ "$(head -c 65537 -- "$conf" 2>/dev/null | wc -c)" -le 65536 ] ||
@@ -1655,12 +1686,16 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # removed it, or made it. No snapshot, or one missing a path's record, or
   # the copy a file's record promises, is one the command touched, and then
   # what it did cannot be checked: rejected. Not onboarded then: quiet, the
-  # command that wrote the config included. The live config as snap saw it
-  # is the first path recorded as a file, and only it has a copy: the
-  # legacy file next to a live .coddy.yml has its kind alone.
+  # command that wrote the config included. snap writes that marker alone,
+  # so a marker with any record beside it is one the command rewrote:
+  # rejected too, the config left as the command left it. The records are
+  # globbed by name, opened by none, and found whatever nullglob says. The
+  # live config as snap saw it is the first path recorded as a file, and
+  # only it has a copy: the legacy file next to a live .coddy.yml has its
+  # kind alone.
   lost="that command left no snapshot of the main checkout at $file, so what it changed cannot be checked: a command may not touch the snapshot. Undo what it did."
   [ -f "$file" ] || die "$lost"
-  grep -qx NOT_ONBOARDED "$file" && { rm -f "$file" "$file".*; exit 0; }
+  grep -qx NOT_ONBOARDED "$file" && { for r in "$file".*; do { [ -e "$r" ] || [ -L "$r" ]; } && die "$lost"; done; rm -f "$file" "$file".*; exit 0; }
   common
   pre=""
   for c in .coddy.yml "$legacy"; do
@@ -1772,7 +1807,8 @@ fi
 # branch. A detached HEAD commits (jj leaves the main checkout there); a tag,
 # and the delete of a branch other than the default one, push. Then the hook
 # core.hooksPath named before runs with the same arguments and stdin, and its
-# exit is the hook's; not onboarded, that hook alone. git runs a hook at the
+# exit is the hook's; not onboarded, that hook alone, unless a started
+# issue's leftovers say the config was removed (left): refused. git runs a hook at the
 # top of its worktree, where the root is found.
 if [ "${1-}" = githook ]; then
   h="${2-}"; case "$h" in pre-commit|pre-push) shift 2 ;; *) die "usage: $self githook pre-commit|pre-push" ;; esac
@@ -1793,6 +1829,7 @@ if [ "${1-}" = githook ]; then
         case "$lo" in *[!0]*) claimed "$n" || die "a push to $n, which no claimed issue owns, $no" ;; esac
       done <<<"$in"
     fi
+  elif left; then die "$tm"
   fi
   # The previous hook from .git/config alone, where start recorded it: like
   # .git/hooks, a sandbox keeps it out of an agent's reach, since git runs

@@ -146,7 +146,14 @@ t 2 "trip without a snapshot trips before onboarding too: snap writes one before
 # trip with it: the snapshot's name must not depend on jq.
 PATH="$tmp/nojq" wire snap w; t 0 "before onboarding: snap without jq and trip with it name the same snapshot" wire trip w
 tripped 0 "before onboarding: a shell write to the main checkout is quiet" 'echo x > stray.txt'; rm stray.txt
+# BASHOPTS is readonly in bash, so env hands it on: nullglob must not read
+# an empty glob of the marker's records as some.
+wire snap w; t 0 "before onboarding: trip is quiet with nullglob inherited" env BASHOPTS=nullglob "$here/bin/coddy" trip <<<'{"tool_use_id":"w"}'
 t 1 "before onboarding: snap made nothing under .git" test -e .git/coddy
+printf '#!/bin/sh\n: > "%s"\n' "$tmp/prevran" > .git/hooks/pre-commit; chmod +x .git/hooks/pre-commit
+t 0 "before onboarding: githook hands off to the hook before it" run githook pre-commit
+t 0 "before onboarding: which runs" test -e "$tmp/prevran"
+rm .git/hooks/pre-commit "$tmp/prevran"
 
 tripped 0 "onboarding: the command that writes the config is let through" 'printf "tracker: github\nworktree: git\ndefault_branch: main\nverify: test -f ok.txt\n" > .claude/coddy.yml'
 t 0 "onboarding: and the config stands" test -f .claude/coddy.yml
@@ -522,12 +529,18 @@ t 0 "config: and the change is restored" same .coddy.yml
 t 1 "config: and the snapshot is cleaned up, the FIFO with it" test -e "$snapfile..coddy.yml.link"
 # The snapshot is what trip checks a command against, so a command that
 # removes it, or its copy of the config, is rejected; a project that left the
-# workflow by hand, its config gone and .git/coddy kept, is quiet.
+# workflow by hand, its config gone with no claim or git hooks left, is quiet.
 report "snapshot: a command that removes it trips" 'rm -f "$snapfile"'
 t 0 "snapshot: and the report names it" grep -q "$snapfile" <<<"$out"
-tripped 2 "snapshot: so does one that removes it with the config, .git/coddy left behind" 'rm -f "$snapfile" .coddy.yml'
+tripped 2 "snapshot: so does one that removes it with the config" 'rm -f "$snapfile" .coddy.yml'
 git checkout -q -- .coddy.yml
 tripped 2 "snapshot: so does one that removes its copy of the config" 'rm -f "$snapfile".*'
+report "snapshot: so does one that rewrites it as not onboarded, its records left, and removes the config" 'echo NOT_ONBOARDED > "$snapfile" && rm .coddy.yml'
+t 0 "snapshot: and the report names it" grep -q "$snapfile" <<<"$out"
+git checkout -q -- .coddy.yml
+tripped 2 "snapshot: so does one that rewrites it as not onboarded alone, the config untouched" 'echo NOT_ONBOARDED > "$snapfile"'
+wire snap w; echo NOT_ONBOARDED > "$snapfile"
+t 2 "snapshot: and so with nullglob inherited" env BASHOPTS=nullglob "$here/bin/coddy" trip <<<'{"tool_use_id":"w"}'
 # Each path's kind is recorded, present or not, so a lost copy is not read
 # as a path that was absent: a weakened legacy file planted next to the live
 # .coddy.yml is let go, and a command that then removed .coddy.yml with its
@@ -552,7 +565,7 @@ t 0 "snapshot: records a dangling link at .coddy.yml as other" kinds other file
 t 0 "snapshot: with its target" test "$(cat "$snapfile..coddy.yml.link")" = nowhere
 rm .coddy.yml; mv .claude/coddy.yml .coddy.yml
 mv .coddy.yml "$tmp/aside"
-tripped 0 "snapshot: quiet once the config is gone, .git/coddy kept" 'true'
+tripped 0 "snapshot: quiet once the config is gone, no claim or git hooks left" 'true'
 mv "$tmp/aside" .coddy.yml
 t 0 "snapshot: a tool_use_id that is not a plain word names the shared snapshot" sh -c "printf '{\"tool_use_id\":\"../x\"}' | '$here/bin/coddy' snap && test -f '${snapfile%-w}-shared'"
 rm -f "${snapfile%-w}-shared"*
@@ -1099,14 +1112,65 @@ t 0 "having written nothing" test "$(cksum "$hooks"/*; git config --local --list
 "$g" worktree remove --force "$tmp/w"
 rm -r "${repo:?}/bin" "$repo/plant" "$repo/lnk" "$tmp/inlink" "$tmp/chain" "$tmp/dirchain"
 git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
-# Not onboarded, coddy's check is off.
+# No config next to a started issue's leftovers (a claim, .git/hooks/coddy)
+# is a config removed, not never written: guard, snap and the git hooks
+# refuse, naming both in plain text, and a Write of a config is asked.
 pp() { echo "refs/heads/main $d refs/heads/main $d" | "$hooks/pre-push" origin x; }
 t 1 "githook: run by hand, pre-commit on the default branch refuses" "$hooks/pre-commit"
 t 1 "githook: and pre-push to it" pp
 mv .coddy.yml "$tmp/aside"
-t 0 "githook: not onboarded, pre-commit passes" "$hooks/pre-commit"
-t 0 "githook: and pre-push" pp
+t 1 "removed config: with a claim and the git hooks left, pre-commit on main refuses" "$hooks/pre-commit"
+t 1 "removed config: and pre-push" pp
+t 0 "removed config: naming the missing config and the hooks directory" says 'no config file is at .coddy.yml or .claude/coddy.yml, yet .git/hooks/coddy is there' "$hooks/pre-commit"
+t 2 "removed config: guard refuses an edit" guard "$repo/README.md"
+t 2 "removed config: snap refuses a command" wire snap w
+t 0 "removed config: snap names the config and the hooks directory" says 'no config file is at .coddy.yml or .claude/coddy.yml, yet .git/hooks/coddy is there' wire snap w
+t 1 "removed config: and writes no not-onboarded snapshot" test -e "$snapfile"
+tm=$(guard "$repo/README.md" 2>&1)
+t 0 "removed config: guard names the config and the hooks directory" grep -q 'no config file is at .coddy.yml or .claude/coddy.yml, yet .git/hooks/coddy is there' <<<"$tm"
+t 0 "removed config: and both ways out, in words" grep -q 'write .coddy.yml with the Write tool.*remove the claim locks under .git/coddy and the .git/hooks/coddy directory, and set core.hooksPath back.*when that is empty or missing, unset core.hooksPath, never set it to an empty value' <<<"$tm"
+t 1 "removed config: with no command to paste" grep -qE 'git config |rm -|`' <<<"$tm"
+t 0 "removed config: and that a tracked config comes back from HEAD in your own terminal" grep -qF 'when git tracks it, restore it from HEAD with git in your own terminal' <<<"$tm"
+t 2 "removed config: guard refuses a path outside the project too" guard "$tmp/elsewhere.txt"
+t 0 "removed config: a Write of .coddy.yml is asked" asks "$repo/.coddy.yml"
+t 1 "removed config: naming no /coddy:config, which stops without a config" grep -qF '/coddy:config' <<<"$out"
+lasks() { out=$(guard "$1") && jq -e '.hookSpecificOutput.permissionDecision == "ask" and (.hookSpecificOutput.permissionDecisionReason | contains(".claude/coddy.yml"))' <<<"$out"; }
+t 0 "removed config: and one of .claude/coddy.yml" lasks "$repo/.claude/coddy.yml"
+t 2 "removed config: but no other edit under .claude/" guard "$repo/.claude/notes.md"
+mv "$hooks" "$tmp/hooks-aside"
+t 2 "removed config: a claim alone is enough for guard" guard "$repo/README.md"
+t 0 "removed config: naming the claim" says 'yet .git/coddy/1 is there' guard "$repo/README.md"
+t 2 "removed config: and for snap" wire snap w
+t 1 "removed config: and for githook" run githook pre-commit
+mv .git/coddy/1 "$tmp/lock-aside"
+# What a project left by hand keeps (a .branch or .base record, swept/, a dot name) is no leftover.
+sw=; [ -e .git/coddy/swept ] || [ -L .git/coddy/swept ] || { sw=1; mkdir .git/coddy/swept; }
+: > .git/coddy/zz.base; : > .git/coddy/.zz.tmp
+t 0 "removed config: a branch or base record, swept/ or a dot name is no leftover: guard is inert" quiet guard "$repo/README.md"
+wire snap w; t 0 "removed config: and snap writes the not-onboarded snapshot" grep -qx NOT_ONBOARDED "$snapfile"; wire trip w
+t 0 "removed config: and githook hands off" run githook pre-commit
+rm .git/coddy/zz.base .git/coddy/.zz.tmp; [ -z "$sw" ] || rmdir .git/coddy/swept
+: > .git/coddy/9
+t 2 "removed config: a claim marker from before locks is a leftover too" guard "$repo/README.md"
+rm .git/coddy/9
+mv "$tmp/hooks-aside" "$hooks"
+t 2 "removed config: the git hooks directory alone is enough for guard" guard "$repo/README.md"
+t 2 "removed config: and for snap" wire snap w
+t 1 "removed config: and for pre-commit" "$hooks/pre-commit"
+mv "$tmp/lock-aside" .git/coddy/1
+# A FIFO at .coddy.yml is no config, and the leftovers are found without opening it.
+mkfifo .coddy.yml
+t 2 "removed config: a FIFO at .coddy.yml does not hang guard" timeout 5 sh -c "printf '{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/README.md\"}}' | '$here/bin/coddy' guard"
+t 2 "removed config: nor snap" timeout 5 sh -c "printf '{\"tool_use_id\":\"w\"}' | '$here/bin/coddy' snap"
+rm .coddy.yml
 mv "$tmp/aside" .coddy.yml
+tripped 0 "removed config: once it is back, the next command is checked as before" 'true'
+# A command that rewrites the snapshot as not onboarded and removes the
+# config trips (#112), and every hook after it refuses.
+report "removed config: a command that rewrites the snapshot as not onboarded and removes the config trips" 'echo NOT_ONBOARDED >| "$snapfile"; rm .coddy.yml'
+t 2 "removed config: and the next guard refuses" guard "$repo/README.md"
+t 2 "removed config: and the next snap" wire snap w
+git checkout -q -- .coddy.yml
 # A hook manager's install re-points core.hooksPath (husky's prepare, on every
 # npm install): the tripwire reports it once, in words of its own, and start
 # putting it back is quiet. Without coddy's hooks there is nothing to report.
