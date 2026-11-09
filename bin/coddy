@@ -471,6 +471,13 @@ cfg() { # key $1, from the config or file $2: a quoted value runs to its closing
   if [ -n "$_q" ]; then printf '%s\n' "${_q#Q}"; return; fi
   printf '%s\n' "$_l" | sed -e 's/^#.*$//' -e 's/[[:space:]][[:space:]]*#.*$//' -e 's/[[:space:]]*$//'
 }
+# The worktree tool, into tool, from the config or file $1: no worktree key
+# is git from version 2, jj below it (no version is 0, read as migrate does).
+wtool() {
+  local v
+  tool=$(cfg worktree "$@")
+  [ -n "$tool" ] || { v=$(cfg version "$@" | tr -d '[:space:]'); v=${v#"${v%%[!0]*}"}; case "$v" in ''|1) tool=jj ;; *) tool=git ;; esac; }
+}
 # The lock's owner ($sid, $pid, $start) is this session ($me): the same
 # session id, or the same agent process, since Claude Code's /clear changes
 # the id and not the pid; a pid reused since the owner's start is not that process.
@@ -1389,11 +1396,13 @@ out() {
 # before 2.55 starts with every fd open) holds sort's pipe open: git status
 # ("unchecked status"), git worktree list ("unchecked list", gitwts's
 # status) and jj workspace list ("unchecked jj", as jjfailed has it), git's
-# two where the root holds a .git (a plain jj root has none, and git fails
-# there by design). snap's alone (gd) says, as the line "git dir", that the
-# root held one, and as "jj dir" that it held .jj/repo, which trip holds the
-# root to: a command that moved or removed either leaves git or jj nothing
-# to list. A failed listing is no empty one,
+# two anywhere but a plain jj root (pjj), where git fails by design: one
+# holding .jj/repo and no .git, under worktree: jj. A root with no .git and
+# no .jj/repo, or none under worktree: git, has lost its .git, and every
+# run there is unchecked until it is back. snap's alone (gd) says, as the
+# line "git dir", that the root held one, and as "jj dir" that it held
+# .jj/repo, which trip holds the root to: a command that moved or removed
+# either leaves git or jj nothing to list. A failed listing is no empty one,
 # which would hide the
 # command's change or name a worktree that was there before as made. The count of dirty
 # paths goes to fd 5 once git status has listed them. A dirty path that is
@@ -1420,6 +1429,7 @@ sflav() {
   elif [[ $(stat -L -c %.9Z / 2>/dev/null) =~ ^[0-9]+\.[0-9]+$ ]]; then sf=(-c '%s %.9Z %i:%n')
   else sf=(-c '%s %Z %i:%n'); fi
 }
+pjj() { [ ! -d .git ] && [ -e .jj/repo ] && [ "$tool" = jj ]; }
 snap() {
   cd "$root" 2>/dev/null || return 0
   exec 8>&1
@@ -1444,7 +1454,7 @@ snap() {
     r=${p#"$R"}
     [ "$r" != "$p" ] && clean "$r" && { [ -z "$r" ] || { coddywt "$p" && real "$p"; }; } ||
       out "git worktree at $(q "$p") (git worktree remove)" "$k" "$g"
-  done < <([ -n "$nowt" ] || gitwts 8>&- || [ ! -d .git ] || echo 'unchecked list' >&8)
+  done < <([ -n "$nowt" ] || gitwts 8>&- || pjj || echo 'unchecked list' >&8)
   [ -z "$C" ] || for d in "$C"/worktrees/*/ "$C"/worktrees/.[!.]*/ "$C"/worktrees/..?*/; do [ ! -d "$d" ] || { d=${d%/}; printf -v g 'git %q' "${d##*/}"; echo "$g" >&3
     [ -z "$nowt" ] || [[ $seen == *$'\n'"$g"$'\n'* ]] || out "git worktree whose admin dir is $(q "$d") (git worktree remove)" "$g" ""; }; done
   # No colour or pager, whatever the config says. One listing: each name,
@@ -1474,7 +1484,7 @@ snap() {
       if [ ! -f "$p" ]; then clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"
       else case "$p" in *$'\n'*) nl[nn]=$p; nn=$((nn+1)) ;; *) files[n]=$p; n=$((n+1)) ;; esac; fi
     done
-  done < <(hgit status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null 8>&- || [ ! -d .git ] || echo 'unchecked status' >&8)
+  done < <(hgit status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null 8>&- || pjj || echo 'unchecked status' >&8)
   { echo "$dp" >&5; } 2>/dev/null
   [ "$((n + nn))" -gt 0 ] || return 0
   sflav
@@ -1674,6 +1684,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     common
     admin || { code=2; die "$st"; }
     b=$(cfg default_branch); b="${b:-main}" ok=1
+    wtool
     for c in .coddy.yml "$legacy"; do
       p="$root/$c" s="$file.${c//\//_}"
       kind "$p" > "$s.kind" || ok=""
@@ -1777,12 +1788,13 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # a snapshot name would hang trip. The legacy file is let go once
   # .coddy.yml is live, when the command began or now (settled first,
   # above): it is ignored then and cannot change the effective config. The
-  # default branch is read from the snapshot's copy of the config, as snap
-  # read it, not from what the command left. A copy past 64 KiB is cut
-  # short (snap refuses a config past it, so this one grew between snap's
+  # default branch and the worktree tool are read from the snapshot's copy
+  # of the config, as snap read it, not from what the command left. A copy
+  # past 64 KiB is cut short (snap refuses a config past it, so this one grew between snap's
   # check and its copy), so that config is reported as changed and left as
   # it is.
   b=$(cfg default_branch "$pre" 2>/dev/null); b="${b:-main}" cap=""
+  wtool "$pre" 2>/dev/null
   for c in .coddy.yml "$legacy"; do
     p="$root/$c" s="$file.${c//\//_}"
     { [ "$c" = "$legacy" ] && { [ -f "$root/.coddy.yml" ] || [ "$pre" != "$s" ]; }; } && continue
@@ -1980,9 +1992,7 @@ fi
 cmd="${1-}" issue="${2-}"
 [ "$cmd" = sweep ] || [ "$cmd" = doctor ] || case "$issue" in ''|*[!A-Za-z0-9_-]*) die "issue id must look like 42 or ABC-123, got '$issue'" ;; esac
 wt=".worktrees/$issue" rec=".git/coddy/$issue.branch"
-# No worktree key is git from version 2, jj below it (no version is 0, read as migrate does).
-tool=$(cfg worktree)
-if [ -z "$tool" ]; then v=$(cfg version | tr -d '[:space:]'); v=${v#"${v%%[!0]*}"}; case "$v" in ''|1) tool=jj ;; *) tool=git ;; esac; fi
+wtool
 base=$(cfg default_branch); base="${base:-main}"
 
 # doctor in a project: one line per check, ok or the problem and a fix in plain

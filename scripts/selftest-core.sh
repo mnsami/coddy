@@ -538,17 +538,24 @@ PATH="$tmp/jjbadold:$PATH" tripped 0 "unchecked: so does one on a repo config it
 PATH=$nojp t 0 "unchecked: no jj on PATH in a jj repository is refused, as before" says 'no jj is on PATH outside the project' wire snap w
 rmdir .jj/repo; PATH="$tmp/jjnew:$PATH" tripped 0 "unchecked: an empty .jj lists no workspace, as before" 'true'
 rmdir .jj
-# A root with no .git (a plain jj root) has no git to fail: git status and
-# git worktree list failing there by design leave the run checked.
-mkdir "$tmp/nogit"; cp .coddy.yml "$tmp/nogit/"
-CODDY_ROOT="$tmp/nogit" tripped 0 "unchecked: a root with no .git runs checked, as before" 'true'
+# A plain jj root (.jj/repo, no .git, worktree: jj) has no git to fail: git
+# status and git worktree list failing there by design leave the run
+# checked. Under worktree: git the same root has lost its .git: unchecked.
+mkdir -p "$tmp/nogit/.jj/repo"; { echo 'worktree: jj'; grep -v '^worktree:' .coddy.yml; } > "$tmp/nogit/.coddy.yml"
+PATH="$tmp/jjold:$PATH" CODDY_ROOT="$tmp/nogit" tripped 0 "unchecked: a plain jj root with no .git runs checked, as before" 'true'
+cp .coddy.yml "$tmp/nogit/"
+PATH="$tmp/jjold:$PATH" CODDY_ROOT="$tmp/nogit" tripped 2 "unchecked: one with no .git under worktree: git runs unchecked" 'true'
 rm -r "$tmp/nogit"
 # One whose .git snap saw and the command moved aside is held to it: the
-# run is unchecked, its git calls failing there read as no empty listing.
+# run is unchecked, its git calls failing there read as no empty listing,
+# and so is every command after it while .git stays away.
 wire snap w >/dev/null; mv .git "$tmp/g"; echo x >> README.md; out=$(wire trip w 2>&1); r=$?
-mv "$tmp/g" .git; git checkout -q README.md
 t 0 "unchecked: a .git the command moved aside, with an edit, trips" test "$r" = 2
 t 0 "unchecked: saying its .git is gone" grep -q 'could not be fingerprinted after that command ran, since its .git is gone' <<<"$out"
+wire snap w >/dev/null; echo y >> README.md; out=$(wire trip w 2>&1); r=$?
+mv "$tmp/g" .git; git checkout -q README.md
+t 0 "unchecked: the next command, .git still away, trips too" test "$r" = 2
+t 0 "unchecked: as one that ran unchecked, git status failing" grep -q 'ran unchecked: .*since .*git status failed' <<<"$out"
 tripped 0 "unchecked: the next command is checked afresh" 'true'
 # So is one whose .jj/repo snap saw, with a jj that lists fine: moved aside,
 # jj there lists no workspace, which would hide one the command made.
