@@ -593,11 +593,10 @@ mirror() {
   done
   return $bad
 }
-# take and drop are prompt-gated by an allowlist: every rule naming issue.sh,
-# coddy or a path under scripts/ must equal, character for character, one shape
+# take and drop are prompt-gated by an allowlist: every Bash rule must equal, character for character, one shape
 # below. A new pre-approved form is added here on purpose; take and drop never.
 SH='bash "${CLAUDE_PLUGIN_ROOT}/scripts'
-shapes=("Bash($SH/config.sh\")" "Bash($SH/detect.sh\")")
+shapes=("Bash($SH/config.sh\")" "Bash($SH/detect.sh\")" 'Bash(date +%Y%m%d-%H%M%S)')
 for v in 'claim *' 'create *' 'diff *' 'exclude answers' 'exclude config' 'forget answers' 'log *' 'mark *' migrate 'push *' 'state *' status sweep 'verify *'; do shapes+=("Bash($SH/issue.sh\" $v)"); done
 gated() {
   local f r s ok
@@ -607,7 +606,7 @@ gated() {
     atform "$f" || return 1
     while IFS= read -r r; do
       [ "$r" != Bash ] || return 1
-      case $r in *issue.sh*|*coddy*|*scripts/*) ;; *) continue ;; esac
+      case $r in Bash\(*) ;; *) continue ;; esac
       ok=1
       for s in "${shapes[@]}"; do [ "$r" = "$s" ] && ok=0; done
       [ $ok = 0 ] || return 1
@@ -643,6 +642,10 @@ t 1 "skills: a single-quoted shim path rule fails" skrule next "Bash(bash '\${CL
 t 1 "skills: a form outside the list fails" skrule next "Bash($R frobnicate *)" gated
 t 1 "skills: a coddy rule fails" skrule next "Bash(coddy status)" gated
 t 1 "skills: a bare Bash fails" skrule next "Bash" gated
+t 1 "skills: Bash(*) fails" skrule next 'Bash(*)' gated
+t 1 "skills: Bash(bash *) fails" skrule next 'Bash(bash *)' gated
+t 1 "skills: Bash(bash:*) fails" skrule next 'Bash(bash:*)' gated
+t 1 "skills: a plugin-root wildcard rule fails" skrule next 'Bash(bash "${CLAUDE_PLUGIN_ROOT}*)' gated
 t 1 "skills: an allowed-tools in list form, unread, fails" gatedlist
 t 1 "skills: a continuation line holding a take rule fails the gate" skcont gated
 t 1 "skills: a continuation line fails the mirror" skcont mirror
