@@ -933,7 +933,7 @@ git mv MOVED.md README.md
 # A thousand dirty files cost one hash-object, not one each: a git on PATH
 # that logs every hash-object it runs.
 mkdir -p "$tmp/gitshim" "$repo/many"; real=$(command -v git)
-printf '#!/bin/sh\n[ "$1" = hash-object ] && echo x >> "%s"\nexec "%s" "$@"\n' "$tmp/hashes" "$real" > "$tmp/gitshim/git"; chmod +x "$tmp/gitshim/git"
+printf '#!/bin/sh\ncase " $* " in *" hash-object "*) echo x >> "%s" ;; esac\nexec "%s" "$@"\n' "$tmp/hashes" "$real" > "$tmp/gitshim/git"; chmod +x "$tmp/gitshim/git"
 for i in $(seq 1000); do echo "$i" > "many/$i.txt"; done
 : > "$tmp/hashes"; PATH="$tmp/gitshim:$PATH" wire snap many
 t 0 "tripwire: 1000 dirty files are hashed by one hash-object" test "$(wc -l < "$tmp/hashes" | tr -d ' ')" = 1
@@ -1661,8 +1661,8 @@ mkdir "$tmp/oldgit"; real=$(command -v git)
 cat > "$tmp/oldgit/git" <<EOF
 #!/bin/sh
 case "\$*" in
-  "worktree list --porcelain -z") exit 129 ;;
-  "worktree list --porcelain") "$real" worktree list --porcelain -z | tr '\0' '\n'; exit ;;
+  *"worktree list --porcelain -z") exit 129 ;;
+  *"worktree list --porcelain") "$real" worktree list --porcelain -z | tr '\0' '\n'; exit ;;
 esac
 exec "$real" "\$@"
 EOF

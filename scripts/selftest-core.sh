@@ -286,6 +286,15 @@ tripped 0 "fingerprint: a dirty file under a clean filter, unchanged, is quiet" 
 tripped 2 "fingerprint: and changed, trips" 'echo y > filtered.txt'
 t 1 "fingerprint: and no clean filter ran" test -e "$tmp/filtered"
 rm .git/info/attributes filtered.txt; git config --unset filter.mark.clean
+# git status writes the index for a tracked file whose stat changed, which
+# fires post-index-change from core.hooksPath: a directory in the project
+# here (husky's .husky/_, a .githooks). The fingerprint writes no index and
+# runs no hook.
+mkdir .githooks; printf '#!/bin/sh\necho x >> "%s"\n' "$tmp/indexed" > .githooks/post-index-change; chmod +x .githooks/post-index-change
+git config core.hooksPath .githooks; touch README.md
+tripped 0 "fingerprint: a touched tracked file under a core.hooksPath in the project is quiet" 'touch README.md'
+t 1 "fingerprint: and no post-index-change ran" test -e "$tmp/indexed"
+git config --unset core.hooksPath; rm -r .githooks
 PATH="$tmp/nojq" t 2 "guard without jq fails closed" guard "$repo/.coddy.yml"
 echo 'guard: warn' >> .coddy.yml
 t 0 "warn: guard still asks on .coddy.yml" asks "$repo/.coddy.yml"
@@ -1084,7 +1093,7 @@ CODDY_EXEC="$here/bin/coddy/" t 0 "and one with a trailing slash, which names no
 # repository outside the checkout, or wherever the call began.
 mkdir "$tmp/w/plug"; cp "$here/bin/coddy" "$tmp/w/plug/"
 CODDY_EXEC="$tmp/w/plug/coddy" t 0 "and a CODDY_EXEC in a worktree of the repository outside the checkout" says "$inside" run start 1 feat/1-thing
-mkdir "$tmp/nowtl"; printf '#!/bin/sh\n[ "$1 $2" != "worktree list" ] || exit 1\nexec %s "$@"\n' "$g" > "$tmp/nowtl/git"; chmod +x "$tmp/nowtl/git"
+mkdir "$tmp/nowtl"; printf '#!/bin/sh\ncase " $* " in *" worktree list "*) exit 1 ;; esac\nexec %s "$@"\n' "$g" > "$tmp/nowtl/git"; chmod +x "$tmp/nowtl/git"
 PATH="$tmp/nowtl:$PATH" CODDY_ROOT="$tmp/w" t 0 "and one where the call began, with git listing no worktree" says "$inside" "$tmp/w/plug/coddy" start 1 feat/1-thing
 t 0 "having written nothing" test "$(cksum "$hooks"/*; git config --local --list)" = "$sums"
 "$g" worktree remove --force "$tmp/w"

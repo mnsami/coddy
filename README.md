@@ -209,7 +209,9 @@ submodule is seen once, when it leaves the commit recorded for it, not
 again while it stays off it. It hashes a changed file as it is, running no
 clean filter, but `git status`, which it runs to find them, still runs the
 clean filter of a driver set up in your git config on a modified tracked
-file whose `.gitattributes` names that driver.
+file whose `.gitattributes` names that driver. Its git calls write no index
+and run no git hook, so a hook a command plants in a hooks directory inside
+the project (husky's `.husky/_`, a `.githooks`) does not run.
 It also lists every git worktree and jj workspace outside
 `.worktrees/<issue>/` and `.claude/worktrees/`, and reports a new one,
 however the command made it: its path, whether the command made it or moved,
