@@ -96,16 +96,16 @@ follow() {
 inproj() { local d=$1 w; while [ -n "$d" ]; do for w in "${ins[@]}"; do [ "$d" -ef "$w" ] && return 0; done; d=${d%/*}; done; return 1; }
 # PATH as the hooks' launcher (scripts/hook.sh) leaves it for directory $1:
 # every entry that is empty, relative, gone or spelled physically with a
-# colon dropped, and every one that lies, physically, at or under $1 or the
-# checkout above an absolute $1 (the nearest directory whose .git git takes
-# for a main checkout's, else the topmost holding a .git at all and, with
-# none git takes, the project a /.worktrees/ path names: the launcher's
-# walk), where a command in the project could plant a
-# git or a jq for a hook to run outside the sandbox; the rest in their
-# physical spelling. Nothing left is /dev/null, never empty, which bash
-# reads as the working directory.
+# colon dropped, and every one that lies at or under $1 or the checkout
+# above an absolute $1 (the nearest directory whose .git git takes for a
+# main checkout's, else the topmost holding a .git at all and, with none git
+# takes, the project a /.worktrees/ path names: the launcher's walk), by its
+# own spelling, a link on the way (follow) or where it lands, where a
+# command in the project could plant a git or a jq for a hook to run
+# outside the sandbox; the rest in their physical spelling. Nothing left is
+# /dev/null, never empty, which bash reads as the working directory.
 unpath() {
-  local r=$1 t="" w="" k="" c l h='[0-9a-fA-F]' s=$PATH: n="" e d x
+  local r=$1 t="" w="" k="" c l h='[0-9a-fA-F]' s=$PATH: n="" e ins rp
   h=$h$h$h$h$h$h$h$h$h$h; h=$h$h$h$h
   case "$r" in /*) c=$r
     while [ -n "$c" ]; do
@@ -119,12 +119,12 @@ unpath() {
     done ;;
   esac
   [ -n "$k" ] || case "$r" in */.worktrees/*) w=${r%%/.worktrees/*} ;; esac
+  ins=("$r" "$t" "$w")
   while [ -n "$s" ]; do
     e=${s%%:*} s=${s#*:}
-    case "$e" in /*) d=$(cd -P "$e" 2>/dev/null && pwd -P) || continue ;; *) continue ;; esac
-    case "$d" in *:*) continue ;; esac
-    x=$d; while [ -n "$x" ]; do { [ "$x" -ef "$r" ] || [ "$x" -ef "$t" ] || [ "$x" -ef "$w" ]; } && continue 2; x=${x%/*}; done
-    n=$n${n:+:}$d
+    case "$e" in /*) follow "$e" inproj && [ -d "$rp" ] && ! inproj "$rp" || continue ;; *) continue ;; esac
+    case "$rp" in *:*) continue ;; esac
+    n=$n${n:+:}$rp
   done
   PATH=${n:-/dev/null}
 }

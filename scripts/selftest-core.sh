@@ -37,7 +37,7 @@ snapfile="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1
 # rooted <dir> [VAR=value...]: status (or $verb) run from that directory prints the project root
 rooted() { d=$1; shift; (cd "$d" && env "$@" "$here/bin/coddy" "${verb-status}" | grep -qx "root: $repo"); }
 # A PATH with everything the guard needs but jq.
-mkdir "$tmp/nojq"; for x in bash sh sed awk cat grep git cmp ps sort comm tr cut cksum mkdir cp rm head sleep stat xargs; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
+mkdir "$tmp/nojq"; for x in bash sh sed awk cat grep git cmp ps sort comm tr cut cksum mkdir cp rm head sleep stat xargs readlink; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
 
 git init -q --bare "$tmp/origin.git"
 git clone -q "$tmp/origin.git" "$repo" 2>/dev/null
@@ -268,7 +268,17 @@ PATH="$repo/nm:$PATH" CODDY_ROOT="$repo/sub" t 0 "hooks: guard from a subdirecto
 PATH="$repo/nm:$PATH" CODDY_ROOT="$repo/sub" wire snap w; echo x > stray.txt
 PATH="$repo/nm:$PATH" CODDY_ROOT="$repo/sub" t 2 "hooks: snap and trip from a subdirectory, past a jq and a sed in the root, still trip" wire trip w
 t 1 "hooks: and none ran a planted one" test -e "$tmp/planted"
-rm -r nm stray.txt
+rm stray.txt
+# A link on the way counts, not only where the entry lands: nl, a link in the
+# root to a directory outside it, and via, one outside through nl.
+mkdir "$tmp/lo"; cp nm/* "$tmp/lo/"; ln -s "$tmp/lo" nl; ln -s "$repo/nl" "$tmp/via"
+for p in "$repo/nl" "$tmp/via"; do
+  PATH="$p:$PATH" CODDY_ROOT="$repo/sub" t 0 "hooks: guard from a subdirectory reads the payload past a jq through a link in the root ($p)" says 'edits belong in an issue worktree' guard "$repo/README.md"
+  PATH="$p:$PATH" CODDY_ROOT="$repo/sub" wire snap w; echo x > stray.txt
+  PATH="$p:$PATH" CODDY_ROOT="$repo/sub" t 2 "hooks: snap and trip from a subdirectory, past a jq and a sed through a link in the root, still trip ($p)" wire trip w; rm stray.txt
+done
+t 1 "hooks: and none ran a planted one through a link" test -e "$tmp/planted"
+rm -r nm nl "$tmp/lo" "$tmp/via"
 # The fingerprint hashes a dirty file as it is: a clean filter the
 # attributes name is a program, and none runs.
 git config filter.mark.clean "echo x >> '$tmp/filtered'; cat"; echo 'filtered.txt filter=mark' > .git/info/attributes; echo x > filtered.txt
@@ -653,11 +663,13 @@ PATH="$tmp/rl1:$PATH" t 2 "guard, one-argument readlink: blocks a link to the ma
 PATH="$tmp/rl1:$PATH" t 2 "guard, one-argument readlink: blocks a dangling link to it" guard "$repo/.worktrees/1/L/a.txt"
 PATH="$tmp/rl1:$PATH" t 0 "guard, one-argument readlink: allows a dangling link to the owner's worktree" guard "$repo/.worktrees/1/M/a.txt"
 # A readlink that never works cannot follow a dangling chain to .coddy.yml:
-# refused before the mode is read, so under guard: warn too.
-mkdir "$tmp/rl0"; printf '#!/bin/sh\nexit 1\n' > "$tmp/rl0/readlink"; chmod +x "$tmp/rl0/readlink"
+# refused before the mode is read, so under guard: warn too. Its directory is
+# spelled physically: one spelled through a link it cannot read is no PATH
+# entry for the hooks.
+mkdir "$tmp/rl0"; printf '#!/bin/sh\nexit 1\n' > "$tmp/rl0/readlink"; chmod +x "$tmp/rl0/readlink"; rl0=$(cd -P "$tmp/rl0" && pwd -P)
 cp .coddy.yml "$tmp/conf.yml"; { grep -v '^guard:' "$tmp/conf.yml"; echo "guard: warn"; } > .claude/coddy.yml; rm .coddy.yml
 ln -s C2 .worktrees/1/cfg; ln -s ../../.coddy.yml .worktrees/1/C2
-PATH="$tmp/rl0:$PATH" t 2 "guard: warn, a readlink that always fails: refuses a link chain to a .coddy.yml not made yet" guard "$repo/.worktrees/1/cfg"
+PATH="$rl0:$PATH" t 2 "guard: warn, a readlink that always fails: refuses a link chain to a .coddy.yml not made yet" guard "$repo/.worktrees/1/cfg"
 rm .worktrees/1/cfg .worktrees/1/C2 .claude/coddy.yml; mv "$tmp/conf.yml" .coddy.yml
 # snap reads one path per line: one whose directory ends in a newline is
 # marked unresolved, not split into two.

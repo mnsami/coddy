@@ -71,7 +71,8 @@ You also need:
 - bash 3.2 or later. The hooks start under `/bin/sh` and run the first
   `bash` on Claude Code's `PATH` (on macOS that may be `/bin/bash`, 3.2),
   and find their tools there, past every entry that is empty, relative or
-  inside the project, where a command could plant a `bash`, `git` or `jq`
+  inside the project, by its spelling, through a link there or where it
+  lands, where a command could plant a `bash`, `git` or `jq`
   that would run outside the sandbox. So tools that live only in the project
   (`.venv/bin`, devbox, nix-shell) do not count: with no `bash` left every
   edit and shell command is refused, and with no `git` left, or no `jj` where

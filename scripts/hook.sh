@@ -12,14 +12,19 @@
 # a plain HEAD reading as a ref or an object id, objects and refs), else the
 # topmost one holding a .git at all and, with none git takes, the project a
 # /.worktrees/ path names, since root resolution walks past a .git that is
-# no repository, a link or a commondir, and a command can plant those. The rest
-# is kept in its physical spelling, and the first bash left runs, once a -c :
-# of it has: one that cannot run is refused, exit 2, as no bash is, since
-# /bin/sh's own exit for an exec that fails (1, 126, 127) blocks nothing;
-# a bash that goes between the two still gets that exit. bin/coddy
-# drops those at or under the root it resolves too (unpath, the same walk).
-# Shell builtins alone until then. POSIX sh, run without -p, which dash and
-# BusyBox reject.
+# no repository, a link or a commondir, and a command can plant those. An
+# entry is followed a component at a time (f, as bin/coddy's follow does), so
+# its own spelling and every link on the way count, not only where it lands:
+# a link in the project a command repointed outside it, or one outside that
+# goes through one there. A link is read with /usr/bin/readlink,
+# /bin/readlink or NixOS's /run/current-system/sw/bin/readlink, never one on
+# PATH; with none, an entry with a link on the way is dropped. The rest is kept in its physical spelling, and the first
+# bash left runs, once a -c : of it has: one that cannot run is refused,
+# exit 2, as no bash is, since /bin/sh's own exit for an exec that fails (1,
+# 126, 127) blocks nothing; a bash that goes between the two still gets that
+# exit. bin/coddy drops those at or under the root it resolves too (unpath,
+# the same walk). Shell builtins alone until then, that readlink aside.
+# POSIX sh, run without -p, which dash and BusyBox reject.
 r=${CLAUDE_PROJECT_DIR:-$PWD} t='' w='' k='' h='[0-9a-fA-F]'
 h=$h$h$h$h$h$h$h$h$h$h; h=$h$h$h$h
 case $r in /*) c=$r
@@ -35,10 +40,34 @@ case $r in /*) c=$r
 esac
 [ -n "$k" ] || case $r in */.worktrees/*) w=${r%%/.worktrees/*} ;; esac
 o() { x=$1; while [ -n "$x" ]; do { [ "$x" -ef "$r" ] || [ "$x" -ef "$t" ] || [ "$x" -ef "$w" ]; } && return 0; x=${x%/*}; done; return 1; }
+q='' nl='
+'
+for y in /usr/bin/readlink /bin/readlink /run/current-system/sw/bin/readlink; do [ -n "$q" ] || [ ! -f "$y" ] || [ ! -x "$y" ] || q=$y; done
+# f: absolute path $1 followed into d, physical; status 1 when it cannot be
+# (past 40 links, a step that is no directory, a link unread), or when any
+# directory on the way, or d, lies at or under the project (o).
+f() {
+  p=$1 d='' i=0
+  while [ -n "$p" ]; do
+    [ -d "${d:-/}" ] && ! o "$d" || return 1
+    c=${p%%/*}; case $p in */*) p=${p#*/}; p=${p:-.} ;; *) p='' ;; esac
+    case $c in ''|.) continue ;; ..) d=${d%/*}; continue ;; esac
+    if [ -L "$d/$c" ]; then
+      [ "$i" -lt 40 ] && [ -n "$q" ] || return 1
+      i=$((i + 1))
+      y=$("$q" -n "$d/$c" 2>/dev/null && printf x) || { y=$("$q" "$d/$c" 2>/dev/null && printf x) && case $y in *"$nl"x) y=${y%?x}x ;; *) false ;; esac; } || return 1
+      y=${y%x}
+      case $y in '') return 1 ;; /*) d='' ;; esac
+      p=$y${p:+/$p}
+    else d=$d/$c; fi
+  done
+  d=${d:-/}
+  [ -d "$d" ] && ! o "$d"
+}
 s=$PATH: n='' b=''
 while [ -n "$s" ]; do
   e=${s%%:*}; s=${s#*:}
-  case $e in /*) d=$(cd -P "$e" 2>/dev/null && pwd -P) && ! o "$d" || continue ;; *) continue ;; esac
+  case $e in /*) f "$e" || continue ;; *) continue ;; esac
   case $d in *:*) continue ;; esac
   n=$n${n:+:}$d
   [ -n "$b" ] || [ ! -f "$d/bash" ] || [ ! -x "$d/bash" ] || b=$d/bash

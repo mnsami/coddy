@@ -56,7 +56,7 @@ chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log"
 # A ps that is not there, as in a container image without procps: on PATH first when a case asks.
 mkdir "$tmp/nops"; printf '#!/bin/sh\nexit 127\n' > "$tmp/nops/ps"; chmod +x "$tmp/nops/ps"
 # A PATH with everything snap needs but jq (jj too, once the root holds a .jj).
-mkdir "$tmp/nojq"; for x in bash sed awk cat grep git jj cmp sort comm tr cut cksum mkdir cp rm head sleep stat xargs wc; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
+mkdir "$tmp/nojq"; for x in bash sed awk cat grep git jj cmp sort comm tr cut cksum mkdir cp rm head sleep stat xargs wc readlink; do p=$(command -v "$x") && ln -s "$p" "$tmp/nojq/$x"; done
 # A jq that fails whatever it is asked: on PATH first when a case asks.
 mkdir "$tmp/badjq"; printf '#!/bin/sh\nexit 1\n' > "$tmp/badjq/jq"; chmod +x "$tmp/badjq/jq"
 # kept <what>: sweep leaves worktree $p alone
@@ -574,10 +574,13 @@ done
 # The launcher (scripts/hook.sh) runs no bash, git, sed or jq a command in
 # the project could plant first on PATH: behind a relative entry, an empty
 # one (the hook's working directory, here the root) or an absolute one in the
-# project, nor, for a session opened in a subdirectory, one in the root it
-# resolves to. Each planted one leaves a mark, and none may.
-cp .git/info/exclude "$tmp/exclude"; printf '/nm/\n/bash\n/git\n/sed\n/jq\n/.gitconfig\n' >> .git/info/exclude
+# project, by its spelling or a link on the way (nl, a link in the project to
+# a directory outside it, and via, one outside through nl), nor, for a
+# session opened in a subdirectory, one in the root it resolves to. Each
+# planted one leaves a mark, and none may.
+cp .git/info/exclude "$tmp/exclude"; printf '/nm/\n/nl\n/bash\n/git\n/sed\n/jq\n/.gitconfig\n' >> .git/info/exclude
 mkdir nm sub; for x in bash git sed jq; do printf '#!/bin/sh\necho %s >> "%s/planted"\nexit 0\n' "$x" "$tmp" > "nm/$x"; chmod +x "nm/$x"; cp "nm/$x" "$x"; done
+mkdir "$tmp/lo"; cp nm/* "$tmp/lo/"; ln -s "$tmp/lo" nl; ln -s "$repo/nl" "$tmp/via"
 agent="{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/.claude/x\"}}" main="{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/README.md\"}}"
 # from <dir> <command...>: the command, run from that directory
 from() { (cd "$1" && "${@:2}"); }
@@ -600,6 +603,9 @@ for b in "" "$tmp/sysbash:"; do
   past "an empty entry${b:+, under /bin/bash}" . "PATH=:$b$PATH"
   past "an entry in the project${b:+, under /bin/bash}" . "PATH=$repo/nm:$b$PATH"
   past "an entry in the root, from a subdirectory${b:+, under /bin/bash}" sub "CLAUDE_PROJECT_DIR=$repo/sub" "PATH=$repo/nm:$b$PATH"
+  past "an entry in the project that is a link out of it${b:+, under /bin/bash}" . "PATH=$repo/nl:$b$PATH"
+  past "an entry outside through a link in the project${b:+, under /bin/bash}" . "PATH=$tmp/via:$b$PATH"
+  past "an entry outside through a link in the root, from a subdirectory${b:+, under /bin/bash}" sub "CLAUDE_PROJECT_DIR=$repo/sub" "PATH=$tmp/via:$b$PATH"
 done
 # A .git in that subdirectory that git walks past (a HEAD that reads as
 # neither a ref nor an object id), or a link, which root resolution refuses,
@@ -638,7 +644,7 @@ for d in badint badbin; do
   t 2 "launcher: snap refuses when the bash it picks cannot run ($d)" hook snap "$(payload true)" PATH="$tmp/$d:$PATH"
   t 0 "launcher: and says so ($d)" says 'cannot run, so the coddy guard hook' hook guard "$agent" PATH="$tmp/$d:$PATH"
 done
-rm -r nm sub bash git sed jq "$tmp/nobash" "$tmp/badint" "$tmp/badbin"
+rm -r nm nl sub bash git sed jq "$tmp/lo" "$tmp/via" "$tmp/nobash" "$tmp/badint" "$tmp/badbin"
 # git and jj read the user's config from HOME and XDG_CONFIG_HOME: one in the
 # project, whose core.fsmonitor would leave a mark, makes snap refuse before
 # its first git call, in either guard mode, naming the variable, and trip
