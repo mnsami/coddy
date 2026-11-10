@@ -86,9 +86,10 @@ You also need:
   it names the install page and recommends `worktree: git`.
 - For GitHub Issues: the GitHub plugin, enabled and signed in with a token
   that can read and write the repository's issues and pull requests.
-- For GitLab, on any instance: the GitLab plugin, enabled and signed in. The
-  instance is whichever one the plugin is connected to; the config names no
-  host.
+- For GitLab: the GitLab plugin, enabled and signed in. As shipped it
+  reaches gitlab.com only. A self-managed instance needs an MCP server
+  configured for that instance, whose tools the skills' `allowed-tools`
+  do not pre-approve, so its calls prompt. The config names no host.
 - For Jira: the Atlassian plugin.
 
 Trackers are reached through those plugins' MCP tools. None needs a CLI.

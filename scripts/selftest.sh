@@ -2264,6 +2264,25 @@ t 0 "onboard skips only for its own merge request, by exact title" grep -qF 'tit
 t 0 "start never reads a merge request's number as an issue's" grep -qF "the id given is a merge request's" "$here/skills/start/SKILL.md"
 t 0 "start counts no system note as a comment of mine" grep -qF 'a system note never counting' "$here/skills/start/SKILL.md"
 for n in start ship; do t 0 "skill $n pages the related merge requests" grep -qF 'related_merge_requests_after' "$here/skills/$n/SKILL.md"; done
+t 0 "onboard names the project on every delivery call" grep -qF 'each with `project_id: <repo>`' "$here/skills/onboard/SKILL.md"
+t 0 "onboard reads coddy/mr-check before it opens or skips anything for it" grep -qF 'with `ref: coddy/mr-check` reads the same two files' "$here/skills/onboard/SKILL.md"
+t 0 "onboard holds that branch to the template and the include alone" grep -qF 'identical to the template and `.gitlab-ci.yml` differing from the `ref: HEAD` copy by the include alone' "$here/skills/onboard/SKILL.md"
+t 0 "onboard opens nothing from a branch that fails the check" grep -qF 'failing → open nothing, name the branch and stop' "$here/skills/onboard/SKILL.md"
+t 1 "onboard takes no existing branch for an earlier run's unread" grep -qF "an earlier run's" "$here/skills/onboard/SKILL.md"
+t 0 "onboard skips only for a merge request from that branch in this project" grep -qF 'its source branch `coddy/mr-check`, its source project its target project and the branch check passing' "$here/skills/onboard/SKILL.md"
+t 0 "onboard names any other merge request of that title as not coddy's and stops" grep -qF "name it as not coddy's and stop" "$here/skills/onboard/SKILL.md"
+t 0 "start passes the branch in single quotes" grep -qF "create \$issue '<branch>'" "$here/skills/start/SKILL.md"
+t 1 "start never passes the branch unquoted" grep -qF 'create $issue <branch>' "$here/skills/start/SKILL.md"
+t 0 "start holds the branch to a safe ref, whatever its source" grep -qF 'Whatever its source, `<branch>` must match `[A-Za-z0-9._/-]+` whole, hold no `..` and have no leading `-`' "$here/skills/start/SKILL.md"
+t 0 "start stops on any other branch and shows it" grep -qF 'Anything else → stop and show it' "$here/skills/start/SKILL.md"
+t 0 "onboard still offers gitlab behind jira when the plugin cannot answer" grep -qF 'else `jira` first, `gitlab` still offered' "$here/skills/onboard/SKILL.md"
+t 0 "onboard stops for GitLab only once the user picks it" grep -qF '`gitlab` picked → `get_project` with `project_id: <repo>` and `get_user`' "$here/skills/onboard/SKILL.md"
+t 1 "onboard does not stop before the question on a host holding gitlab" grep -qF 'host holds `gitlab` and the gitlab tools' "$here/skills/onboard/SKILL.md"
+for f in README.md CLAUDE.md skills/onboard/SKILL.md; do
+  t 0 "$f: the GitLab plugin as shipped reaches gitlab.com only" grep -qF 'reaches gitlab.com only' "$here/$f"
+  t 0 "$f: a self-managed instance's MCP server is not pre-approved" grep -qF 'do not pre-approve, so its calls prompt' "$here/$f"
+done
+t 1 "README promises no instance the plugin does not reach" grep -qF 'on any instance' "$here/README.md"
 
 # Merging main into an issue branch brings the bookmark of every merged PR
 # into its history, and a newer one must not be taken for the issue's branch.
