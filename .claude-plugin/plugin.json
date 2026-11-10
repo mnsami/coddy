@@ -1,6 +1,6 @@
 {
   "name": "coddy",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Issue-driven development workflow: onboard a project, start an issue, ship a PR, triage findings, pick what's next. Works with GitHub Issues, GitLab and Jira.",
   "author": { "name": "Mina Sami" },
   "icon": "assets/icon/coddy-512.png",
