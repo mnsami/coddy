@@ -2243,7 +2243,7 @@ t 1 "mr check: nor is a word that merely ends in a keyword" mr CURL_MR='{"descri
 # Every API error fails: a non-200 never passes, whatever body came with it.
 for c in 401 403 404; do
   t 1 "mr check: a $c fails" mr CURL_HTTP=$c CURL_MR="$closes12" CURL_ISSUE="$mine"
-  t 0 "mr check: and names the CODDY_TOKEN variable, read_api, masked and not protected" says "CODDY_TOKEN.*read_api.*masked.*not protected" mr CURL_HTTP=$c
+  t 0 "mr check: and names the CODDY_TOKEN variable, tied to this project alone, read_api, masked and not protected" says "CODDY_TOKEN.*tied to this project alone, never a personal one.*read_api.*masked.*not protected" mr CURL_HTTP=$c
   t 1 "mr check: and prints no job token" leaks mr CURL_HTTP=$c
   t 1 "mr check: and no CODDY_TOKEN value" leaks mr CURL_HTTP=$c CODDY_TOKEN=tok-secret
   t 1 "mr check: an issue answering $c fails" mr CURL_MR="$closes12" CURL_ISSUE="$mine" CURL_ISSUE_HTTP=$c
@@ -2281,7 +2281,10 @@ t 0 "onboard reads coddy/mr-check before it opens or skips anything for it" grep
 t 0 "onboard holds that branch to the template and the include alone" grep -qF 'identical to the template and `.gitlab-ci.yml` differing from the `ref: HEAD` copy by the include alone' "$here/skills/onboard/SKILL.md"
 t 0 "onboard opens nothing from a branch that fails the check" grep -qF 'failing → open nothing, name the branch and stop' "$here/skills/onboard/SKILL.md"
 t 1 "onboard takes no existing branch for an earlier run's unread" grep -qF "an earlier run's" "$here/skills/onboard/SKILL.md"
-t 0 "onboard skips only for a merge request from that branch in this project" grep -qF 'its source branch `coddy/mr-check`, its source project its target project and the branch check passing' "$here/skills/onboard/SKILL.md"
+t 0 "onboard skips only for a merge request from that branch in this project" grep -qF 'its `sourceBranch` exactly `coddy/mr-check`, `list_branches` with `id: <repo>` and `search: coddy/mr-check`, names compared exactly since `search` matches substrings, finding that branch in `repo`, and the branch check passing' "$here/skills/onboard/SKILL.md"
+t 1 "onboard evaluates no source project, which no MCP tool returns" grep -qF 'source project' "$here/skills/onboard/SKILL.md"
+t 0 "onboard allows list_branches" grep -qE '^allowed-tools: .*mcp__plugin_gitlab_gitlab__list_branches(,|$)' "$here/skills/onboard/SKILL.md"
+t 1 "onboard no longer calls get_merge_request" grep -qF 'get_merge_request' "$here/skills/onboard/SKILL.md"
 t 0 "onboard names any other merge request of that title as not coddy's and stops" grep -qF "name it as not coddy's and stop" "$here/skills/onboard/SKILL.md"
 t 0 "start passes the branch in single quotes" grep -qF "create \$issue '<branch>'" "$here/skills/start/SKILL.md"
 t 1 "start never passes the branch unquoted" grep -qF 'create $issue <branch>' "$here/skills/start/SKILL.md"

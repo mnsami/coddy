@@ -33,7 +33,7 @@ closes a claimed issue:
         code=$(curl -sS -o "$out" -w '%{http_code}' -H "$auth" "$CI_API_V4_URL/projects/$CI_MERGE_REQUEST_PROJECT_ID/$1") || { echo "the GitLab API could not be reached for $1."; exit 1; }
         case $code in
           200) ;;
-          401|403|404) echo "GitLab answered $code for $1: it is not there, or this job's token cannot read it, which a private project answers with a 404. Set the CI variable CODDY_TOKEN to a token with read_api, masked and not protected (a protected variable does not reach a merge request pipeline from an unprotected branch), then re-run this job."; exit 1 ;;
+          401|403|404) echo "GitLab answered $code for $1: it is not there, or this job's token cannot read it, which a private project answers with a 404. Set the CI variable CODDY_TOKEN to a token tied to this project alone, never a personal one, with read_api, masked and not protected (a protected variable does not reach a merge request pipeline from an unprotected branch), then re-run this job."; exit 1 ;;
           *) echo "GitLab answered $code for $1."; exit 1 ;;
         esac
       }
