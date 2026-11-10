@@ -32,6 +32,6 @@ Findings come from this conversation, or from `$ARGUMENTS` when given (a file pa
    - **Problem**: what is wrong, with evidence (`file:line`, command output).
    - **Fix**: checklist of concrete steps.
    - **Acceptance**: checklist of observable checks.
-   Labels: `bug` or `enhancement` (github, gitlab); issue type Bug or Task (jira).
+   Labels: `bug` or `enhancement` (github, gitlab); issue type Bug or Task (jira). gitlab: `save_work_item` refuses a label the project does not have → create it without `labels` and say which was left off.
 5. Each issue whose `triage` lines were used: lines that were filed or skipped as already covered are removed; any others (dropped at the confirm, or a failed create) stay. One call: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" state <issue> triage=` followed by `"triage+=<line>"` for each remaining line.
 6. Print the created links.

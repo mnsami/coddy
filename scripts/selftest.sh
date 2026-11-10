@@ -2186,7 +2186,7 @@ chmod +x "$tmp/curlbin/curl"; export CURL_LOG="$tmp/curl.log"
 sed '1,/^    - |$/d; s/^      //' "$gci" > "$tmp/mr.sh"
 # mr [VAR=value...]: an MR against the default branch unless CI_MERGE_REQUEST_TARGET_BRANCH_NAME says otherwise
 mrsh=(sh -e)
-mr() { env PATH="$tmp/curlbin:$PATH" CI_API_V4_URL=https://gl.example/api/v4 CI_PROJECT_ID=7 CI_MERGE_REQUEST_IID=9 CI_DEFAULT_BRANCH=main CI_MERGE_REQUEST_TARGET_BRANCH_NAME=main CI_JOB_TOKEN=job-secret "$@" "${mrsh[@]}" "$tmp/mr.sh"; }
+mr() { env PATH="$tmp/curlbin:$PATH" CI_API_V4_URL=https://gl.example/api/v4 CI_PROJECT_ID=99 CI_MERGE_REQUEST_PROJECT_ID=7 CI_MERGE_REQUEST_IID=9 CI_DEFAULT_BRANCH=main CI_MERGE_REQUEST_TARGET_BRANCH_NAME=main CI_JOB_TOKEN=job-secret "$@" "${mrsh[@]}" "$tmp/mr.sh"; }
 stacked() { mr CI_MERGE_REQUEST_TARGET_BRANCH_NAME=feat/21 "$@"; }
 is() { printf '{"iid":%s,"state":"%s","assignees":[%s]}' "$1" "$2" "${3-}"; }
 mine=$(is 12 opened '{"id":1}')
@@ -2200,6 +2200,7 @@ t 0 "mr check: the header names a project whose stages omit test" grep -qE '^# .
 : > "$CURL_LOG"
 t 0 "mr check: an open, assigned linked issue passes" mr CURL_CLOSES="[$mine]"
 t 0 "mr check: it reads this merge request's closing issues" grep -qF 'https://gl.example/api/v4/projects/7/merge_requests/9/closes_issues?per_page=100' "$CURL_LOG"
+t 1 "mr check: never the pipeline's own project, a fork's on a merge request from one" grep -qF 'projects/99/' "$CURL_LOG"
 t 0 "mr check: with the job token when CODDY_TOKEN is not set" grep -qF 'JOB-TOKEN: job-secret' "$CURL_LOG"
 t 1 "mr check: a default-branch MR with references reads no description" grep -qE 'merge_requests/9( |$)' "$CURL_LOG"
 : > "$CURL_LOG"
@@ -2232,7 +2233,7 @@ t 1 "mr check: a stacked keyword to an unassigned issue fails" stacked CURL_MR='
 t 1 "mr check: a stacked lookup answering 500 fails" stacked CURL_MR='{"description":"Closes #12"}' CURL_ISSUE="$mine" CURL_ISSUE_HTTP=500
 t 1 "mr check: a stacked lookup answering 404 for one of two fails" stacked CURL_MR='{"description":"Closes #12, closes #13"}' CURL_ISSUE="$mine" CURL_ISSUE_HTTP=404
 # Every API error fails: a non-200 never passes, whatever body came with it.
-for c in 401 403; do
+for c in 401 403 404; do
   t 1 "mr check: a $c fails" mr CURL_HTTP=$c CURL_CLOSES="[$mine]"
   t 0 "mr check: and names the CODDY_TOKEN variable, read_api, masked and not protected" says "CODDY_TOKEN.*read_api.*masked.*not protected" mr CURL_HTTP=$c
   t 1 "mr check: and prints no job token" leaks mr CURL_HTTP=$c
@@ -2255,6 +2256,8 @@ mrsh=(sh -e)
 for n in next start ship triage; do t 0 "skill $n stops when the gitlab tools are not loaded" grep -qE '^`tracker: gitlab` → .*the gitlab plugin must be enabled and signed in' "$here/skills/$n/SKILL.md"; done
 for n in start ship triage; do t 0 "skill $n wraps a line starting with / in what it writes to GitLab" grep -qE '^`tracker: gitlab` → .*line starting with `/` goes in backticks' "$here/skills/$n/SKILL.md"; done
 t 1 "no skill runs glab" grep -rqwi glab "$here/skills"
+t 0 "start takes no branch from a merge request that only mentions the issue" grep -qF 'only mentions it' "$here/skills/start/SKILL.md"
+t 0 "onboard edits an existing .gitlab-ci.yml in place, never rewriting it" grep -qF '`old_str` and `new_str`, never `content`' "$here/skills/onboard/SKILL.md"
 t 0 "onboard delivers the job on a new branch, never the default one" grep -qF 'Never commit to the default branch' "$here/skills/onboard/SKILL.md"
 
 # Merging main into an issue branch brings the bookmark of every merged PR

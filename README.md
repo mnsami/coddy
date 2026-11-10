@@ -417,7 +417,7 @@ commits to the default branch. Its ceilings:
   `CODDY_TOKEN` when set (`read_api`, masked, not protected, since a
   protected variable does not reach a merge request pipeline from an
   unprotected branch), else the job token, which may not be allowed to read
-  them. A 401 or 403 fails the job and names the variable.
+  them. A 401, 403 or 404 fails the job and names the variable.
 - Editing a merge request's description starts no pipeline, so re-run the
   job after fixing one.
 - The merge request that adds it is checked by it too: give it `Closes #<n>`
