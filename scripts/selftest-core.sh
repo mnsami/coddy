@@ -492,6 +492,114 @@ t 2 "budget: under guard: warn too" adm
 cp "$tmp/conf.orig" .coddy.yml
 tripped 0 "budget: within it, the same admin dir passes" 'true'
 rm -r .git/worktrees
+# A source of the fingerprint that fails makes the run unchecked, named in
+# fixed text, at snap or at trip, on every command while it keeps failing:
+# git status, git worktree list and, in a jj repository with a jj that names
+# a workspace's root, jj workspace list. A failed listing read as an empty
+# one would hide the command's change, or name a worktree there before as
+# made. No jj on PATH, an empty .jj or a jj before 0.38 lists no workspace,
+# as it always has; a jj whose version cannot be read is broken, not absent.
+mkdir "$tmp/fsrc" "$tmp/jjnew" "$tmp/jjold" "$tmp/jjdead"
+printf '#!/bin/sh\ncase " $* " in *" ${FAIL:?} "*) exit 128 ;; esac\nexec "%s" "$@"\n' "$(command -v git)" > "$tmp/fsrc/git"
+printf '#!/bin/sh\n[ "$1" != --version ] || { echo "jj 0.46.0"; exit 0; }\nexit 1\n' > "$tmp/jjnew/jj"
+printf '#!/bin/sh\n[ "$1" != --version ] || { echo "jj 0.37.0"; exit 0; }\nexit 1\n' > "$tmp/jjold/jj"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/jjdead/jj"; chmod +x "$tmp/fsrc/git" "$tmp/jjnew/jj" "$tmp/jjold/jj" "$tmp/jjdead/jj"
+# A repo config jj cannot read fails it inside the repository, --version included.
+mkdir "$tmp/jjbad" "$tmp/jjbadold"; printf '#!/bin/sh\n[ "$1" != --version ] || [ -e .jj/repo ] || { echo "jj 0.46.0"; exit 0; }\nexit 1\n' > "$tmp/jjbad/jj"
+sed 's/0\.46/0.37/' "$tmp/jjbad/jj" > "$tmp/jjbadold/jj"; chmod +x "$tmp/jjbad/jj" "$tmp/jjbadold/jj"
+# A PATH with no jj on it: each entry holding one stands in a copy of its links but jj.
+nojp="" i=0; IFS=: read -ra ds <<<"$PATH"
+for d in "${ds[@]}"; do
+  [ ! -e "$d/jj" ] || { i=$((i+1)); mkdir -p "$tmp/nojj/$i"; ln -s "$d"/* "$tmp/nojj/$i/"; rm "$tmp/nojj/$i/jj"; d=$tmp/nojj/$i; }
+  nojp+=${nojp:+:}$d
+done
+# unchecked <source> <the call, as named> <stub dir> [stub dir for a snap that works]:
+# the source failing at snap and trip, twice, then at trip alone
+unchecked() {
+  for i in 1 2; do
+    out=$(PATH="$3:$PATH" wire snap w); echo x >> README.md
+    t 0 "unchecked: $1 failing, snap says the command runs unchecked ($i)" jq -e --arg s "since $2 failed, so this command runs unchecked" '.hookSpecificOutput.additionalContext | contains($s)' <<<"$out"
+    out=$(PATH="$3:$PATH" wire trip w 2>&1); r=$?
+    t 0 "unchecked: and trip reports the edit's command ($i)" test "$r" = 2
+    t 0 "unchecked: as one that ran unchecked, naming $2 ($i)" grep -q "ran unchecked: the main checkout could not be fingerprinted before it ran, since $2 failed" <<<"$out"
+  done
+  git checkout -q README.md; PATH="${4:-$3}:$PATH" FAIL=none wire snap w >/dev/null; echo x >> README.md; out=$(PATH="$3:$PATH" wire trip w 2>&1); r=$?
+  t 0 "unchecked: $1 failing at trip alone, an edit trips" test "$r" = 2
+  t 0 "unchecked: saying the checkout could not be fingerprinted, naming $2" grep -q "could not be fingerprinted after that command ran, since $2 failed" <<<"$out"
+  git checkout -q README.md
+}
+FAIL=status unchecked "git status" "git status" "$tmp/fsrc"
+FAIL='worktree list' unchecked "git worktree list" "git worktree list" "$tmp/fsrc"
+mkdir -p .jj/repo; unchecked "jj workspace list in a jj repository" "jj workspace list" "$tmp/jjnew" "$tmp/jjold"
+unchecked "jj workspace list on a repo config jj cannot read" "jj workspace list" "$tmp/jjbad" "$tmp/jjold"
+unchecked "jj workspace list with a jj whose version cannot be read" "jj workspace list" "$tmp/jjdead" "$tmp/jjold"
+PATH="$tmp/jjold:$PATH" tripped 0 "unchecked: a jj before 0.38 failing lists no workspace, as before" 'true'
+PATH="$tmp/jjbadold:$PATH" tripped 0 "unchecked: so does one on a repo config it cannot read, its version read outside the repository" 'true'
+PATH=$nojp t 0 "unchecked: no jj on PATH in a jj repository is refused, as before" says 'no jj is on PATH outside the project' wire snap w
+rmdir .jj/repo; PATH="$tmp/jjnew:$PATH" tripped 0 "unchecked: an empty .jj lists no workspace, as before" 'true'
+rmdir .jj
+# A plain jj root (.jj/repo, no .git, worktree: jj) has no git to fail: git
+# status and git worktree list failing there by design leave the run
+# checked. Under worktree: git the same root has lost its .git: unchecked.
+mkdir -p "$tmp/nogit/.jj/repo"; { echo 'worktree: jj'; grep -v '^worktree:' .coddy.yml; } > "$tmp/nogit/.coddy.yml"
+PATH="$tmp/jjold:$PATH" CODDY_ROOT="$tmp/nogit" tripped 0 "unchecked: a plain jj root with no .git runs checked, as before" 'true'
+cp .coddy.yml "$tmp/nogit/"
+PATH="$tmp/jjold:$PATH" CODDY_ROOT="$tmp/nogit" tripped 2 "unchecked: one with no .git under worktree: git runs unchecked" 'true'
+rm -r "$tmp/nogit"
+# One whose .git snap saw and the command moved aside is held to it: the
+# run is unchecked, its git calls failing there read as no empty listing,
+# and so is every command after it while .git stays away.
+wire snap w >/dev/null; mv .git "$tmp/g"; echo x >> README.md; out=$(wire trip w 2>&1); r=$?
+t 0 "unchecked: a .git the command moved aside, with an edit, trips" test "$r" = 2
+t 0 "unchecked: saying its .git is gone" grep -q 'could not be fingerprinted after that command ran, since its .git is gone' <<<"$out"
+wire snap w >/dev/null; echo y >> README.md; out=$(wire trip w 2>&1); r=$?
+mv "$tmp/g" .git; git checkout -q README.md
+t 0 "unchecked: the next command, .git still away, trips too" test "$r" = 2
+t 0 "unchecked: as one that ran unchecked, git status failing" grep -q 'ran unchecked: .*since .*git status failed' <<<"$out"
+tripped 0 "unchecked: the next command is checked afresh" 'true'
+# So is one whose .jj/repo snap saw, with a jj that lists fine: moved aside,
+# jj there lists no workspace, which would hide one the command made.
+mkdir -p "$tmp/jjok" .jj/repo; printf '#!/bin/sh\n[ "$1" != --version ] || echo "jj 0.46.0"\n' > "$tmp/jjok/jj"; chmod +x "$tmp/jjok/jj"
+PATH="$tmp/jjok:$PATH" wire snap w >/dev/null; mv .jj "$tmp/j"; out=$(PATH="$tmp/jjok:$PATH" wire trip w 2>&1); r=$?
+rm -r "$tmp/j"
+t 0 "unchecked: a .jj the command moved aside trips" test "$r" = 2
+t 0 "unchecked: saying its .jj is gone" grep -q 'could not be fingerprinted after that command ran, since its .jj is gone' <<<"$out"
+PATH="$tmp/jjok:$PATH" tripped 0 "unchecked: the next command is checked afresh" 'true'
+# A git worktree there before, its listing failing at snap alone, is named
+# neither made nor moved: the run is unchecked.
+git worktree add -q --detach "$tmp/owt"
+FAIL='worktree list' PATH="$tmp/fsrc:$PATH" wire snap w >/dev/null; out=$(wire trip w 2>&1); r=$?
+t 0 "unchecked: a git worktree listing that failed at snap alone trips" test "$r" = 2
+t 0 "unchecked: as a command that ran unchecked" grep -q 'ran unchecked: .*since git worktree list failed' <<<"$out"
+t 1 "unchecked: naming no worktree there before as made, moved, renamed or re-created" grep -qE "', (made|moved, renamed or re-created) \(" <<<"$out"
+git worktree remove --force "$tmp/owt"
+# The fingerprint failing on its own (a sort that fails) is coddy's failure:
+# at trip it is reported as such, an edit or not; at snap the snapshot says
+# so, and trip reports that, not a command that touched the snapshot.
+mkdir "$tmp/nosort"; printf '#!/bin/sh\ncat >/dev/null; exit 1\n' > "$tmp/nosort/sort"; chmod +x "$tmp/nosort/sort"
+wire snap w >/dev/null; echo x >> README.md; out=$(PATH="$tmp/nosort:$PATH" wire trip w 2>&1); r=$?
+t 0 "unchecked: trip's fingerprint failing, with an edit, trips" test "$r" = 2
+t 0 "unchecked: saying the fingerprint failed" grep -q 'could not be fingerprinted after that command ran, since the fingerprint failed' <<<"$out"
+git checkout -q README.md
+out=$(PATH="$tmp/nosort:$PATH" wire snap w)
+t 0 "unchecked: snap's fingerprint failing says the command runs unchecked" jq -e '.hookSpecificOutput.additionalContext | contains("since the fingerprint failed, so this command runs unchecked")' <<<"$out"
+t 0 "unchecked: its snapshot says so" grep -qx 'unchecked fp' "$snapfile"
+out=$(wire trip w 2>&1); r=$?
+t 0 "unchecked: and trip reports it" test "$r" = 2
+t 0 "unchecked: as a fingerprint that failed, not a snapshot the command touched" grep -q 'ran unchecked: .*since the fingerprint failed' <<<"$out"
+tripped 0 "unchecked: the next command is checked afresh" 'true'
+# A git status that leaves a child running with every fd above stderr open
+# (the fsmonitor daemon a git before 2.55 starts under core.fsmonitor=true)
+# holds no end of the fingerprint's pipe: snap and trip finish well within
+# the budget, checked.
+mkdir "$tmp/fsmon"; printf '#!/bin/sh\ncase " $* " in *" status "*) sleep 30 </dev/null >/dev/null 2>&1 & echo $! >> "%s" ;; esac\nexec "%s" "$@"\n' "$tmp/fsmon/pids" "$(command -v git)" > "$tmp/fsmon/git"; chmod +x "$tmp/fsmon/git"
+SECONDS=0; PATH="$tmp/fsmon:$PATH" wire snap w >/dev/null; r=$?
+t 0 "unchecked: a git status leaving a child that holds its fds, snap finishes within seconds" test "$r:$((SECONDS <= 8))" = 0:1
+t 1 "unchecked: and its snapshot is checked" grep -q '^unchecked' "$snapfile"
+SECONDS=0; PATH="$tmp/fsmon:$PATH" wire trip w; r=$?
+t 0 "unchecked: and trip, quiet, within seconds too" test "$r:$((SECONDS <= 8))" = 0:1
+while read -r p; do kill "$p" 2>/dev/null; done < "$tmp/fsmon/pids"; rm -r "$tmp/fsmon"
+rm -rf "$tmp/fsrc" "$tmp/nosort" "$tmp/jjnew" "$tmp/jjold" "$tmp/jjdead" "$tmp/nojj" "$tmp/jjbad" "$tmp/jjbadold"
 # A file git cannot read in its place is a change like any other.
 report "config: an unreadable file in its place trips" 'echo "guard: warn" > .coddy.yml && chmod 000 .coddy.yml'
 t 0 "config: and is restored" same .coddy.yml
@@ -1106,8 +1214,19 @@ CODDY_EXEC="$here/bin/coddy/" t 0 "and one with a trailing slash, which names no
 # repository outside the checkout, or wherever the call began.
 mkdir "$tmp/w/plug"; cp "$here/bin/coddy" "$tmp/w/plug/"
 CODDY_EXEC="$tmp/w/plug/coddy" t 0 "and a CODDY_EXEC in a worktree of the repository outside the checkout" says "$inside" run start 1 feat/1-thing
-mkdir "$tmp/nowtl"; printf '#!/bin/sh\ncase " $* " in *" worktree list "*) exit 1 ;; esac\nexec %s "$@"\n' "$g" > "$tmp/nowtl/git"; chmod +x "$tmp/nowtl/git"
+mkdir "$tmp/nowtl"; printf '#!/bin/sh\ncase " $* " in *" worktree list "*) exit 0 ;; esac\nexec %s "$@"\n' "$g" > "$tmp/nowtl/git"; chmod +x "$tmp/nowtl/git"
 PATH="$tmp/nowtl:$PATH" CODDY_ROOT="$tmp/w" t 0 "and one where the call began, with git listing no worktree" says "$inside" "$tmp/w/plug/coddy" start 1 feat/1-thing
+# A listing that fails is no empty one: start cannot tell where the coddy
+# path sits, and refuses in plain text.
+sed 's/) exit 0 ;;/) exit 128 ;;/' "$tmp/nowtl/git" > "$tmp/nowtl/g2"; mv "$tmp/nowtl/g2" "$tmp/nowtl/git"; chmod +x "$tmp/nowtl/git"
+PATH="$tmp/nowtl:$PATH" t 1 "start refuses when git worktree list fails" run start 1 feat/1-thing
+PATH="$tmp/nowtl:$PATH" t 0 "saying it cannot tell where the coddy path lies" says 'git worktree list failed, so start cannot tell whether .* lies in a worktree of the repository' run start 1 feat/1-thing
+# So does jj's, under worktree: jj in a jj repository, with a jj that names a workspace's root.
+mkdir "$tmp/jjwl"; printf '#!/bin/sh\n[ "$1" != --version ] || { echo "jj 0.46.0"; exit 0; }\nexit 1\n' > "$tmp/jjwl/jj"; chmod +x "$tmp/jjwl/jj"
+cp .coddy.yml "$tmp/wc.yml"; { echo 'worktree: jj'; grep -v '^worktree:' "$tmp/wc.yml"; } > .coddy.yml; mkdir -p .jj/repo
+PATH="$tmp/jjwl:$PATH" t 1 "start refuses when jj workspace list fails under worktree: jj" run start 1 feat/1-thing
+PATH="$tmp/jjwl:$PATH" t 0 "saying it cannot tell where the coddy path lies" says 'jj workspace list failed, so start cannot tell whether .* lies in a worktree of the repository' run start 1 feat/1-thing
+cp "$tmp/wc.yml" .coddy.yml; rm -r .jj
 t 0 "having written nothing" test "$(cksum "$hooks"/*; git config --local --list)" = "$sums"
 "$g" worktree remove --force "$tmp/w"
 rm -r "${repo:?}/bin" "$repo/plant" "$repo/lnk" "$tmp/inlink" "$tmp/chain" "$tmp/dirchain"
@@ -1371,6 +1490,10 @@ oldhook() { cp .git/hooks/coddy/pre-commit "$tmp/pc"; { sed -n 1,3p "$tmp/pc"; e
 prob "a hook falling back to a coddy on PATH" "^hooks: pre-commit falls back to a coddy on PATH, where a command in the project could plant one $term" oldhook 'cp "$tmp/pc" .git/hooks/coddy/pre-commit'
 inhook() { cp .git/hooks/coddy/pre-commit "$tmp/pc"; mkdir bin; cp "$here/bin/coddy" bin/; sed -i.bak "s#^c=.*#c='$PWD/bin/coddy'#" .git/hooks/coddy/pre-commit; rm .git/hooks/coddy/pre-commit.bak; }
 prob "a hook running a coddy in the project" "^hooks: pre-commit runs .*/bin/coddy, which lies in the project or a worktree of it, or is reached through a link there $term" inhook 'cp "$tmp/pc" .git/hooks/coddy/pre-commit; rm -r bin'
+PATH="$tmp/nowtl:$PATH" t 0 "doctor: git worktree list failing" dsays '^hooks: git worktree list failed, so whether pre-commit runs a file in a worktree of the project cannot be told (fix: '
+PATH="$tmp/nowtl:$PATH" t 1 "doctor: git worktree list failing exits 1" dd doctor
+PATH="$tmp/jjwl:$PATH" prob "jj workspace list failing under worktree: jj" '^hooks: jj workspace list failed, so whether pre-commit runs a file in a worktree of the project cannot be told (fix: repair what makes jj workspace list fail here)$' 'sed -i.bak "s/^worktree:.*/worktree: jj/" .coddy.yml; rm .coddy.yml.bak; mkdir -p .jj/repo' 'cp "$tmp/dp.yml" .coddy.yml; rm -r .jj'
+rm -r "$tmp/jjwl"
 prob "a hook git would skip" '^hooks: pre-push is not executable' 'chmod -x .git/hooks/coddy/pre-push' 'chmod +x .git/hooks/coddy/pre-push'
 prob "hooks not installed" '^hooks: core.hooksPath is not set.*(fix: /coddy:start <issue>)' 'git config --unset core.hooksPath' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
 prob "PR check missing" '^pr_check: .*is missing or not a plain file (fix: copy ' 'rm .github/workflows/coddy.yml' 'cp "$here/templates/coddy.yml" .github/workflows/coddy.yml'

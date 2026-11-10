@@ -471,6 +471,13 @@ cfg() { # key $1, from the config or file $2: a quoted value runs to its closing
   if [ -n "$_q" ]; then printf '%s\n' "${_q#Q}"; return; fi
   printf '%s\n' "$_l" | sed -e 's/^#.*$//' -e 's/[[:space:]][[:space:]]*#.*$//' -e 's/[[:space:]]*$//'
 }
+# The worktree tool, into tool, from the config or file $1: no worktree key
+# is git from version 2, jj below it (no version is 0, read as migrate does).
+wtool() {
+  local v
+  tool=$(cfg worktree "$@")
+  [ -n "$tool" ] || { v=$(cfg version "$@" | tr -d '[:space:]'); v=${v#"${v%%[!0]*}"}; case "$v" in ''|1) tool=jj ;; *) tool=git ;; esac; }
+}
 # The lock's owner ($sid, $pid, $start) is this session ($me): the same
 # session id, or the same agent process, since Claude Code's /clear changes
 # the id and not the pid; a pid reused since the owner's start is not that process.
@@ -1247,32 +1254,55 @@ json() {
 # .githooks), where a command can plant a hook. GIT_OPTIONAL_LOCKS=0 is
 # --no-optional-locks, which a git before 2.15 rejects. The fingerprint's
 # read of core.hooksPath itself runs plain git: a config read takes no lock
-# and fires no hook.
-hgit() { GIT_OPTIONAL_LOCKS=0 git -c core.hooksPath=/dev/null "$@"; }
+# and fires no hook. Fd 8, the fingerprint's line past its reader (fp), is
+# closed in git itself: on the function's call, bash 3.2 leaves its saved
+# copy open in git, and in a child git leaves running.
+hgit() { GIT_OPTIONAL_LOCKS=0 git -c core.hooksPath=/dev/null "$@" 8>&-; }
 # git worktree list --porcelain -z, or, from a git before 2.36, without -z:
 # each path as one field, and one not followed by its HEAD or bare line
 # taken with the lines up to it, so it holds a line break and is never
-# skipped as coddy's (clean).
+# skipped as coddy's (clean). Its status is git's: a listing that failed is
+# no empty one. Only the 129 of a git without -z falls back.
 gitwts() {
-  hgit worktree list --porcelain -z 2>/dev/null && return
-  local l p=""
+  local l p="" o s
+  hgit worktree list --porcelain -z 2>/dev/null; s=$?
+  [ "$s" = 129 ] || return "$s"
+  o=$(hgit worktree list --porcelain 2>/dev/null) || return
   while IFS= read -r l; do
     case "$l" in
       "HEAD "*|bare) [ -z "$p" ] || printf '%s\0' "$p"; p="" ;;
       "worktree "*) p=${p:+$p$'\n'}$l ;;
       *) [ -z "$p" ] || p+=$'\n'$l ;;
     esac
-  done < <(hgit worktree list --porcelain 2>/dev/null)
+  done <<<"$o"
   [ -z "$p" ] || printf '%s\n\0' "$p"
+}
+# A jj workspace listing that failed failed for real: a jj repository is
+# here (.jj/repo) and a jj is on PATH, unless that jj reports a version
+# before 0.38, which names no workspace's root. No jj on PATH, an empty .jj
+# or an older jj lists no workspace, as it always has; a jj whose version
+# cannot be read (a broken user config, a binary mid-upgrade) is broken, not
+# absent. Its version is read outside the repository: a repo config a
+# command broke fails jj there, --version included.
+jjfailed() {
+  local re='^jj ([0-9]{1,6})\.([0-9]{1,6})' v
+  [ -e .jj/repo ] && command -v jj >/dev/null || return 1
+  v=$(cd / && jj --version 2>/dev/null) && [[ $v =~ $re ]] || return 0
+  [ "${BASH_REMATCH[1]}" != 0 ] || [ "${BASH_REMATCH[2]}" -ge 38 ]
 }
 # ins, for inproj: the root, where the call began and every worktree of the
 # repository, git's and, under worktree: jj, jj's (listed as snap lists
 # them, the working copy ignored), any of which a session's sandbox may write.
+# Status 1, with the listing that failed in wf, when one did (gitwts, or
+# jj's as jjfailed has it): a failed listing is no empty one. Each failure is
+# a field of its own, after a NUL, which no listing's field can read as.
 wtroots() {
   local l
   ins=("$root"); [ -z "${began-}" ] || ins+=("$began")
-  while IFS= read -r -d '' l; do case "$l" in "worktree "*) ins+=("${l#worktree }") ;; esac; done < <(gitwts)
-  [ "$tool" != jj ] || while IFS= read -r -d '' l; do ins+=("$l"); done < <(jj --no-pager workspace list --ignore-working-copy --color=never -T 'if(root, stringify(root) ++ "\0")' 2>/dev/null)
+  while IFS= read -r -d '' l; do case "$l" in "worktree "*) ins+=("${l#worktree }") ;; "unchecked list") wf="git worktree list"; return 1 ;; esac; done < <(gitwts || printf '\0unchecked list\0')
+  [ "$tool" != jj ] || while IFS= read -r -d '' l; do
+    case "$l" in "") ;; "unchecked jj") wf="jj workspace list"; return 1 ;; *) ins+=("$l") ;; esac
+  done < <(jj --no-pager workspace list --ignore-working-copy --color=never -T 'if(root, stringify(root) ++ "\0")' 2>/dev/null || { ! jjfailed || printf '\0unchecked jj\0'; })
 }
 # gi: the git admin id worktree $1's .git names, when it is a plain file;
 # its first line, read no further than a NUL or 1024 characters, so a huge
@@ -1361,7 +1391,22 @@ out() {
 # recorded by its stat stays so, and the 32 MiB holds for the rest alone:
 # staging a file, or one going away, moves no other between the two. A
 # still-plain dirty file stat gives no line for makes the run unchecked
-# (the line "unchecked stat"), which both hooks report. The count of dirty
+# (the line "unchecked stat"), which both hooks report. So does a source
+# that fails, its own exit read in the process substitution (bash 3.2 has
+# no wait for one) and written past the reader on fd 8, which each source
+# runs without, so a child it leaves running (the fsmonitor daemon a git
+# before 2.55 starts with every fd open) holds sort's pipe open: git status
+# ("unchecked status"), git worktree list ("unchecked list", gitwts's
+# status) and jj workspace list ("unchecked jj", as jjfailed has it), git's
+# two anywhere but a plain jj root (pjj), where git fails by design: one
+# holding .jj/repo and no .git, under worktree: jj. A root with no .git and
+# no .jj/repo, or none under worktree: git, has lost its .git, and every
+# run there is unchecked until it is back. snap's alone (gd) says, as the
+# line "git dir", that the root held one, and as "jj dir" that it held
+# .jj/repo, which trip holds the root to: a command that moved or removed
+# either leaves git or jj nothing to list. A failed listing is no empty one,
+# which would hide the
+# command's change or name a worktree that was there before as made. The count of dirty
 # paths goes to fd 5 once git status has listed them. A dirty path that is
 # not clean is printed
 # quoted (q), so none spans two lines. A submodule shows as one gone line
@@ -1386,8 +1431,12 @@ sflav() {
   elif [[ $(stat -L -c %.9Z / 2>/dev/null) =~ ^[0-9]+\.[0-9]+$ ]]; then sf=(-c '%s %.9Z %i:%n')
   else sf=(-c '%s %Z %i:%n'); fi
 }
+pjj() { [ ! -d .git ] && [ -e .jj/repo ] && [ "$tool" = jj ]; }
 snap() {
   cd "$root" 2>/dev/null || return 0
+  exec 8>&1
+  [ -z "$gd" ] || [ ! -d .git ] || echo 'git dir'
+  [ -z "$gd" ] || [ ! -e .jj/repo ] || echo 'jj dir'
   hgit merge-base --is-ancestor "refs/heads/$b" "refs/remotes/origin/$b" 2>/dev/null ||
     { tip=$(hgit rev-parse -q --verify "refs/heads/$b" 2>/dev/null) && echo "commits on $b $tip"; }
   at=$(hgit symbolic-ref -q --short HEAD 2>/dev/null); h=$(hgit rev-parse HEAD 2>/dev/null)
@@ -1407,7 +1456,7 @@ snap() {
     r=${p#"$R"}
     [ "$r" != "$p" ] && clean "$r" && { [ -z "$r" ] || { coddywt "$p" && real "$p"; }; } ||
       out "git worktree at $(q "$p") (git worktree remove)" "$k" "$g"
-  done < <([ -n "$nowt" ] || gitwts)
+  done < <([ -n "$nowt" ] || gitwts || pjj || echo 'unchecked list' >&8)
   [ -z "$C" ] || for d in "$C"/worktrees/*/ "$C"/worktrees/.[!.]*/ "$C"/worktrees/..?*/; do [ ! -d "$d" ] || { d=${d%/}; printf -v g 'git %q' "${d##*/}"; echo "$g" >&3
     [ -z "$nowt" ] || [[ $seen == *$'\n'"$g"$'\n'* ]] || out "git worktree whose admin dir is $(q "$d") (git worktree remove)" "$g" ""; }; done
   # No colour or pager, whatever the config says. One listing: each name,
@@ -1421,7 +1470,7 @@ snap() {
     echo "path $pi" >&3
     [ "$r" != "$pi" ] && clean "$r$wi" && { [ -z "$r" ] || { coddywt "$R$r" && real "$R$r"; }; } ||
       out "jj workspace $(q "$wi") at $(q "$pi") (jj workspace forget)" "jj $wi" "path $pi"
-  done < <(jj --no-pager workspace list --ignore-working-copy --color=never -T 'stringify(name).escape_json() ++ if(root, "\t" ++ stringify(root).escape_json()) ++ "\n"' 2>/dev/null); }
+  done < <(jj --no-pager workspace list --ignore-working-copy --color=never -T 'stringify(name).escape_json() ++ if(root, "\t" ++ stringify(root).escape_json()) ++ "\n"' 2>/dev/null 8>&- || { ! jjfailed || echo 'unchecked jj' >&8; }); }
   files=() n=0 nl=() nn=0 dp=0
   while IFS= read -r -d '' e; do
     # A staged rename or copy carries its source in the next field: a rename's
@@ -1437,7 +1486,7 @@ snap() {
       if [ ! -f "$p" ]; then clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"
       else case "$p" in *$'\n'*) nl[nn]=$p; nn=$((nn+1)) ;; *) files[n]=$p; n=$((n+1)) ;; esac; fi
     done
-  done < <(hgit status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null)
+  done < <(hgit status --porcelain -uall -z --ignore-submodules=dirty 2>/dev/null || pjj || echo 'unchecked status' >&8)
   { echo "$dp" >&5; } 2>/dev/null
   [ "$((n + nn))" -gt 0 ] || return 0
   sflav
@@ -1487,7 +1536,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # onboarding gate: it runs at the root, whose .git is, past oddly, a real
   # directory with no commondir, whatever directory the session opened in
   # (a subdirectory whose .git is garbage, a bare repository nested in the
-  # project). seen and nowt are trip's alone (out, snap).
+  # project). seen and nowt are trip's alone (out, snap), gd snap's.
   common() { C=$(cd "$R/.git" 2>/dev/null && pwd -P); }
   # git worktree list, which the fingerprint runs, reads gitdir, HEAD, locked
   # and commondir in every admin dir under $C/worktrees/, a dot-named one
@@ -1584,7 +1633,23 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   tl="usually thousands of dirty or untracked files; ignored ones cost nothing"
   sx="stat gave no size, change time and inode for one of its dirty files"
   ut="so this command runs unchecked: what it changes there, and a worktree it makes, go unreported, though a change to the config is still put back."
-  seen="" nowt="" vf=/dev/null
+  # Why fingerprint file $1 leaves nothing to compare, in fixed text, never a
+  # call's own stderr: each failure a source marked in it (snap), and the
+  # fingerprint's own (an "unchecked fp" record); status 1 when none is.
+  # Each is a whole line, which no dirty path's or worktree's line can be.
+  why() {
+    local l w=""
+    while IFS= read -r l; do
+      case "$l" in
+        "unchecked stat") l=$sx ;; "unchecked status") l="git status failed" ;;
+        "unchecked list") l="git worktree list failed" ;; "unchecked jj") l="jj workspace list failed" ;;
+        *) l="the fingerprint failed" ;;
+      esac
+      w="${w:+$w, and }$l"
+    done < <(grep -xE 'unchecked (stat|status|list|jj|fp)' "$1")
+    [ -n "$w" ] && echo "$w"
+  }
+  seen="" nowt="" vf=/dev/null gd=""
   case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
   file="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
   # Both config paths are kept, present or not: a .coddy.yml the command
@@ -1621,6 +1686,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     common
     admin || { code=2; die "$st"; }
     b=$(cfg default_branch); b="${b:-main}" ok=1
+    wtool
     for c in .coddy.yml "$legacy"; do
       p="$root/$c" s="$file.${c//\//_}"
       kind "$p" > "$s.kind" || ok=""
@@ -1630,16 +1696,23 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # Over its budget the fingerprint is an unchecked record: the command
     # runs, and the agent is told it goes unchecked (un, in every note),
     # with the count of dirty paths git status gave, when it got that far
-    # (on fd 5, into $file.n). So is one holding "unchecked stat", for a
-    # dirty file stat gave no line for. Its verdicts go to $file.v, for trip.
-    fp "$file" 3>"$file.wt" 4>/dev/null 5>"$file.n" 6>"$file.v"; r=$?
+    # (on fd 5, into $file.n). So is one holding a source's failure (why).
+    # One that fails on its own (sort), every record it writes a plain file,
+    # is an "unchecked fp" record, so trip reports coddy's failure, not a
+    # command that touched the snapshot; a record that could not be written
+    # (a link planted at its name) drops the snapshot, as does an unchecked
+    # record that cannot be. Its verdicts go to $file.v, for trip.
+    gd=1; fp "$file" 3>"$file.wt" 4>/dev/null 5>"$file.n" 6>"$file.v"; r=$?
     if [ "$r" = 3 ]; then
       rm -f "$file"; echo unchecked > "$file" || ok=""
       nd=""; [ ! -f "$file.n" ] || nd=$(head -c 20 "$file.n")
       case "$nd" in ''|*[!0-9]*) nd="whose dirty or untracked paths git status had not finished listing" ;; *) nd="which has $nd dirty or untracked paths" ;; esac
       un="coddy could not fingerprint the main checkout, $nd, within $fpb seconds ($tl), $ut"
-    elif [ "$r" != 0 ]; then ok=""
-    elif grep -qx 'unchecked stat' "$file"; then un="coddy could not fingerprint the main checkout, since $sx, $ut"; fi
+    elif [ "$r" != 0 ]; then
+      for s in "$file" "$file.wt" "$file.n" "$file.v"; do [ -f "$s" ] && [ ! -L "$s" ] || ok=""; done
+      [ -z "$ok" ] || { rm -f "$file"; echo 'unchecked fp' > "$file" || ok=""; }
+      [ -z "$ok" ] || un="coddy could not fingerprint the main checkout, since the fingerprint failed, $ut"
+    elif w=$(why "$file"); then un="coddy could not fingerprint the main checkout, since $w, $ut"; fi
     [ -n "$ok" ] || rm -f "$file" "$file".*
     # A git worktree add or jj workspace add that would make a worktree
     # outside coddy's (coddywt) is refused before it runs, read from the
@@ -1717,12 +1790,13 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # a snapshot name would hang trip. The legacy file is let go once
   # .coddy.yml is live, when the command began or now (settled first,
   # above): it is ignored then and cannot change the effective config. The
-  # default branch is read from the snapshot's copy of the config, as snap
-  # read it, not from what the command left. A copy past 64 KiB is cut
-  # short (snap refuses a config past it, so this one grew between snap's
+  # default branch and the worktree tool are read from the snapshot's copy
+  # of the config, as snap read it, not from what the command left. A copy
+  # past 64 KiB is cut short (snap refuses a config past it, so this one grew between snap's
   # check and its copy), so that config is reported as changed and left as
   # it is.
   b=$(cfg default_branch "$pre" 2>/dev/null); b="${b:-main}" cap=""
+  wtool "$pre" 2>/dev/null
   for c in .coddy.yml "$legacy"; do
     p="$root/$c" s="$file.${c//\//_}"
     { [ "$c" = "$legacy" ] && { [ -f "$root/.coddy.yml" ] || [ "$pre" != "$s" ]; }; } && continue
@@ -1764,19 +1838,27 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # Any other line is the main checkout's, its last word, a hash, gone or
   # big:..., dropped. A fingerprint over its budget, snap's (unchecked) or
   # this one, leaves nothing to compare: the command is reported unchecked,
-  # and the next is checked against what it left.
+  # and the next is checked against what it left. So does one a source
+  # failed in, or that failed itself (why), naming what failed: a listing
+  # that failed on one side alone would name every worktree as made.
   ck="Check by hand what it did; the next command is checked against what it left."
   lab=/dev/null now=""
   # The snapshot goes, and trip's own files, its config copies too unless one is kept.
   drop() { rm -f "$file" ${now:+"$now"}; [ "$lab" = /dev/null ] || rm -f "$lab"; [ -n "$keep" ] || rm -f "$file".*; }
   grep -qx unchecked "$file" && { drop; die "${msg}that command ran unchecked: the main checkout took more than $fpb seconds to fingerprint before it ran ($tl), so what it changed there, and a worktree it made, could not be seen. $ck"; }
-  grep -qx 'unchecked stat' "$file" && { drop; die "${msg}that command ran unchecked: the main checkout could not be fingerprinted before it ran, since $sx, so what it changed there, and a worktree it made, could not be seen. $ck"; }
+  w=$(why "$file") && { drop; die "${msg}that command ran unchecked: the main checkout could not be fingerprinted before it ran, since $w, so what it changed there, and a worktree it made, could not be seen. $ck"; }
+  # A .git snap saw (git dir) and the command moved or removed: no git runs.
+  ! grep -qx 'git dir' "$file" || [ -d "$root/.git" ] || { drop; die "${msg}the main checkout could not be fingerprinted after that command ran, since its .git is gone, so what it changed there could not be checked. $ck"; }
+  # So for a .jj/repo (jj dir): jj would list no workspace.
+  ! grep -qx 'jj dir' "$file" || [ -e "$root/.jj/repo" ] || { drop; die "${msg}the main checkout could not be fingerprinted after that command ran, since its .jj is gone, so what it changed there could not be checked. $ck"; }
   [ ! -f "$file.wt" ] || seen=$'\n'$(cat "$file.wt")$'\n'
   [ ! -f "$file.v" ] || vf=$file.v
   lab=$(mktemp 2>/dev/null) || lab=/dev/null
   now=$(mktemp 2>/dev/null) || { now=""; drop; die "${msg}no temporary file could be made, so what that command changed in the main checkout could not be checked. $ck"; }
-  fp "$now" 3>/dev/null 4>"$lab" 5>/dev/null 6>/dev/null || [ $? != 3 ] || { drop; die "${msg}the main checkout took more than $fpb seconds to fingerprint after that command ran ($tl), so what it changed there could not be checked. $ck"; }
-  ! grep -qx 'unchecked stat' "$now" || { drop; die "${msg}the main checkout could not be fingerprinted after that command ran, since $sx, so what it changed there could not be checked. $ck"; }
+  fp "$now" 3>/dev/null 4>"$lab" 5>/dev/null 6>/dev/null; fs=$?
+  [ "$fs" != 3 ] || { drop; die "${msg}the main checkout took more than $fpb seconds to fingerprint after that command ran ($tl), so what it changed there could not be checked. $ck"; }
+  if [ "$fs" != 0 ]; then w="the fingerprint failed"; else w=$(why "$now"); fi
+  [ -z "$w" ] || { drop; die "${msg}the main checkout could not be fingerprinted after that command ran, since $w, so what it changed there could not be checked. $ck"; }
   new=$(LC_ALL=C comm -13 "$file" "$now")
   added="" wts="" hk=""
   while IFS= read -r l; do
@@ -1912,9 +1994,7 @@ fi
 cmd="${1-}" issue="${2-}"
 [ "$cmd" = sweep ] || [ "$cmd" = doctor ] || case "$issue" in ''|*[!A-Za-z0-9_-]*) die "issue id must look like 42 or ABC-123, got '$issue'" ;; esac
 wt=".worktrees/$issue" rec=".git/coddy/$issue.branch"
-# No worktree key is git from version 2, jj below it (no version is 0, read as migrate does).
-tool=$(cfg worktree)
-if [ -z "$tool" ]; then v=$(cfg version | tr -d '[:space:]'); v=${v#"${v%%[!0]*}"}; case "$v" in ''|1) tool=jj ;; *) tool=git ;; esac; fi
+wtool
 base=$(cfg default_branch); base="${base:-main}"
 
 # doctor in a project: one line per check, ok or the problem and a fix in plain
@@ -1945,7 +2025,8 @@ if [ "$cmd" = doctor ]; then
     c=$(head -c 4096 "$f" | sed -n "s/^c='\(.*\)'\$/\1/p" | head -1); c=${c//"'\\''"/"'"}
     if ! { [ -f "$c" ] && [ -x "$c" ]; }; then e="$h runs $c, which is gone"
     elif head -c 4096 "$f" | grep -q 'command -v coddy'; then e="$h falls back to a coddy on PATH, where a command in the project could plant one" fx=$tf
-    else [ -n "${ins+x}" ] || wtroots; follow "$c" inproj; [ $? != 2 ] || e="$h runs $c, which lies in the project or a worktree of it, or is reached through a link there" fx=$tf; fi
+    elif ! { [ -n "${ins+x}" ] || wtroots; }; then e="$wf failed, so whether $h runs a file in a worktree of the project cannot be told" fx="repair what makes $wf fail here"
+    else follow "$c" inproj; [ $? != 2 ] || e="$h runs $c, which lies in the project or a worktree of it, or is reached through a link there" fx=$tf; fi
   done
   if [ ! -d "$root/.git" ]; then say hooks "ok (not applicable: no .git at the root)"
   elif [ -n "$e" ]; then say hooks "$e (fix: $fx)"; else say hooks ok; fi
@@ -2165,7 +2246,7 @@ case "$cmd" in
     exe=${CODDY_EXEC-}
     [ -n "$exe" ] || exe="$(cd "${src%/*}" && pwd)/${src##*/}" || die "could not find $src"
     case "$exe" in /*) ;; *) die "CODDY_EXEC must be an absolute path, got $exe" ;; esac
-    wtroots
+    wtroots || die "$wf failed, so start cannot tell whether $exe lies in a worktree of the repository, where a sandboxed command could rewrite it: repair what makes $wf fail in $root, then run start again."
     follow "$exe" inproj; case $? in
       0) { [ -f "$rp" ] && [ -x "$rp" ]; } || die "$exe is not an executable file, so the git hooks could not run it" ;;
       2) die "$exe is inside the project at $root, a worktree of it or where this start began, or a link on the way to its file lies there. git runs its hooks outside any sandbox, so they must not run a file a command in the project can rewrite: run start from a coddy installed outside the project." ;;

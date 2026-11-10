@@ -227,6 +227,22 @@ the command that moves or deletes a worktree there trips once. When
 `.git/worktrees` holds more entries than coddy can check in 10 seconds,
 every shell command is refused until you remove the ones no worktree uses
 (`git worktree prune` drops those whose worktree is gone).
+A `git status` or `git worktree list` anywhere but a plain jj root (one
+holding `.jj/repo` and no `.git`, under `worktree: jj`), or, in
+a jj repository with a jj on `PATH` that does not report a version before
+0.38, a `jj workspace list`, that fails,
+before the command or after it, is
+never read as an empty listing, and neither is a fingerprint that fails on
+its own: the command is reported as unchecked, naming the call that failed.
+So is a command that moves or removes the root's `.git` or `.jj/repo`,
+and every command after it while the `.git` stays away.
+While one keeps failing (a bad line in a staged nested repository's config,
+a corrupt index), every command runs unchecked and nothing it changes is
+named. Each command's check starts from a fingerprint taken just before it,
+so once the call works again, whatever changed meanwhile (an edit in the
+main checkout, a worktree made outside `.worktrees/`, a `core.hooksPath`
+change) is part of that fingerprint and is never named either. `/coddy:start` refuses, and `coddy doctor` reports it, when
+the listing it checks the coddy path against fails.
 
 Before a command runs, the hook reads its text for a `git worktree add` or
 `jj workspace add` that would put a worktree anywhere else, and refuses it,
