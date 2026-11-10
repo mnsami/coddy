@@ -2106,12 +2106,21 @@ if [ "$cmd" = doctor ]; then
   elif [ "$(find "$root/.git/worktrees/." ! -name . -prune -print 2>/dev/null | head -n 10001 | wc -l)" -gt 10000 ]; then
     say worktrees ".git/worktrees holds more than 10000 entries, more than coddy can be sure to check before each shell command (fix: remove the entries there that no worktree uses, by hand)"
   else say worktrees ok; fi
-  if [ "$(cfg tracker)" = github ]; then
-    w=.github/workflows/coddy.yml tpl="$inst/templates/coddy.yml"
-    if [ -L .github ] || [ -L .github/workflows ] || [ -L "$w" ] || [ ! -f "$w" ]; then say pr_check "$w is missing or not a plain file (fix: copy $tpl to $w)"
+  case "$(cfg tracker)" in
+    github) w=.github/workflows/coddy.yml tpl="$inst/templates/coddy.yml" ;;
+    gitlab) w=.gitlab/coddy.yml tpl="$inst/templates/coddy.gitlab-ci.yml" ;;
+    *) w="" ;;
+  esac
+  if [ -n "$w" ]; then
+    if [ -L "${w%%/*}" ] || [ -L "${w%/*}" ] || [ -L "$w" ] || [ ! -f "$w" ]; then say pr_check "$w is missing or not a plain file (fix: copy $tpl to $w)"
     elif [ ! -f "$tpl" ]; then say pr_check "the install has no $tpl to compare $w with (fix: reinstall coddy)"
     elif ! cmp -s "$w" "$tpl"; then say pr_check "$w differs from $tpl (fix: copy it over $w)"
-    else say pr_check ok; fi
+    elif [ "$w" != .gitlab/coddy.yml ]; then say pr_check ok
+    elif [ -L .gitlab-ci.yml ] || [ ! -f .gitlab-ci.yml ]; then say pr_check ".gitlab-ci.yml is missing or not a plain file (fix: make it one that includes $w)"
+    elif [ "$(wc -c < .gitlab-ci.yml)" -gt 1048576 ]; then say pr_check ".gitlab-ci.yml is over 1 MiB, not read (fix: check by hand that it includes $w)"
+    # the file's top-level include: alone, comments dropped, by any of YAML's forms for a local path
+    elif awk '{ sub(/\r$/, ""); sub(/(^|[[:space:]])#.*/, "") } /^[^[:space:]-]/ { b = /^include:/ } b && /(^|[ \t"\047{[])\/?\.gitlab\/coddy\.yml([] \t"\047,}]|$)/ { f = 1 } END { exit !f }' <(head -c 1048576 .gitlab-ci.yml); then say pr_check ok
+    else say pr_check ".gitlab-ci.yml does not include $w (fix: add an entry local: $w under its include:)"; fi
   fi
   if [ ! -f AGENTS.md ]; then say agents_md "AGENTS.md is missing or not a plain file (fix: add the block in step 6 of $inst/skills/onboard/SKILL.md)"
   elif [ "$(wc -c < AGENTS.md)" -gt 1048576 ]; then say agents_md "AGENTS.md is over 1 MiB, not read (fix: check the coddy block by hand)"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the scripts against a throwaway repo with a local bare remote: both
 # worktree tools, the claim and its lock, the push, the sweep, the edit
-# guard, the shell tripwire, the PR check's run block (against a stub gh,
+# guard, the shell tripwire, the GitLab job's script (against a stub curl), the PR check's run block (against a stub gh,
 # the one place gh remains: GitHub Actions) and issue.sh status's owners line.
 # Usage: bash scripts/selftest.sh
 set -u
@@ -2162,6 +2162,100 @@ t 1 "pr check: a stacked lookup that fails fails" check "" BODY='Closes #12' GH_
 : > "$GH_LOG"
 t 0 "pr check: two stacked keywords pass" check "" BODY=$'Closes #12\nResolves #13, closes #12'
 t 0 "pr check: and each issue was read once" test "$(grep -c 'api repos/OWNER/REPO/issues/' "$GH_LOG")" = 2
+
+# The GitLab job's script, as the runner runs it, against a stub curl.
+# CURL_CLOSES, CURL_MR and CURL_ISSUE are the response bodies, CURL_HTTP the
+# status of every call and CURL_ISSUE_HTTP of an issue's alone (200 without
+# them), CURL_EXIT curl's own failure. Every call is logged to $CURL_LOG.
+gci="$here/templates/coddy.gitlab-ci.yml"
+mkdir "$tmp/curlbin"
+cat > "$tmp/curlbin/curl" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >> "$CURL_LOG"
+[ -z "${CURL_EXIT-}" ] || exit "$CURL_EXIT"
+while [ $# -gt 1 ]; do [ "$1" != -o ] || { out=$2; shift; }; shift; done
+code=${CURL_HTTP-200}
+case $1 in
+  *'/closes_issues?'*) body=${CURL_CLOSES-[]} ;;
+  */merge_requests/*) body=${CURL_MR-'{}'} ;;
+  */issues/*) body=${CURL_ISSUE-'{}'} code=${CURL_ISSUE_HTTP-$code} ;;
+esac
+printf '%s' "$body" > "$out"; printf %s "$code"
+EOF
+chmod +x "$tmp/curlbin/curl"; export CURL_LOG="$tmp/curl.log"
+sed '1,/^    - |$/d; s/^      //' "$gci" > "$tmp/mr.sh"
+# mr [VAR=value...]: an MR against the default branch unless CI_MERGE_REQUEST_TARGET_BRANCH_NAME says otherwise
+mrsh=(sh -e)
+mr() { env PATH="$tmp/curlbin:$PATH" CI_API_V4_URL=https://gl.example/api/v4 CI_PROJECT_ID=7 CI_MERGE_REQUEST_IID=9 CI_DEFAULT_BRANCH=main CI_MERGE_REQUEST_TARGET_BRANCH_NAME=main CI_JOB_TOKEN=job-secret "$@" "${mrsh[@]}" "$tmp/mr.sh"; }
+stacked() { mr CI_MERGE_REQUEST_TARGET_BRANCH_NAME=feat/21 "$@"; }
+is() { printf '{"iid":%s,"state":"%s","assignees":[%s]}' "$1" "$2" "${3-}"; }
+mine=$(is 12 opened '{"id":1}')
+leaks() { "$@" 2>&1 | grep -qE 'job-secret|tok-secret'; }
+t 0 "mr check: the job is named as the required check" grep -qx 'closes a claimed issue:' "$gci"
+t 0 "mr check: it runs in merge request pipelines" grep -qxF '    - if: $CI_PIPELINE_SOURCE == "merge_request_event"' "$gci"
+t 1 "mr check: it sets no stage, so a pipeline holding it runs" grep -qE '^ +stage:' "$gci"
+t 0 "mr check: the image is pinned" grep -qE '^  image: alpine:[0-9]+\.[0-9]+$' "$gci"
+t 0 "mr check: curl and jq come from apk" grep -qF 'apk add --no-cache curl jq' "$gci"
+t 0 "mr check: the header names a project whose stages omit test" grep -qE '^# .*stages: omits test' "$gci"
+: > "$CURL_LOG"
+t 0 "mr check: an open, assigned linked issue passes" mr CURL_CLOSES="[$mine]"
+t 0 "mr check: it reads this merge request's closing issues" grep -qF 'https://gl.example/api/v4/projects/7/merge_requests/9/closes_issues?per_page=100' "$CURL_LOG"
+t 0 "mr check: with the job token when CODDY_TOKEN is not set" grep -qF 'JOB-TOKEN: job-secret' "$CURL_LOG"
+t 1 "mr check: a default-branch MR with references reads no description" grep -qE 'merge_requests/9( |$)' "$CURL_LOG"
+: > "$CURL_LOG"
+t 0 "mr check: CODDY_TOKEN passes" mr CODDY_TOKEN=tok-secret CURL_CLOSES="[$mine]"
+t 0 "mr check: and is sent as a private token" grep -qF 'PRIVATE-TOKEN: tok-secret' "$CURL_LOG"
+t 1 "mr check: in place of the job token" grep -qF 'JOB-TOKEN' "$CURL_LOG"
+t 1 "mr check: no linked issue fails" mr CURL_CLOSES='[]'
+t 0 "mr check: and names the keyword and the re-run" says "no linked issue.*Closes #<issue>.*re-run" mr CURL_CLOSES='[]'
+t 1 "mr check: a closed linked issue fails" mr CURL_CLOSES="[$(is 12 closed '{"id":1}')]"
+t 0 "mr check: and says to re-run" says '#12 is closed.*re-run' mr CURL_CLOSES="[$(is 12 closed '{"id":1}')]"
+t 1 "mr check: an unassigned linked issue fails" mr CURL_CLOSES="[$(is 12 opened)]"
+t 0 "mr check: and names the issue, the fix and the re-run" says '#12 is not claimed.*/coddy:start 12.*re-run' mr CURL_CLOSES="[$(is 12 opened)]"
+t 1 "mr check: no assignees key at all fails" mr CURL_CLOSES='[{"iid":12,"state":"opened"}]'
+t 1 "mr check: one bad issue among two fails" mr CURL_CLOSES="[$mine,$(is 13 opened)]"
+t 0 "mr check: two open, assigned issues pass" mr CURL_CLOSES="[$mine,$(is 13 opened '{"id":1},{"id":2}')]"
+# Stacked on another branch: GitLab computes no references, so the description
+# is read from the API, never the predefined variable, which GitLab truncates.
+: > "$CURL_LOG"
+t 0 "mr check: a stacked MR whose description closes an open, assigned issue passes" stacked CURL_MR='{"description":"Closes #12"}' CURL_ISSUE="$mine"
+t 0 "mr check: it read the description from the API" grep -qE 'projects/7/merge_requests/9$' "$CURL_LOG"
+t 0 "mr check: and the issue" grep -qE 'projects/7/issues/12$' "$CURL_LOG"
+t 0 "mr check: the keyword is read in any case, with a colon, among other words" stacked CURL_MR='{"description":"x\nFixed: #12 in the end\r\n"}' CURL_ISSUE="$mine"
+t 1 "mr check: a word that merely ends in a keyword is not one" stacked CURL_MR='{"description":"prefixes #12"}' CURL_ISSUE="$mine"
+t 1 "mr check: a stacked MR without a keyword fails" stacked CURL_MR='{"description":"see #12"}' CURL_ISSUE="$mine"
+t 1 "mr check: a null description fails" stacked CURL_MR='{"description":null}' CURL_ISSUE="$mine"
+t 1 "mr check: the truncated predefined description is not read" stacked CURL_MR='{"description":"see #12"}' CURL_ISSUE="$mine" CI_MERGE_REQUEST_DESCRIPTION='Closes #12'
+t 1 "mr check: a default-branch MR is held to the computed references alone" mr CURL_MR='{"description":"Closes #12"}' CURL_ISSUE="$mine"
+t 1 "mr check: a stacked keyword to a closed issue fails" stacked CURL_MR='{"description":"Closes #12"}' CURL_ISSUE="$(is 12 closed '{"id":1}')"
+t 1 "mr check: a stacked keyword to an unassigned issue fails" stacked CURL_MR='{"description":"Closes #12"}' CURL_ISSUE="$(is 12 opened)"
+t 1 "mr check: a stacked lookup answering 500 fails" stacked CURL_MR='{"description":"Closes #12"}' CURL_ISSUE="$mine" CURL_ISSUE_HTTP=500
+t 1 "mr check: a stacked lookup answering 404 for one of two fails" stacked CURL_MR='{"description":"Closes #12, closes #13"}' CURL_ISSUE="$mine" CURL_ISSUE_HTTP=404
+# Every API error fails: a non-200 never passes, whatever body came with it.
+for c in 401 403; do
+  t 1 "mr check: a $c fails" mr CURL_HTTP=$c CURL_CLOSES="[$mine]"
+  t 0 "mr check: and names the CODDY_TOKEN variable, read_api, masked and not protected" says "CODDY_TOKEN.*read_api.*masked.*not protected" mr CURL_HTTP=$c
+  t 1 "mr check: and prints no job token" leaks mr CURL_HTTP=$c
+  t 1 "mr check: and no CODDY_TOKEN value" leaks mr CURL_HTTP=$c CODDY_TOKEN=tok-secret
+done
+t 1 "mr check: a 500 fails, with a body that would pass" mr CURL_HTTP=500 CURL_CLOSES="[$mine]"
+t 0 "mr check: and says what GitLab answered" says '500' mr CURL_HTTP=500
+t 1 "mr check: and does not point at the token" says 'CODDY_TOKEN' mr CURL_HTTP=500
+t 1 "mr check: a 302 fails" mr CURL_HTTP=302 CURL_CLOSES="[$mine]"
+t 1 "mr check: curl failing fails" mr CURL_EXIT=7
+t 5 "mr check: a 200 that is not JSON fails, on jq's own exit" mr CURL_CLOSES='<html>'
+t 1 "mr check: no token is printed on a pass" leaks mr CURL_CLOSES="[$mine]"
+# The runner runs it under -e and pipefail where the shell has it.
+mrsh=(bash -eo pipefail)
+t 0 "mr check: under pipefail, a pass" mr CURL_CLOSES="[$mine]"
+t 0 "mr check: under pipefail, a stacked pass" stacked CURL_MR='{"description":"Closes #12"}' CURL_ISSUE="$mine"
+t 1 "mr check: under pipefail, a stacked MR without a keyword fails" stacked CURL_MR='{"description":"nothing"}'
+t 0 "mr check: and says no linked issue, not a grep's exit" says 'no linked issue' stacked CURL_MR='{"description":"nothing"}'
+mrsh=(sh -e)
+for n in next start ship triage; do t 0 "skill $n stops when the gitlab tools are not loaded" grep -qE '^`tracker: gitlab` → .*the gitlab plugin must be enabled and signed in' "$here/skills/$n/SKILL.md"; done
+for n in start ship triage; do t 0 "skill $n wraps a line starting with / in what it writes to GitLab" grep -qE '^`tracker: gitlab` → .*line starting with `/` goes in backticks' "$here/skills/$n/SKILL.md"; done
+t 1 "no skill runs glab" grep -rqwi glab "$here/skills"
+t 0 "onboard delivers the job on a new branch, never the default one" grep -qF 'Never commit to the default branch' "$here/skills/onboard/SKILL.md"
 
 # Merging main into an issue branch brings the bookmark of every merged PR
 # into its history, and a newer one must not be taken for the issue's branch.
