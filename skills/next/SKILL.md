@@ -21,7 +21,7 @@ A section above shows a `bash` command rather than its output → this host does
 `NOT_ONBOARDED` → stop and say: run `/coddy:onboard` first.
 A `git_dir:` line in place of that → stop and show that line as it is.
 `tracker: jira` → every Atlassian MCP call takes `cloudId`: call `getAccessibleAtlassianResources` once and use the entry whose url is `jira.site`; me is `atlassianUserInfo`'s `accountId`. Those tools not loaded → stop and say the atlassian plugin needs to be authenticated.
-`tracker: gitlab` → every GitLab MCP call takes `project_id`, which is `repo`; me is `get_user` with `me: true`. Those tools not loaded → stop and say the gitlab plugin must be enabled and signed in.
+`tracker: gitlab` → every GitLab MCP call but `get_user` takes `project_id`, which is `repo`; me is `get_user` with `me: true`. Those tools not loaded → stop and say the gitlab plugin must be enabled and signed in.
 Lines under Cleaned up → say so first, in one sentence. `cleaned` is an issue whose PR merged and whose worktree was removed, so it is free again even if Worktrees still lists it; `kept` is a merged one whose worktree still holds work to push or discard, or that another running session still holds.
 
 ## Steps

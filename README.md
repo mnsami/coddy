@@ -414,11 +414,17 @@ commits to the default branch. Its ceilings:
 
 - It runs in the `test` stage. A project whose `stages:` omits `test` must
   add it, or set a stage for the job in `.gitlab-ci.yml`.
-- It reads the closing issues through the API, with the CI variable
-  `CODDY_TOKEN` when set (`read_api`, masked, not protected, since a
-  protected variable does not reach a merge request pipeline from an
-  unprotected branch), else the job token, which may not be allowed to read
-  them. A 401, 403 or 404 fails the job and names the variable.
+- It reads the merge request's description and each issue it closes through
+  the API, with the job token, so nothing needs setting up. The references
+  come from the description alone, by GitLab's default closing pattern, the
+  same way whatever the target branch: a closing keyword only in a commit
+  message, or a link made in the Work items widget, is not seen.
+- Only a job that reports it cannot read (a 401, 403 or 404 fails the job
+  and names the variable) needs the CI variable `CODDY_TOKEN`: a token
+  tied to this project alone, never a personal one, with `read_api`,
+  masked and not protected, since a protected variable does not reach a
+  merge request pipeline from an unprotected branch.
+  Any branch's pipeline can read it.
 - Editing a merge request's description starts no pipeline, so re-run the
   job after fixing one.
 - The merge request that adds it is checked by it too: give it `Closes #<n>`

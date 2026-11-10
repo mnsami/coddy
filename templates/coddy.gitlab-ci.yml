@@ -4,16 +4,19 @@
 # progress" label: /coddy:ship takes the label off when it opens the merge
 # request and this runs again on every push, while claim's assignee holds until
 # the merge.
-# GitLab computes the references only on a merge request against the project's
-# default branch; on one stacked on another branch the closing keywords in the
-# description are read directly, so a link made another way is not seen there.
+# One path for every merge request, whatever its target branch: the description
+# is read from the API, since the predefined variable is truncated, and matched
+# against GitLab's default closing pattern for same-project issues. So a closing
+# keyword only in a commit message, or a link made in the Work items widget, is
+# not seen.
 # No stage: it runs in the default one, test. Not .pre, since a pipeline holding
 # only .pre and .post jobs does not run. A project whose stages: omits test must
 # add it, or set a stage for this job in .gitlab-ci.yml.
-# The token is the CI variable CODDY_TOKEN when set (read_api, masked, not
-# protected: a protected variable does not reach a merge request pipeline from
-# an unprotected branch), else the job token, which may not be allowed to read
-# these endpoints.
+# The token is the job token, which can read the merge request and its issues.
+# A job that reports it cannot read names the CI variable CODDY_TOKEN, used when
+# set: a token tied to this project alone, never a personal one, with read_api,
+# masked and not protected (a protected variable does not reach a merge request
+# pipeline from an unprotected branch). Any branch's pipeline can read it.
 # ponytail: any assignee counts, not only the merge request's author.
 closes a claimed issue:
   image: alpine:3.22
@@ -34,18 +37,14 @@ closes a claimed issue:
           *) echo "GitLab answered $code for $1."; exit 1 ;;
         esac
       }
-      issue='"\(.iid) \(.state) \(.assignees | length)"'
-      api "merge_requests/$CI_MERGE_REQUEST_IID/closes_issues?per_page=100"
-      jq -r ".[] | $issue" "$out" > "$list"
-      if [ ! -s "$list" ] && [ "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" != "$CI_DEFAULT_BRANCH" ]; then
-        # Stacked on another branch: GitLab computes no references, so read the description's closing keywords, from the API since the predefined variable is truncated.
-        api "merge_requests/$CI_MERGE_REQUEST_IID"
-        for n in $(jq -r '.description // ""' "$out" | grep -oiE '(^|[^[:alnum:]])(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)[[:space:]:]*#[0-9]+' | grep -oE '[0-9]+' | sort -un); do
-          api "issues/$n"
-          jq -r "$issue" "$out" >> "$list"
-        done
-      fi
-      [ -s "$list" ] || { echo "no linked issue. Add 'Closes #<issue>' to the merge request description, then re-run this job: editing the description starts no pipeline."; exit 1; }
+      api "merge_requests/$CI_MERGE_REQUEST_IID"
+      desc=$(jq -r '.description // ""' "$out")
+      # GitLab's default closing pattern, for #<digits> alone. A separator counts only before another reference, so grep -o leaves the next keyword's left edge to match.
+      for n in $(printf '%s\n' "$desc" | grep -oE '(^|[^[:alnum:]_])([Cc]los(e[sd]?|ing)|[Ff]ix(e[sd]|ing)?|[Rr]esolv(e[sd]?|ing)|[Ii]mplement(s|ed|ing)?):? +(issues? +)?#[0-9]+(( *,? +and +| *,? *)(issues? +)?#[0-9]+)*' | grep -oE '[0-9]+' | sort -un); do
+        api "issues/$n"
+        jq -r '"\(.iid) \(.state) \(.assignees | length)"' "$out" >> "$list"
+      done
+      [ -s "$list" ] || { echo "no linked issue. A closing keyword only in a commit message, or a link made in the Work items widget, is not seen. Add 'Closes #<issue>' to the merge request description, then re-run this job: editing the description starts no pipeline."; exit 1; }
       bad=0
       while read -r n state assigned; do
         [ "$state" = opened ] || { echo "#$n is $state, not open. Reopen it or close another issue from the description, then re-run this job."; bad=1; }
