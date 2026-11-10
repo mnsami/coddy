@@ -2259,6 +2259,11 @@ t 1 "no skill runs glab" grep -rqwi glab "$here/skills"
 t 0 "start takes no branch from a merge request that only mentions the issue" grep -qF 'only mentions it' "$here/skills/start/SKILL.md"
 t 0 "onboard edits an existing .gitlab-ci.yml in place, never rewriting it" grep -qF '`old_str` and `new_str`, never `content`' "$here/skills/onboard/SKILL.md"
 t 0 "onboard delivers the job on a new branch, never the default one" grep -qF 'Never commit to the default branch' "$here/skills/onboard/SKILL.md"
+t 0 "onboard says when the project's stages leave the job's out" grep -qF 'that lists no `test`' "$here/skills/onboard/SKILL.md"
+t 0 "onboard skips only for its own merge request, by exact title" grep -qF 'titled exactly `chore: add the coddy merge request check`' "$here/skills/onboard/SKILL.md"
+t 0 "start never reads a merge request's number as an issue's" grep -qF "the id given is a merge request's" "$here/skills/start/SKILL.md"
+t 0 "start counts no system note as a comment of mine" grep -qF 'a system note never counting' "$here/skills/start/SKILL.md"
+for n in start ship; do t 0 "skill $n pages the related merge requests" grep -qF 'related_merge_requests_after' "$here/skills/$n/SKILL.md"; done
 
 # Merging main into an issue branch brings the bookmark of every merged PR
 # into its history, and a newer one must not be taken for the issue's branch.
