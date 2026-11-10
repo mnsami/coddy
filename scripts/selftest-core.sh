@@ -5,7 +5,7 @@
 # under scripts/ and the full lifecycle are selftest.sh's.
 # Usage: bash scripts/selftest-core.sh
 set -u
-for v in "${!CLAUDE_@}"; do unset "$v" 2>/dev/null; done; unset CODDY_AGENT_DIR CODDY_EXEC 2>/dev/null
+for v in "${!CLAUDE_@}"; do unset "$v" 2>/dev/null; done; unset CODDY_AGENT_DIR CODDY_EXEC CODDY_HOOKS 2>/dev/null
 # macOS ships no timeout: perl's alarm, which the exec keeps, stands in (a run cut short exits 142, not 124)
 command -v timeout >/dev/null || timeout() { perl -e 'alarm shift; exec { $ARGV[0] } @ARGV or exit 127' "$@"; }
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -1311,6 +1311,35 @@ mv "$hooks" "$tmp/hooks.aside"
 tripped 0 "tripwire: without .git/hooks/coddy, a core.hooksPath change is quiet" 'git config core.hooksPath .husky/_'
 mv "$tmp/hooks.aside" "$hooks"; git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
 t 0 "tripwire: start put them back" test "$(git config core.hooksPath)" = "$hooks"
+# hooks: off is for an adapter that runs the shell hooks (CODDY_HOOKS=1)
+# alone: the core run without it never says it, and with it names the causes.
+t 1 "hooks: start without CODDY_HOOKS never says the hooks are off" says 'hooks: off' run start 1 feat/1-thing
+t 1 "hooks: nor claim" says 'hooks: off' run claim 1
+CODDY_HOOKS=yes t 1 "hooks: nor start with CODDY_HOOKS other than 1" says 'hooks: off' run start 1 feat/1-thing
+CODDY_HOOKS=1 t 0 "hooks: with CODDY_HOOKS=1 and no snap mark for the session, start does, naming the causes" says '^hooks: off: .*disableAllHooks.*allowManagedHooksOnly.*coddy@coddy.*2\.1\.139' run start 1 feat/1-thing
+# The mark is a directory snap makes with mkdir: a FIFO planted at its name
+# after snap clears it (an rm that leaves it stands in for that race) neither
+# holds snap nor is written through, a linked .git/coddy gets no mark, and a
+# session's first snap prunes within the fingerprint's budget.
+mkdir "$tmp/keeprm"; printf '#!/bin/sh\ncase "$*" in */.git/coddy/.snap-*) exit 0 ;; esac\nexec "%s" "$@"\n' "$(command -v rm)" > "$tmp/keeprm/rm"; chmod +x "$tmp/keeprm/rm"
+msnap() { printf '{"session_id":"%s","tool_use_id":"w"}' "$1" | timeout 10 env "${@:2}" "$here/bin/coddy" snap; }
+mkfifo .git/coddy/.snap-sess-f
+t 0 "hooks: a FIFO at the mark's name does not hold snap" msnap sess-f PATH="$tmp/keeprm:$PATH"
+t 0 "hooks: and is left a FIFO" test -p .git/coddy/.snap-sess-f
+rm -f .git/coddy/.snap-sess-f
+mv .git/coddy "$tmp/coddy.real"; mkdir "$tmp/coddy.out"; ln -s "$tmp/coddy.out" .git/coddy
+t 0 "hooks: snap runs with .git/coddy a link" msnap sess-l
+t 1 "hooks: and makes no mark through it" test -e "$tmp/coddy.out/.snap-sess-l"
+rm .git/coddy; mv "$tmp/coddy.real" .git/coddy
+mkdir "$tmp/slowf"; printf '#!/bin/sh\ncase " $* " in *" -mmin "*) echo $$ >> "%s"; sleep 60 & echo $! >> "%s"; wait ;; esac\nexec "%s" "$@"\n' "$tmp/slow/pids" "$tmp/slow/pids" "$(command -v find)" > "$tmp/slowf/find"; chmod +x "$tmp/slowf/find"
+# A budget of 4, not 2: half of it is the admin dirs' check's, which by now
+# has worktree 1's entry to read, and a half of 1 may end at once.
+: > "$tmp/slow/pids"; SECONDS=0; msnap sess-p CODDY_BUDGET=4 PATH="$tmp/slowf:$PATH" >/dev/null 2>&1; r=$?
+t 0 "hooks: a slow prune of day-old marks holds snap no longer than the fingerprint's budget" test "$r:$((SECONDS <= 10))" = 0:1
+t 0 "hooks: that prune was started" test -s "$tmp/slow/pids"
+t 1 "hooks: and none of it is left running" left
+t 0 "hooks: the session's mark is there all the same" test -d .git/coddy/.snap-sess-p
+wire trip w >/dev/null 2>&1; rm -rf .git/coddy/.snap-* "$tmp/keeprm" "$tmp/slowf" "$tmp/coddy.out"
 # A moved checkout's core.hooksPath names coddy's hooks by the old path: start
 # keeps the record of the one before rather than taking that one for it.
 mv1="$tmp/mv1" mv2="$tmp/mv2"

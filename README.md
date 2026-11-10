@@ -175,10 +175,24 @@ or a host without `/usr/bin/env` or `/bin/sh`, the hooks cannot start, which
 from Claude Code 2.1.295 refuses every edit and shell command, so disable
 the plugin there.
 
+Claude Code runs no plugin hook in a session with `disableAllHooks` set,
+in any settings file or by `--settings`, or under managed settings that set
+`allowManagedHooksOnly`. An admin who wants managed hooks alone keeps
+coddy's by force-enabling `coddy@coddy` in the managed `enabledPlugins`.
+With the hooks off, the edit guard, the tripwire and the config lock are
+off too, and only the git hooks, branch protection and the PR check hold.
+Each shell hook leaves a mark for its session, so when none came right
+before `/coddy:start` creates or claims the worktree, it prints
+`hooks: off` with these causes and asks you before claiming the issue.
+
 **Edit guard.** A hook rejects every file edit Claude attempts outside
 `.worktrees/<issue>/`. Inside, it rejects edits until `/coddy:start` has
 claimed that issue. `.claude/` stays editable, except Claude Code's own
-worktrees under it. An edit of `.coddy.yml` asks you first. An edit inside
+worktrees under it. An edit of `.coddy.yml` asks you first, and in
+headless `-p` under `--permission-mode bypassPermissions` that ask still
+holds: the edit is denied and the file stays as it was. That was checked
+in `-p` alone, where an ask nobody answers is a deny; what an interactive
+bypass session shows is not known. An edit inside
 a `.git` or `.jj` in the project, or of a hard-linked file other than
 `.coddy.yml` (pnpm's store links in `node_modules` included), is always
 refused. The hook needs `jq`, and blocks every edit without a working one,
@@ -243,6 +257,28 @@ so once the call works again, whatever changed meanwhile (an edit in the
 main checkout, a worktree made outside `.worktrees/`, a `core.hooksPath`
 change) is part of that fingerprint and is never named either. `/coddy:start` refuses, and `coddy doctor` reports it, when
 the listing it checks the coddy path against fails.
+
+It also compares `.claude/settings.json` and `.claude/settings.local.json`,
+git-ignored or not, where a change can turn coddy's hooks off or change what
+runs outside the sandbox, and reports a change a command made there, a
+delete included, other than to a `permissions.allow` list of strings, which
+Claude Code writes itself when you allow a command for good. It does not put
+the file back: Claude is told to have you check it. Its ceilings:
+
+- An Edit or Write of a settings file is held only by Claude Code's own
+  prompt for its protected paths, which `bypassPermissions` and auto mode
+  skip.
+- A shell write of a `permissions.allow` list of strings is not seen, an
+  `Edit` allow rule there included.
+- `~/.claude/settings.json`, managed settings and a worktree's own
+  `.claude/settings*.json` are not compared, nor a subdirectory's, which
+  a session opened in that subdirectory loads.
+- A settings file over 1 MiB is compared by its size, ctime and inode
+  alone, so every change to it is reported, `permissions.allow` included,
+  and a same-size rewrite that keeps its inode and ctime is not.
+- `hooks: off` reads the session's own mark alone, so a session with its
+  hooks off is caught only when it runs `/coddy:start` itself, and a shell
+  command can make that mark: it is a check, not a guardrail.
 
 Before a command runs, the hook reads its text for a `git worktree add` or
 `jj workspace add` that would put a worktree anywhere else, and refuses it,

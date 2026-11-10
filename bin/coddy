@@ -29,7 +29,11 @@
 # held to <name>'s lock (none without it); CODDY_EXEC, the coddy the git
 # hooks start writes run (this file without it); CODDY_PATH, set by those
 # hooks alone: the PATH git gave them, which githook hands the hook before,
-# its own PATH having lost every entry that is relative or in the repository.
+# its own PATH having lost every entry that is relative or in the repository;
+# CODDY_HOOKS, set to 1 by an adapter whose agent runs snap before each
+# shell command (any other value is none): start and claim then print
+# hooks: off, with Claude Code's causes, when snap left no mark for
+# CODDY_SESSION in the last 60 s.
 # The config is .coddy.yml at the root, or .claude/coddy.yml from before.
 # An issue counts as In Progress once the lock .git/coddy/<issue>/ exists.
 # Only claim makes it (mkdir, so of two sessions claiming at once one wins;
@@ -490,6 +494,24 @@ owner() { own=$(cat "$root/.git/coddy/$1/owner" 2>/dev/null); read -r sid pid _ 
 # This session's owner line; the UTC start only after a local one, so it
 # never lands in the third field.
 myline() { local l; l=$(lstarted "${CODDY_PID-}"); echo "$me ${CODDY_PID-} $l${l:+ $(started "${CODDY_PID-}")}"; }
+# The mark snap leaves at each run for session $1, which start and claim
+# read (hookson): a directory, the id kept to A-Za-z0-9_- and 128
+# characters, dot-named so it is never read as an issue's record; status 1
+# when nothing is kept.
+smark() { local s=${1//[!A-Za-z0-9_-]/}; s=${s:0:128}; [ -n "$s" ] && echo "$root/.git/coddy/.snap-$s"; }
+# For an adapter whose agent runs snap before each shell command
+# (CODDY_HOOKS=1), one hooks: off line, with Claude Code's causes, when snap
+# left no mark for this session in the last 60 s: the shell command running
+# this one went past no coddy hook. Its mtime by BSD's stat or GNU's (by
+# what it prints).
+hookson() {
+  local m t n
+  [ "${CODDY_HOOKS-}" = 1 ] && [ -d "$root/.git" ] && m=$(smark "${CODDY_SESSION-}") || return 0
+  t=$(stat -f %m -- "$m" 2>/dev/null); [[ $t =~ ^[0-9]+$ ]] || t=$(stat -c %Y -- "$m" 2>/dev/null)
+  n=$(date +%s 2>/dev/null)
+  [[ $t =~ ^[0-9]+$ && $n =~ ^[0-9]+$ ]] && [ "$((n - t))" -le 60 ] && return 0
+  echo "hooks: off: no coddy shell hook ran before this command in this session, so the edit guard, the shell tripwire and the config lock are likely off for it too. Likely causes: disableAllHooks set in a settings file or passed with --settings; managed settings with allowManagedHooksOnly whose enabledPlugins does not force-enable coddy@coddy; a Claude Code older than 2.1.139, which cannot run coddy's hooks."
+}
 # jq for the hooks: HOME=/dev/null, so a ~/.jq (loaded into every program)
 # is never read. Not named jq, so command -v jq still finds the real one.
 jqh() { HOME=/dev/null jq "$@"; }
@@ -1449,6 +1471,32 @@ snap() {
     case "$hp" in /*) [ "$hp" -ef .git/hooks/coddy ] ;; *) false ;; esac ||
       { hc=""; [ "${#hp}" -le 1024 ] || hc=" (cut short)"
         if [ -n "$hp" ]; then hp="core.hooksPath $(q "${hp:0:1024}")$hc"; else hp="core.hooksPath unset"; fi; echo "$hp"; echo "hooks $hp" >&4; }; }
+  # The agent's settings files under the agent dir (Claude Code's), which
+  # can turn coddy's hooks off or change what runs outside the sandbox: one
+  # line each, written on fd 4 too as "settings <line>", which trip tells it
+  # by. A plain file of 1 MiB at most, the bound dirty files are hashed to,
+  # is hashed as jq reads it, keys sorted, without permissions.allow while
+  # it is a list of strings, which the agent itself writes when the user
+  # allows a command for good (any other value is kept), nor an empty list
+  # under permissions, as it writes deny and ask, nor a permissions it
+  # leaves empty, one that leaves {} as absent, so the file the agent makes
+  # for an allow rule is no change, or as its bytes when jq is missing or
+  # cannot read it, or reads a number that is not finite anywhere in it
+  # (NaN, Infinity), which jq prints as null or a finite number while the
+  # agent's parser rejects the whole file, each hash after jq: or raw:, so
+  # no dirty path's line (a file at "settings .claude/settings.json"
+  # holding that JSON) reads as one and hides its change; a bigger one by its size, ctime and inode after stat:, which no
+  # dirty path's big: line carries, so a link to a big dirty file there does
+  # not read as that file's line; anything else by its kind.
+  [ -z "${CODDY_AGENT_DIR-}" ] || for f in "$CODDY_AGENT_DIR/settings.json" "$CODDY_AGENT_DIR/settings.local.json"; do
+    if [ ! -f "$f" ]; then v=$(kind "$f")
+    elif [ "$(head -c 1048577 -- "$f" 2>/dev/null | wc -c)" -gt 1048576 ]; then sflav; v=$(stat -L "${sf[@]}" -- "$f" 2>/dev/null); v=stat:${v%%:*}; v=${v// /:}
+    elif v=$(jqh -cS 'if any(..; type == "number" and (isnan or isinfinite)) then error("nonfinite") else . end | if (.permissions.allow | type) == "array" and (.permissions.allow | all(type == "string")) then del(.permissions.allow) else . end | del(.permissions[]? | select(. == [])) | if .permissions == {} then del(.permissions) else . end' < "$f" 2>/dev/null); then
+      [ "$v" = '{}' ] && v=absent || v=jq:$(printf '%s\n' "$v" | hgit hash-object --stdin 2>/dev/null)
+    else v=raw:$(hgit hash-object --stdin < "$f" 2>/dev/null); fi
+    clean "$f" || f=$(q "$f")
+    echo "settings $f $v"; echo "settings settings $f $v" >&4
+  done
   while IFS= read -r -d '' p; do
     case "$p" in "worktree "*) p=${p#worktree } ;; *) continue ;; esac
     printf -v k 'path %q' "$p"; g=""; ! gid "$p" || printf -v g 'git %q' "$gi"
@@ -1578,11 +1626,15 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # keeps its id from reuse (KILL, once TERM ended the job but not a member
   # that ignores it). The launch's stderr goes nowhere: under set -m the
   # child may report a setpgid it lost to the parent's; the fingerprint's
-  # data is on its other fds.
+  # data is on its other fds. When snap names a directory in pd, the marks
+  # there over a day old go first, in the same group and budget, so a
+  # directory a command filled cannot hold snap past it: rmdir for a
+  # directory, rm -f for anything else (BusyBox's rm has no -d).
   lj() { [[ $'\n'$(jobs -rp)$'\n' == *$'\n'"$j"$'\n'* ]]; }
   fp() {
     local j i s
-    { set -m; { snap | LC_ALL=C sort -u > "$1"; } & j=$!; set +m; } 2>/dev/null
+    { set -m; { [ -z "$pd" ] || find "$pd" -maxdepth 1 -name '.snap-*' -mmin +1440 \( -type d -exec rmdir {} + -o -exec rm -f {} + \) >/dev/null 2>&1
+      snap | LC_ALL=C sort -u > "$1"; } & j=$!; set +m; } 2>/dev/null
     while lj; do
       if [ "$SECONDS" -ge "$fpb" ]; then
         for s in TERM KILL; do
@@ -1649,7 +1701,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     done < <(grep -xE 'unchecked (stat|status|list|jj|fp)' "$1")
     [ -n "$w" ] && echo "$w"
   }
-  seen="" nowt="" vf=/dev/null gd=""
+  seen="" nowt="" vf=/dev/null gd="" pd=""
   case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
   file="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
   # Both config paths are kept, present or not: a .coddy.yml the command
@@ -1683,6 +1735,21 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     oddly
     homes || { code=2; die "$hm"; }
     tools || { code=2; die "$hm"; }
+    # This session's mark (smark) for start and claim, which read it from a
+    # shell command whatever its TMPDIR (a sandbox's differs): a directory
+    # made anew each run by mkdir, which neither follows nor waits on a
+    # link or FIFO planted at its name (the old one goes by rmdir, or rm -f
+    # when it is no directory, since BusyBox's rm has no -d), and none when
+    # .git/coddy is a link or no directory; a session's first has fp prune
+    # those over a day old (pd).
+    ss=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
+    if [ -d "$root/.git" ] && m=$(smark "$ss"); then
+      { [ -e "${m%/*}" ] || [ -L "${m%/*}" ] || mkdir "${m%/*}"
+        if [ -d "${m%/*}" ] && [ ! -L "${m%/*}" ]; then
+          [ -e "$m" ] || [ -L "$m" ] || pd=${m%/*}
+          rmdir "$m" || rm -f "$m"; mkdir "$m"
+        fi; } 2>/dev/null
+    fi
     common
     admin || { code=2; die "$st"; }
     b=$(cfg default_branch); b="${b:-main}" ok=1
@@ -1860,10 +1927,11 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   if [ "$fs" != 0 ]; then w="the fingerprint failed"; else w=$(why "$now"); fi
   [ -z "$w" ] || { drop; die "${msg}the main checkout could not be fingerprinted after that command ran, since $w, so what it changed there could not be checked. $ck"; }
   new=$(LC_ALL=C comm -13 "$file" "$now")
-  added="" wts="" hk=""
+  added="" wts="" hk="" sg=""
   while IFS= read -r l; do
     [ -n "$l" ] || continue
     ! grep -qxF -- "hooks $l" "$lab" || { hk=${l#core.hooksPath }; continue; }
+    ! grep -qxF -- "settings $l" "$lab" || { l=${l#settings }; sg="${sg:+$sg and }${l% *}"; continue; }
     t="moved, renamed or re-created" a="git worktree move"
     if grep -qxF -- "made $l" "$lab"; then t=made a=""
     elif grep -qxF -- "moved $l" "$lab"; then case "$l" in jj*) a="" ;; esac
@@ -1878,6 +1946,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     w="that directory's hooks"; [ "$hk" != unset ] || w="the hooks in .git/hooks"
     msg="${msg}core.hooksPath is now $hk, not coddy's hooks directory, so coddy's git hooks are off for everyone in this repository. A hook manager's install does that (husky's prepare script, on every npm install or npm ci, in a worktree too). /coddy:start <issue> puts them back, and they run $w after coddy's check. "
   fi
+  [ -z "$sg" ] || msg="${msg}that command changed $sg, the agent's settings for this project, where a change can turn coddy's hooks off or change what runs outside the sandbox. coddy does not put it back: ask the user to check that change. "
   [ -n "$wts" ] && msg="${msg}that command made, moved or renamed a worktree outside .worktrees/<issue>/: $wts. Issue work belongs in .worktrees/<issue>/: run /coddy:start <issue>, which makes it."
   [ -z "$msg" ] && exit 0
   die "$msg"
@@ -2238,6 +2307,7 @@ case "$cmd" in
     branch="${3-}"; [ -n "$branch" ] || die "usage: $self $cmd <issue> <branch> [base-issue]"
     [ -n "$src" ] || die "$cmd needs to run from its file, not stdin: the git hooks it installs run coddy by that path"
     [ "$branch" != "$base" ] || die "$base is the default branch, not an issue branch"
+    hookson
     # The coddy the git hooks run: CODDY_EXEC, the launcher an adapter keeps
     # pointed at its current install, else this file. git runs them outside
     # any sandbox, so neither it nor any link on the way to its file may lie
@@ -2308,6 +2378,7 @@ case "$cmd" in
 
   claim)
     [ -d "$wt" ] || die "create the worktree first: $self create $issue <branch>"
+    hookson
     lock=".git/coddy/$issue" me="${CODDY_SESSION-}" note="" own="" again=""
     # A marker from before claims were locks is a plain file: nobody owns it;
     # the claim replaces it. rm -f never removes the lock another session
