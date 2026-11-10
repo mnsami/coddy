@@ -22,8 +22,8 @@ A `git_dir:` line in place of that → stop and show that line as it is.
 ## Keys
 
 - `version`: the schema version, `2` today. Written by `/coddy:onboard` and `/coddy:migrate` alone: any change to it here is refused.
-- `tracker`: `github` or `jira`.
-- `repo`: `owner/name`. Required with `tracker: github`.
+- `tracker`: `github`, `jira` or `gitlab`.
+- `repo`: `owner/name` with `tracker: github`; with `tracker: gitlab` the project's full path, `group/subgroup/project`, of two parts or more. Required with either.
 - `jira.site`, `jira.project`: the Atlassian site URL and the project key. Required with `tracker: jira`.
 - `worktree`: `git` (the default) or `jj`.
 - `default_branch`: a branch that exists on `origin`.
@@ -43,7 +43,7 @@ A `git_dir:` line in place of that → stop and show that line as it is.
    - `HEAD` holds `.coddy.yml` and it differs or is missing in the working tree (the lock removes one pulled next to a live `.claude/coddy.yml`) → show the diff and ask; yes → Read `.coddy.yml` if it exists, then Write `HEAD`'s content (`git -C <root> show HEAD:.coddy.yml`) to it under `root` (the guard asks the user to allow it); `config` was `.claude/coddy.yml` → the legacy file is left behind: say `/coddy:migrate` removes it. Say so and stop.
    - Only `.claude/coddy.yml` differs → show the diff and ask; yes → Read the file, then Write `HEAD`'s content (`git -C <root> show HEAD:.claude/coddy.yml`) over it, say so and stop.
    - No diff → say the file already matches `HEAD` and stop. No to either ask → stop and leave it.
-3. The requested change is `$ARGUMENTS` (`key=value` pairs or plain words), else what the user asked for in this conversation. Nothing requested → show the current config, then ask in ONE AskUserQuestion call, each current value first and marked `(current)`: `worktree` (jj, git), `tracker` (github, jira), `guard` (block, warn), and a multi-select of the free-text settings to change (`default_branch`, `branch` and `commit` patterns, `verify`, `roadmap`, `tiers`, `review_block`, `review_rounds`). Then ask for the new value of each setting picked there. Everything left as it is → say nothing changed and stop.
+3. The requested change is `$ARGUMENTS` (`key=value` pairs or plain words), else what the user asked for in this conversation. Nothing requested → show the current config, then ask in ONE AskUserQuestion call, each current value first and marked `(current)`: `worktree` (jj, git), `tracker` (github, jira, gitlab), `guard` (block, warn), and a multi-select of the free-text settings to change (`default_branch`, `branch` and `commit` patterns, `verify`, `roadmap`, `tiers`, `review_block`, `review_rounds`). Then ask for the new value of each setting picked there. Everything left as it is → say nothing changed and stop.
 4. Check every change against Keys. Unknown key or invalid value → say which and stop. Any change to `version`, adding or removing it included → say it is refused, `/coddy:migrate` alone moves it, and stop. A new `tracker` without its companion keys → ask for them in one question.
 5. `worktree` changes while Worktrees lists an issue → stop and say: ship or remove those worktrees first, an issue cannot switch tools midway.
 6. Edit the config (`config` under Worktrees) under `root`: change only the requested keys and keep every other line, comments included.

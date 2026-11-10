@@ -1527,6 +1527,29 @@ prob "a hook git would skip" '^hooks: pre-push is not executable' 'chmod -x .git
 prob "hooks not installed" '^hooks: core.hooksPath is not set.*(fix: /coddy:start <issue>)' 'git config --unset core.hooksPath' 'git config core.hooksPath "$PWD/.git/hooks/coddy"'
 prob "PR check missing" '^pr_check: .*is missing or not a plain file (fix: copy ' 'rm .github/workflows/coddy.yml' 'cp "$here/templates/coddy.yml" .github/workflows/coddy.yml'
 prob "PR check different" '^pr_check: .*differs from ' 'echo x >> .github/workflows/coddy.yml' 'cp "$here/templates/coddy.yml" .github/workflows/coddy.yml'
+# tracker: gitlab holds the job file to the template, as github its workflow, and .gitlab-ci.yml to including it.
+glt="$here/templates/coddy.gitlab-ci.yml"; gli='include:\n  - local: .gitlab/coddy.yml\n'
+(cd "$dp" && sed -i.bak 's/^tracker:.*/tracker: gitlab/' .coddy.yml && rm .coddy.yml.bak && mkdir .gitlab && cp "$glt" .gitlab/coddy.yml && printf "$gli" > .gitlab-ci.yml)
+t 0 "doctor: gitlab: the job file and its include in place: all ok" dsays '^pr_check: ok$'
+t 0 "doctor: gitlab: exits 0" dd doctor
+t 1 "doctor: gitlab: and the GitHub workflow is not asked for" sh -c "mv '$dp/.github' '$tmp/dgh'; CODDY_ROOT='$dp' '$here/bin/coddy' doctor | grep -q '^pr_check: .*github'; r=\$?; mv '$tmp/dgh' '$dp/.github'; exit \$r"
+prob "gitlab: the job file missing" '^pr_check: .gitlab/coddy.yml is missing or not a plain file (fix: copy ' 'rm .gitlab/coddy.yml' 'cp "$glt" .gitlab/coddy.yml'
+prob "gitlab: the job file different" '^pr_check: .gitlab/coddy.yml differs from ' 'echo x >> .gitlab/coddy.yml' 'cp "$glt" .gitlab/coddy.yml'
+prob "gitlab: a link at the job file" '^pr_check: .gitlab/coddy.yml is missing or not a plain file' 'rm .gitlab/coddy.yml; ln -s "$glt" .gitlab/coddy.yml' 'rm .gitlab/coddy.yml; cp "$glt" .gitlab/coddy.yml'
+prob "gitlab: a link at .gitlab" '^pr_check: .gitlab/coddy.yml is missing or not a plain file' 'mv .gitlab "$tmp/dgl"; ln -s "$tmp/dgl" .gitlab' 'rm .gitlab; mv "$tmp/dgl" .gitlab'
+prob "gitlab: .gitlab-ci.yml missing" '^pr_check: .gitlab-ci.yml is missing or not a plain file' 'rm .gitlab-ci.yml' 'printf "$gli" > .gitlab-ci.yml'
+prob "gitlab: a link at .gitlab-ci.yml" '^pr_check: .gitlab-ci.yml is missing or not a plain file' 'rm .gitlab-ci.yml; printf "$gli" > "$tmp/dci"; ln -s "$tmp/dci" .gitlab-ci.yml' 'rm .gitlab-ci.yml; printf "$gli" > .gitlab-ci.yml'
+prob "gitlab: a directory at .gitlab-ci.yml" '^pr_check: .gitlab-ci.yml is missing or not a plain file' 'rm .gitlab-ci.yml; mkdir .gitlab-ci.yml' 'rmdir .gitlab-ci.yml; printf "$gli" > .gitlab-ci.yml'
+prob "gitlab: .gitlab-ci.yml not including it" '^pr_check: .gitlab-ci.yml does not include .gitlab/coddy.yml (fix: ' 'printf "stages: [test]\n" > .gitlab-ci.yml' 'printf "$gli" > .gitlab-ci.yml'
+prob "gitlab: the include commented out" '^pr_check: .gitlab-ci.yml does not include' 'printf "include:\n  # - local: .gitlab/coddy.yml\n  - local: other.yml\n" > .gitlab-ci.yml' 'printf "$gli" > .gitlab-ci.yml'
+prob "gitlab: the path outside the include" '^pr_check: .gitlab-ci.yml does not include' 'printf "include:\n  - local: other.yml\nvariables:\n  X: .gitlab/coddy.yml\n" > .gitlab-ci.yml' 'printf "$gli" > .gitlab-ci.yml'
+prob "gitlab: a longer name in the include" '^pr_check: .gitlab-ci.yml does not include' 'printf "include:\n  - local: .gitlab/coddy.yml.bak\n" > .gitlab-ci.yml' 'printf "$gli" > .gitlab-ci.yml'
+prob "gitlab: .gitlab-ci.yml over 1 MiB, not read" '^pr_check: .gitlab-ci.yml is over 1 MiB, not read' 'head -c 1048577 /dev/zero | tr "\0" "\n" >> .gitlab-ci.yml' 'printf "$gli" > .gitlab-ci.yml'
+for form in 'include: .gitlab/coddy.yml' "include: '/.gitlab/coddy.yml'" 'include:\n- local: .gitlab/coddy.yml' 'include:\n  - "/.gitlab/coddy.yml"' 'stages: [test]\n\ninclude:\n  - local: a.yml\n\n  # ours\n  - local: .gitlab/coddy.yml  # the check\nb: c' 'include: [{local: .gitlab/coddy.yml}]' 'include: [.gitlab/coddy.yml, a.yml]' 'include:\r\n  - local: .gitlab/coddy.yml\r'; do
+  printf "$form\n" > "$dp/.gitlab-ci.yml"
+  t 0 "doctor: gitlab: an include written as: $form" dsays '^pr_check: ok$'
+done
+(cd "$dp" && cp "$tmp/dp.yml" .coddy.yml && rm -r .gitlab .gitlab-ci.yml)
 prob "AGENTS.md missing" '^agents_md: AGENTS.md is missing' 'mv AGENTS.md "$tmp/am"' 'mv "$tmp/am" AGENTS.md'
 prob "AGENTS.md without the block" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; echo "# x" > AGENTS.md' 'cp "$tmp/am" AGENTS.md'
 prob "AGENTS.md with a lone marker" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; sed -i.bak "/coddy:end/d" AGENTS.md; rm AGENTS.md.bak' 'cp "$tmp/am" AGENTS.md'

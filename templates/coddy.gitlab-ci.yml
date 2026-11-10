@@ -1,0 +1,53 @@
+# coddy's MR check: the merge request must close an issue that is open and
+# assigned. Keyed on the closing references ("Closes #n"), not the branch name,
+# so a branch an agent named itself passes. Open and assigned, not the "in
+# progress" label: /coddy:ship takes the label off when it opens the merge
+# request and this runs again on every push, while claim's assignee holds until
+# the merge.
+# One path for every merge request, whatever its target branch: the description
+# is read from the API, since the predefined variable is truncated, and matched
+# against GitLab's default closing pattern for same-project issues. So a closing
+# keyword only in a commit message, or a link made in the Work items widget, is
+# not seen.
+# No stage: it runs in the default one, test. Not .pre, since a pipeline holding
+# only .pre and .post jobs does not run. A project whose stages: omits test must
+# add it, or set a stage for this job in .gitlab-ci.yml.
+# The token is the job token, which can read the merge request and its issues.
+# A job that reports it cannot read names the CI variable CODDY_TOKEN, used when
+# set: a token tied to this project alone, never a personal one, with read_api,
+# masked and not protected (a protected variable does not reach a merge request
+# pipeline from an unprotected branch). Any branch's pipeline can read it.
+# ponytail: any assignee counts, not only the merge request's author.
+closes a claimed issue:
+  image: alpine:3.22
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  before_script:
+    - apk add --no-cache curl jq
+  script:
+    - |
+      out=$(mktemp) list=$(mktemp)
+      if [ -n "${CODDY_TOKEN:-}" ]; then auth="PRIVATE-TOKEN: $CODDY_TOKEN"; else auth="JOB-TOKEN: $CI_JOB_TOKEN"; fi
+      # api <path under the project>: the response in $out; anything but a 200 ends the job.
+      api() {
+        code=$(curl -sS -o "$out" -w '%{http_code}' -H "$auth" "$CI_API_V4_URL/projects/$CI_MERGE_REQUEST_PROJECT_ID/$1") || { echo "the GitLab API could not be reached for $1."; exit 1; }
+        case $code in
+          200) ;;
+          401|403|404) echo "GitLab answered $code for $1: it is not there, or this job's token cannot read it, which a private project answers with a 404. Set the CI variable CODDY_TOKEN to a token tied to this project alone, never a personal one, with read_api, masked and not protected (a protected variable does not reach a merge request pipeline from an unprotected branch), then re-run this job."; exit 1 ;;
+          *) echo "GitLab answered $code for $1."; exit 1 ;;
+        esac
+      }
+      api "merge_requests/$CI_MERGE_REQUEST_IID"
+      desc=$(jq -r '.description // ""' "$out")
+      # GitLab's default closing pattern, for #<digits> alone. A separator counts only before another reference, so grep -o leaves the next keyword's left edge to match.
+      for n in $(printf '%s\n' "$desc" | grep -oE '(^|[^[:alnum:]_])([Cc]los(e[sd]?|ing)|[Ff]ix(e[sd]|ing)?|[Rr]esolv(e[sd]?|ing)|[Ii]mplement(s|ed|ing)?):? +(issues? +)?#[0-9]+(( *,? +and +| *,? *)(issues? +)?#[0-9]+)*' | grep -oE '[0-9]+' | sort -un); do
+        api "issues/$n"
+        jq -r '"\(.iid) \(.state) \(.assignees | length)"' "$out" >> "$list"
+      done
+      [ -s "$list" ] || { echo "no linked issue. A closing keyword only in a commit message, or a link made in the Work items widget, is not seen. Add 'Closes #<issue>' to the merge request description, then re-run this job: editing the description starts no pipeline."; exit 1; }
+      bad=0
+      while read -r n state assigned; do
+        [ "$state" = opened ] || { echo "#$n is $state, not open. Reopen it or close another issue from the description, then re-run this job."; bad=1; }
+        [ "$assigned" != 0 ] || { echo "#$n is not claimed: nobody is assigned. Run /coddy:start $n or assign yourself, then re-run this job."; bad=1; }
+      done < "$list"
+      exit "$bad"

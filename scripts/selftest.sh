@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the scripts against a throwaway repo with a local bare remote: both
 # worktree tools, the claim and its lock, the push, the sweep, the edit
-# guard, the shell tripwire, the PR check's run block (against a stub gh,
+# guard, the shell tripwire, the GitLab job's script (against a stub curl), the PR check's run block (against a stub gh,
 # the one place gh remains: GitHub Actions) and issue.sh status's owners line.
 # Usage: bash scripts/selftest.sh
 set -u
@@ -2162,6 +2162,171 @@ t 1 "pr check: a stacked lookup that fails fails" check "" BODY='Closes #12' GH_
 : > "$GH_LOG"
 t 0 "pr check: two stacked keywords pass" check "" BODY=$'Closes #12\nResolves #13, closes #12'
 t 0 "pr check: and each issue was read once" test "$(grep -c 'api repos/OWNER/REPO/issues/' "$GH_LOG")" = 2
+
+# The GitLab job's script, as the runner runs it, against a stub curl.
+# CURL_MR and CURL_ISSUE are the response bodies, CURL_ISSUE_<n> issue n's alone,
+# CURL_HTTP the status of every call and CURL_ISSUE_HTTP of an issue's alone (200
+# without them), CURL_EXIT curl's own failure. Every call is logged to $CURL_LOG.
+# A merge request's closing and related issues answer 404, as they do a job token.
+gci="$here/templates/coddy.gitlab-ci.yml"
+mkdir "$tmp/curlbin"
+cat > "$tmp/curlbin/curl" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >> "$CURL_LOG"
+[ -z "${CURL_EXIT-}" ] || exit "$CURL_EXIT"
+while [ $# -gt 1 ]; do [ "$1" != -o ] || { out=$2; shift; }; shift; done
+code=${CURL_HTTP-200}
+case $1 in
+  */closes_issues*|*/related_issues*) body='{"message":"404 Project Not Found"}' code=404 ;;
+  */merge_requests/*) body=${CURL_MR-'{}'} ;;
+  */issues/*) v=CURL_ISSUE_${1##*/}; body=${!v-${CURL_ISSUE-'{}'}} code=${CURL_ISSUE_HTTP-$code} ;;
+esac
+printf '%s' "$body" > "$out"; printf %s "$code"
+EOF
+chmod +x "$tmp/curlbin/curl"; export CURL_LOG="$tmp/curl.log"
+sed '1,/^    - |$/d; s/^      //' "$gci" > "$tmp/mr.sh"
+# mr [VAR=value...]: an MR against the default branch unless CI_MERGE_REQUEST_TARGET_BRANCH_NAME says otherwise
+mrsh=(sh -e)
+mr() { env PATH="$tmp/curlbin:$PATH" CI_API_V4_URL=https://gl.example/api/v4 CI_PROJECT_ID=99 CI_MERGE_REQUEST_PROJECT_ID=7 CI_MERGE_REQUEST_IID=9 CI_DEFAULT_BRANCH=main CI_MERGE_REQUEST_TARGET_BRANCH_NAME=main CI_JOB_TOKEN=job-secret "$@" "${mrsh[@]}" "$tmp/mr.sh"; }
+stacked() { mr CI_MERGE_REQUEST_TARGET_BRANCH_NAME=feat/21 "$@"; }
+is() { printf '{"iid":%s,"state":"%s","assignees":[%s]}' "$1" "$2" "${3-}"; }
+mine=$(is 12 opened '{"id":1}')
+closes12='{"description":"Closes #12"}'
+leaks() { "$@" 2>&1 | grep -qE 'job-secret|tok-secret'; }
+t 0 "mr check: the job is named as the required check" grep -qx 'closes a claimed issue:' "$gci"
+t 0 "mr check: it runs in merge request pipelines" grep -qxF '    - if: $CI_PIPELINE_SOURCE == "merge_request_event"' "$gci"
+t 1 "mr check: it sets no stage, so a pipeline holding it runs" grep -qE '^ +stage:' "$gci"
+t 0 "mr check: the image is pinned" grep -qE '^  image: alpine:[0-9]+\.[0-9]+$' "$gci"
+t 0 "mr check: curl and jq come from apk" grep -qF 'apk add --no-cache curl jq' "$gci"
+t 0 "mr check: the header names a project whose stages omit test" grep -qE '^# .*stages: omits test' "$gci"
+: > "$CURL_LOG"
+t 0 "mr check: an open, assigned linked issue passes" mr CURL_MR="$closes12" CURL_ISSUE="$mine"
+t 0 "mr check: it reads the description from the API" grep -qE 'https://gl\.example/api/v4/projects/7/merge_requests/9$' "$CURL_LOG"
+t 0 "mr check: and the issue" grep -qE 'https://gl\.example/api/v4/projects/7/issues/12$' "$CURL_LOG"
+t 1 "mr check: never the pipeline's own project, a fork's on a merge request from one" grep -qF 'projects/99/' "$CURL_LOG"
+t 0 "mr check: with the job token when CODDY_TOKEN is not set" grep -qF 'JOB-TOKEN: job-secret' "$CURL_LOG"
+t 1 "mr check: closes_issues is never called" grep -qE 'closes_issues|related_issues' "$CURL_LOG"
+t 1 "mr check: nor named in the job" grep -qE 'closes_issues|related_issues' "$gci"
+: > "$CURL_LOG"
+t 0 "mr check: CODDY_TOKEN passes" mr CODDY_TOKEN=tok-secret CURL_MR="$closes12" CURL_ISSUE="$mine"
+t 0 "mr check: and is sent as a private token" grep -qF 'PRIVATE-TOKEN: tok-secret' "$CURL_LOG"
+t 1 "mr check: in place of the job token" grep -qF 'JOB-TOKEN' "$CURL_LOG"
+t 1 "mr check: no linked issue fails" mr CURL_MR='{"description":"see #12"}'
+t 0 "mr check: and names the keyword and the re-run" says "no linked issue.*Closes #<issue>.*re-run" mr CURL_MR='{"description":"see #12"}'
+t 0 "mr check: and what it does not see" says 'only in a commit message, or a link made in the Work items widget, is not seen' mr CURL_MR='{"description":"see #12"}'
+t 1 "mr check: a closed linked issue fails" mr CURL_MR="$closes12" CURL_ISSUE="$(is 12 closed '{"id":1}')"
+t 0 "mr check: and says to re-run" says '#12 is closed.*re-run' mr CURL_MR="$closes12" CURL_ISSUE="$(is 12 closed '{"id":1}')"
+t 1 "mr check: an unassigned linked issue fails" mr CURL_MR="$closes12" CURL_ISSUE="$(is 12 opened)"
+t 0 "mr check: and names the issue, the fix and the re-run" says '#12 is not claimed.*/coddy:start 12.*re-run' mr CURL_MR="$closes12" CURL_ISSUE="$(is 12 opened)"
+t 1 "mr check: no assignees key at all fails" mr CURL_MR="$closes12" CURL_ISSUE='{"iid":12,"state":"opened"}'
+t 1 "mr check: one bad issue among two fails" mr CURL_MR='{"description":"Closes #12, #13"}' CURL_ISSUE="$mine" CURL_ISSUE_13="$(is 13 opened)"
+t 0 "mr check: two open, assigned issues pass" mr CURL_MR='{"description":"Closes #12, #13"}' CURL_ISSUE="$mine" CURL_ISSUE_13="$(is 13 opened '{"id":1},{"id":2}')"
+t 1 "mr check: a null description fails" mr CURL_MR='{"description":null}' CURL_ISSUE="$mine"
+t 1 "mr check: the truncated predefined description is not read" mr CURL_MR='{"description":"see #12"}' CURL_ISSUE="$mine" CI_MERGE_REQUEST_DESCRIPTION='Closes #12'
+# Stacked on another branch: the same path, nothing of it keyed on the target.
+: > "$CURL_LOG"
+t 0 "mr check: a stacked MR passes by the same path" stacked CURL_MR="$closes12" CURL_ISSUE="$mine"
+t 0 "mr check: reading its description from the API" grep -qE 'projects/7/merge_requests/9$' "$CURL_LOG"
+t 0 "mr check: and the issue, stacked" grep -qE 'projects/7/issues/12$' "$CURL_LOG"
+t 1 "mr check: and no closing-issue list, stacked" grep -qE 'closes_issues|related_issues' "$CURL_LOG"
+t 1 "mr check: a stacked MR without a keyword fails" stacked CURL_MR='{"description":"see #12"}' CURL_ISSUE="$mine"
+t 1 "mr check: the job reads no target branch" grep -qE 'CI_MERGE_REQUEST_TARGET_BRANCH_NAME|CI_DEFAULT_BRANCH' "$tmp/mr.sh"
+# reads <description> <issues>: the references the job looks up, in numeric order.
+reads() { : > "$CURL_LOG"; mr CURL_MR="$(jq -n --arg d "$1" '{description: $d}')" CURL_ISSUE="$mine" >/dev/null 2>&1; [ "$(sed -n 's,.*/issues/,,p' "$CURL_LOG" | tr '\n' ' ')" = "${2:+$2 }" ]; }
+for c in 'Fixing #3=3' 'closes: #4=4' 'Closes #1, #2=1 2' 'Closes #1 and #2=1 2' 'Implements issue #5=5' 'Closes #1, Fixes #2=1 2' 'Closes #1,fixes #2=1 2' 'Closes #1 #2=1 2' 'Closes issues #1, #2 and issue #3=1 2 3' 'Closes #2, fixes #2=2' 'Closes  #1=1' 'Resolving #6=6' 'Fix #7=7' 'closed #8=8' 'Implemented #9=9' 'pre-closes #1=1' 'Closes #1, other/project#7, #2=1' 'Closes other/project#7=' 'disclosed #8=' 'CLOSES #9=' 'closeS #9=' 'Closes ISSUE #9=' 'prefixes #12=' '_closes #1=' 'see #12=' 'fixes#1=' 'Fixin #1='; do
+  t 0 "mr check: references in '${c%=*}': ${c##*=}" reads "${c%=*}" "${c##*=}"
+done
+t 0 "mr check: a keyword is read on every line" reads $'Closes #1\nFixes #2' '1 2'
+t 0 "mr check: a CRLF line reads as any other" reads $'x\r\nFixed: #12 in the end\r\n' 12
+t 1 "mr check: another project's issue is no linked issue" mr CURL_MR='{"description":"Closes other/project#7"}' CURL_ISSUE="$mine"
+t 1 "mr check: nor is a word that merely ends in a keyword" mr CURL_MR='{"description":"disclosed #8"}' CURL_ISSUE="$mine"
+# Every API error fails: a non-200 never passes, whatever body came with it.
+for c in 401 403 404; do
+  t 1 "mr check: a $c fails" mr CURL_HTTP=$c CURL_MR="$closes12" CURL_ISSUE="$mine"
+  t 0 "mr check: and names the CODDY_TOKEN variable, tied to this project alone, read_api, masked and not protected" says "CODDY_TOKEN.*tied to this project alone, never a personal one.*read_api.*masked.*not protected" mr CURL_HTTP=$c
+  t 1 "mr check: and prints no job token" leaks mr CURL_HTTP=$c
+  t 1 "mr check: and no CODDY_TOKEN value" leaks mr CURL_HTTP=$c CODDY_TOKEN=tok-secret
+  t 1 "mr check: an issue answering $c fails" mr CURL_MR="$closes12" CURL_ISSUE="$mine" CURL_ISSUE_HTTP=$c
+  t 0 "mr check: and names the variable too" says 'CODDY_TOKEN' mr CURL_MR="$closes12" CURL_ISSUE="$mine" CURL_ISSUE_HTTP=$c
+done
+t 1 "mr check: a 500 fails, with a body that would pass" mr CURL_HTTP=500 CURL_MR="$closes12" CURL_ISSUE="$mine"
+t 0 "mr check: and says what GitLab answered" says '500' mr CURL_HTTP=500
+t 1 "mr check: and does not point at the token" says 'CODDY_TOKEN' mr CURL_HTTP=500
+t 1 "mr check: an issue answering 500 fails" mr CURL_MR="$closes12" CURL_ISSUE="$mine" CURL_ISSUE_HTTP=500
+t 1 "mr check: one of two issues answering 404 fails" mr CURL_MR='{"description":"Closes #12, closes #13"}' CURL_ISSUE="$mine" CURL_ISSUE_HTTP=404
+t 1 "mr check: a 302 fails" mr CURL_HTTP=302 CURL_MR="$closes12" CURL_ISSUE="$mine"
+t 1 "mr check: curl failing fails" mr CURL_EXIT=7
+t 5 "mr check: a 200 that is not JSON fails, on jq's own exit" mr CURL_MR='<html>'
+t 1 "mr check: no token is printed on a pass" leaks mr CURL_MR="$closes12" CURL_ISSUE="$mine"
+# The runner runs it under -e and pipefail where the shell has it.
+mrsh=(bash -eo pipefail)
+t 0 "mr check: under pipefail, a pass" mr CURL_MR="$closes12" CURL_ISSUE="$mine"
+t 0 "mr check: under pipefail, a stacked pass" stacked CURL_MR="$closes12" CURL_ISSUE="$mine"
+t 1 "mr check: under pipefail, an MR without a keyword fails" mr CURL_MR='{"description":"nothing"}'
+t 0 "mr check: and says no linked issue, not a grep's exit" says 'no linked issue' mr CURL_MR='{"description":"nothing"}'
+mrsh=(sh -e)
+for n in next start ship triage; do t 0 "skill $n stops when the gitlab tools are not loaded" grep -qE '^`tracker: gitlab` → .*the gitlab plugin must be enabled and signed in' "$here/skills/$n/SKILL.md"; done
+for n in start ship triage; do t 0 "skill $n wraps a line starting with / in what it writes to GitLab" grep -qE '^`tracker: gitlab` → .*line starting with `/` goes in backticks' "$here/skills/$n/SKILL.md"; done
+t 1 "no skill runs glab" grep -rqwi glab "$here/skills"
+t 0 "start takes no branch from a merge request that only mentions the issue" grep -qF 'only mentions it' "$here/skills/start/SKILL.md"
+t 0 "onboard edits an existing .gitlab-ci.yml in place, never rewriting it" grep -qF '`old_str` and `new_str`, never `content`' "$here/skills/onboard/SKILL.md"
+t 0 "onboard delivers the job on a new branch, never the default one" grep -qF 'Never commit to the default branch' "$here/skills/onboard/SKILL.md"
+t 0 "onboard says when the project's stages leave the job's out" grep -qF 'that lists no `test`' "$here/skills/onboard/SKILL.md"
+t 0 "start never reads a merge request's number as an issue's" grep -qF "the id given is a merge request's" "$here/skills/start/SKILL.md"
+t 0 "start counts no system note as a comment of mine" grep -qF 'a system note never counting' "$here/skills/start/SKILL.md"
+t 0 "start pages the related merge requests" grep -qF 'related_merge_requests_after' "$here/skills/start/SKILL.md"
+t 0 "onboard names the project on every delivery call" grep -qF 'each with `project_id: <repo>`' "$here/skills/onboard/SKILL.md"
+t 0 "onboard reads coddy/mr-check before it opens or skips anything for it" grep -qF 'with `ref: coddy/mr-check` reads the same two files' "$here/skills/onboard/SKILL.md"
+t 0 "onboard holds that branch to the template and the include alone" grep -qF 'identical to the template and `.gitlab-ci.yml` differing from the `ref: HEAD` copy by the include alone' "$here/skills/onboard/SKILL.md"
+t 0 "onboard opens nothing from a branch that fails the check" grep -qF 'failing → open nothing, name the branch and stop' "$here/skills/onboard/SKILL.md"
+t 1 "onboard takes no existing branch for an earlier run's unread" grep -qF "an earlier run's" "$here/skills/onboard/SKILL.md"
+t 1 "onboard evaluates no source project, which no MCP tool returns" grep -qF 'source project' "$here/skills/onboard/SKILL.md"
+t 1 "onboard looks no merge request or branch up" grep -qE 'list_merge_requests|list_branches' "$here/skills/onboard/SKILL.md"
+t 0 "onboard takes save_merge_request's refusal for its merge request already open" grep -qF '`save_merge_request` refused with `Another open merge request already exists for this source branch: !<iid>` → name `!<iid>` and skip' "$here/skills/onboard/SKILL.md"
+t 0 "onboard leaves an identical job file out of the commit" grep -qF '`create` when it is missing, `update` when it differs, no action when identical' "$here/skills/onboard/SKILL.md"
+t 1 "onboard no longer calls get_merge_request" grep -qF 'get_merge_request' "$here/skills/onboard/SKILL.md"
+t 0 "start passes the branch in single quotes" grep -qF "create \$issue '<branch>'" "$here/skills/start/SKILL.md"
+t 1 "start never passes the branch unquoted" grep -qF 'create $issue <branch>' "$here/skills/start/SKILL.md"
+t 1 "start holds a branch to no allowlist, which refuses valid names" grep -qF 'must match `[A-Za-z0-9._/-]+` whole, hold no `..`' "$here/skills/start/SKILL.md"
+t 0 "start refuses a quote in a branch, which single quotes cannot hold" grep -qF "One holding a \`'\`," "$here/skills/start/SKILL.md"
+t 0 "start refuses a control character, .. and a leading dash, and shows it" grep -qF 'a control character or `..`, or with a leading `-` → stop and show it' "$here/skills/start/SKILL.md"
+t 0 "onboard still offers gitlab behind jira when the plugin cannot answer" grep -qF 'else `jira` first, `gitlab` still offered' "$here/skills/onboard/SKILL.md"
+t 0 "onboard stops for GitLab only once the user picks it" grep -qF '`gitlab` picked → `get_project` with `project_id: <repo>` and `get_user`' "$here/skills/onboard/SKILL.md"
+t 1 "onboard does not stop before the question on a host holding gitlab" grep -qF 'host holds `gitlab` and the gitlab tools' "$here/skills/onboard/SKILL.md"
+for f in README.md CLAUDE.md skills/onboard/SKILL.md; do
+  t 0 "$f: the GitLab plugin as shipped reaches gitlab.com only" grep -qF 'reaches gitlab.com only' "$here/$f"
+  t 0 "$f: a self-managed instance's MCP server is not pre-approved" grep -qF 'do not pre-approve, so its calls prompt' "$here/$f"
+done
+t 1 "README promises no instance the plugin does not reach" grep -qF 'on any instance' "$here/README.md"
+# What a live gitlab.com project showed: what the MCP tools return, and what a job token reads.
+for n in next start; do t 0 "skill $n: every GitLab MCP call but get_user takes project_id" grep -qF 'every GitLab MCP call but `get_user` takes `project_id`' "$here/skills/$n/SKILL.md"; done
+t 1 "start names no list_branches, which detects no fork" grep -qF 'list_branches' "$here/skills/start/SKILL.md"
+t 0 "start takes a merge request's branch unasked only when its author is me" grep -qF "taken without asking only when its author's username is mine" "$here/skills/start/SKILL.md"
+t 0 "start asks before taking anyone else's" grep -qF "show the branch, author and URL and take it only on the user's yes" "$here/skills/start/SKILL.md"
+t 0 "start posts that question when headless" grep -qF 'headless → post them as the `<!-- coddy:questions -->` comment and stop' "$here/skills/start/SKILL.md"
+t 0 "start holds an issue's merge request to the same author rule" grep -qF 'by the author rule of the first bullet' "$here/skills/start/SKILL.md"
+t 1 "start evaluates no source project, which get_merge_request does not return" grep -qF 'source project other than its target project' "$here/skills/start/SKILL.md"
+t 0 "start reads sourceBranch" grep -qF '`sourceBranch`' "$here/skills/start/SKILL.md"
+t 0 "start expects no branch on a related merge request" grep -qF 'those rows carry no branch' "$here/skills/start/SKILL.md"
+t 1 "ship has no fork stop on GitLab: the branch it pushed is in repo" grep -qF 'a merge request from a fork' "$here/skills/ship/SKILL.md"
+t 1 "ship looks no merge request up before it opens one" grep -qF 'related_merge_requests' "$here/skills/ship/SKILL.md"
+t 0 "ship keeps the merge request save_merge_request says is already open" grep -qF 'Refused with `Another open merge request already exists for this source branch: !<iid>` → `get_merge_request` on that iid: it is already open: keep that URL and skip step 4' "$here/skills/ship/SKILL.md"
+t 0 "start stops on a label the project lacks" grep -qF '`save_work_item` refused with `Labels not found`, or no open merge request and `get_work_item` then not showing `in progress` → stop and say the label must exist in the project first' "$here/skills/start/SKILL.md"
+t 0 "marketplace names GitLab" grep -qF 'GitHub Issues, GitLab or Jira' "$here/.claude-plugin/marketplace.json"
+t 0 "CLAUDE.md: a GitLab stop applies once the user picks gitlab" grep -qF 'so does `gitlab`, once the user picks it' "$here/CLAUDE.md"
+t 1 "CLAUDE.md: and no longer on a GitLab remote alone" grep -qF 'or a GitLab remote whose plugin is not loaded' "$here/CLAUDE.md"
+t 0 "CLAUDE.md: the job reads the description, whatever the target branch" grep -qF "reads the merge request's description and matches GitLab's default closing pattern" "$here/CLAUDE.md"
+t 0 "onboard warns about a pipeline holding coddy's job alone" grep -qF "may hold coddy's job alone, so Pipelines must succeed may gate only that job; check the project's existing jobs still run on merge request pipelines before requiring it" "$here/skills/onboard/SKILL.md"
+t 1 "onboard leaves add_commit to the host's prompt" sh -c "sed -n 's/^allowed-tools: //p' '$here/skills/onboard/SKILL.md' | grep -qF add_commit"
+t 0 "onboard keeps the add_commit step" grep -qF '`add_commit` with `branch: coddy/mr-check`' "$here/skills/onboard/SKILL.md"
+t 1 "onboard no longer lists CODDY_TOKEN as a standing step" grep -qF 'when the job token cannot read (the job says so)' "$here/skills/onboard/SKILL.md"
+t 0 "onboard names CODDY_TOKEN only for a job that reports it cannot read" grep -qF 'only a job that reports it cannot read needs the CI variable `CODDY_TOKEN`' "$here/skills/onboard/SKILL.md"
+t 0 "README names CODDY_TOKEN only for a job that reports it cannot read" grep -qF 'Only a job that reports it cannot read' "$here/README.md"
+t 1 "README: closes_issues is gone with the job" grep -qE 'closes_issues|related_issues' "$here/README.md"
+for f in skills/onboard/SKILL.md README.md templates/coddy.gitlab-ci.yml; do
+  t 0 "$f: CODDY_TOKEN is tied to this project alone" grep -qF 'tied to this project alone, never a personal one' "$here/$f"
+  t 0 "$f: and any branch's pipeline can read it" grep -qiF "any branch's pipeline can read it" "$here/$f"
+done
 
 # Merging main into an issue branch brings the bookmark of every merged PR
 # into its history, and a newer one must not be taken for the issue's branch.

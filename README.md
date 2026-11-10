@@ -86,11 +86,16 @@ You also need:
   it names the install page and recommends `worktree: git`.
 - For GitHub Issues: the GitHub plugin, enabled and signed in with a token
   that can read and write the repository's issues and pull requests.
+- For GitLab: the GitLab plugin, enabled and signed in. As shipped it
+  reaches gitlab.com only. A self-managed instance needs an MCP server
+  configured for that instance, whose tools the skills' `allowed-tools`
+  do not pre-approve, so its calls prompt. The config names no host.
 - For Jira: the Atlassian plugin.
 
-Trackers are reached through those plugins' MCP tools. Neither needs a CLI.
+Trackers are reached through those plugins' MCP tools. None needs a CLI.
 The PR check workflow alone runs `gh`, inside GitHub Actions, where it is
-built in.
+built in; the GitLab job alone calls the API, with `curl`, inside its
+pipeline.
 
 The mechanics live in one command, `bin/coddy`, with no Claude Code
 dependency: Claude Code puts the plugin's `bin/` on the Bash tool's `PATH`
@@ -128,7 +133,7 @@ The next `next` or `start` sweeps up what the merge left behind.
 
 | Skill | What it does |
 |---|---|
-| `/coddy:onboard` | A seven-step wizard: detects the project, installs `jq` and `jj` when you allow it, asks for what it can't infer (answers saved, so a re-run resumes), then writes the PR check workflow, the coddy block into `AGENTS.md` (backing up what it replaces) and `.coddy.yml` |
+| `/coddy:onboard` | A seven-step wizard: detects the project, installs `jq` and `jj` when you allow it, asks for what it can't infer (answers saved, so a re-run resumes), then writes the PR check workflow (on GitLab, opens a merge request that adds the check), the coddy block into `AGENTS.md` (backing up what it replaces) and `.coddy.yml` |
 | `/coddy:config [key=value ...]` | Shows `.coddy.yml`, or changes the keys you name |
 | `/coddy:migrate` | Brings the config up to the current `version`, moving one an earlier version wrote to `.claude/coddy.yml` to `.coddy.yml`, after backing it up under `.claude/coddy/backup/` |
 | `/coddy:next` | Recommends the next issue from the tracker and the roadmap, setting aside issues in progress, assigned to someone else, or claimed on this machine |
@@ -139,9 +144,9 @@ The next `next` or `start` sweeps up what the merge left behind.
 Each skill also triggers from plain language ("start issue 42", "what's
 next?", "ship it"); the slash command is optional.
 
-In Progress is the `in progress` label on GitHub and the workflow status on
-Jira. It ends when `/coddy:ship` has the PR open: the label comes off, and
-Jira moves to In Review.
+In Progress is the `in progress` label on GitHub and GitLab, and the
+workflow status on Jira. It ends when `/coddy:ship` has the PR open: the
+label comes off, and Jira moves to In Review.
 
 Once a PR has merged, the next `/coddy:next` or `/coddy:start` removes that
 issue's worktree, claim and local branch. A worktree that still holds work
@@ -393,7 +398,7 @@ branch coddy did not name. `/coddy:onboard` writes it to
 `.github/workflows/coddy.yml` on a GitHub tracker, backing up a differing
 copy under `.claude/coddy/backup/`; commit it yourself. Its ceilings:
 
-- GitHub Issues only. A Jira project gets the local guardrails alone:
+- GitHub and GitLab only. A Jira project gets the local guardrails alone:
   `/coddy:onboard` does not write the check, and a copied one fails every
   Jira PR, which carries no closing reference.
 - GitHub computes the references only on a PR against the default branch.
@@ -402,6 +407,32 @@ copy under `.claude/coddy/backup/`; commit it yourself. Its ceilings:
 - It blocks a merge only once `closes a claimed issue` is a required check
   on the default branch, which you add by hand.
 
+On GitLab the same check is a job, `templates/coddy.gitlab-ci.yml`, also
+named `closes a claimed issue`. `/coddy:onboard` opens a merge request that
+adds it as `.gitlab/coddy.yml`, included from `.gitlab-ci.yml`, and never
+commits to the default branch. Its ceilings:
+
+- It runs in the `test` stage. A project whose `stages:` omits `test` must
+  add it, or set a stage for the job in `.gitlab-ci.yml`.
+- It reads the merge request's description and each issue it closes through
+  the API, with the job token, so nothing needs setting up. The references
+  come from the description alone, by GitLab's default closing pattern, the
+  same way whatever the target branch: a closing keyword only in a commit
+  message, or a link made in the Work items widget, is not seen.
+- Only a job that reports it cannot read (a 401, 403 or 404 fails the job
+  and names the variable) needs the CI variable `CODDY_TOKEN`: a token
+  tied to this project alone, never a personal one, with `read_api`,
+  masked and not protected, since a protected variable does not reach a
+  merge request pipeline from an unprotected branch.
+  Any branch's pipeline can read it.
+- Editing a merge request's description starts no pipeline, so re-run the
+  job after fixing one.
+- The merge request that adds it is checked by it too: give it `Closes #<n>`
+  for an open, assigned issue, or merge it before Pipelines must succeed is
+  on.
+- It blocks a merge only once Pipelines must succeed is on, with the default
+  branch protected, which you set by hand.
+
 ## Config
 
 `.coddy.yml` at the project root, written by `/coddy:onboard` and changed
@@ -409,8 +440,8 @@ by `/coddy:config`:
 
 ```yaml
 version: 2                   # schema version; set by /coddy:onboard and /coddy:migrate
-tracker: github              # github | jira
-repo: owner/name             # github only
+tracker: github              # github | jira | gitlab
+repo: owner/name             # github: owner/name; gitlab: the full project path, group/subgroup/project
 # jira:                      # jira only, in place of repo
 #   site: https://acme.atlassian.net
 #   project: KEY
