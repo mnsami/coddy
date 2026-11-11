@@ -287,6 +287,7 @@ leg() {
   t 0 "$tool: that refusal names the command that records it" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' push $n 2>&1 | grep -q 'issue.sh create $n'"
   t 1 "$tool: create refuses to record a branch the worktree is not on" run create "$n" "feat/$n-other"
   t 0 "$tool: create records the branch of an existing worktree" run create "$n" "feat/$n-thing"
+  t 0 "$tool: create names the branch it is on, which start's cover gate reads" says "is on feat/$n-thing, not feat/$n-other" run create "$n" "feat/$n-other"
   t 0 "$tool: push works again once the branch is recorded" run push "$n"
   # Continue a branch that exists only on the remote, as for someone else's PR.
   p=$((n + 10))
@@ -2381,6 +2382,15 @@ t 0 "ship: with no summary keys" grep -qF 'nothing else: no `summary` keys' "$sh
 t 0 "ship: reads jira's security level" sh -c "sed -n 's/^allowed-tools: //p' '$shp' | grep -qF mcp__plugin_atlassian_atlassian__getJiraIssue"
 t 0 "README: the diff stays public on a confidential issue" grep -qF 'The diff itself is public once pushed' "$here/README.md"
 t 0 "README: triage ideas from it are not covered" grep -qF 'Ideas `/coddy:triage` files from that work are not covered' "$here/README.md"
+t 0 "start: a failed jira security read stops before create" grep -qF 'The `security` read fails → stop before `create` and show its error.' "$st"
+t 0 "start: commits from before the cover keep their messages" grep -qF '→ say the commits already on it keep their messages: the cover applies from now on.' "$st"
+t 0 "start: create on another branch asks the gate again with it" grep -qF '`create` refuses with `is on <b>, not <branch>` after the cover gate proposed `<branch>`' "$st"
+t 0 "start: and that branch is the fixed one" grep -qF '`<b>`, held to the check above, is the fixed branch: the cover gate asks again with it.' "$st"
+t 0 "ship: an open PR or MR takes the cover's title and body" grep -qF 'A PR or merge request already open (above) → set its title and body to those: github and jira `update_pull_request`' "$shp"
+t 0 "ship: gitlab updates it by its iid" grep -qF 'gitlab `save_merge_request` with `merge_request_iid: <iid>`, `title` and `description`.' "$shp"
+t 0 "ship: allows update_pull_request" sh -c "sed -n 's/^allowed-tools: //p' '$shp' | grep -qF mcp__plugin_github_github__update_pull_request"
+t 0 "CLAUDE.md: describes the cover" grep -qF '**A confidential issue ships under a cover.**' "$here/CLAUDE.md"
+t 0 "CLAUDE.md: and ship's backstop" grep -qF '`ship` is the backstop: a confidential issue with no cover that counts stops before any push' "$here/CLAUDE.md"
 
 # Merging main into an issue branch brings the bookmark of every merged PR
 # into its history, and a newer one must not be taken for the issue's branch.
