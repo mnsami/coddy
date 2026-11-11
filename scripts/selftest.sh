@@ -2299,7 +2299,7 @@ for f in README.md CLAUDE.md skills/onboard/SKILL.md; do
 done
 t 1 "README promises no instance the plugin does not reach" grep -qF 'on any instance' "$here/README.md"
 # What a live gitlab.com project showed: what the MCP tools return, and what a job token reads.
-for n in next start; do t 0 "skill $n: every GitLab MCP call but get_user takes project_id" grep -qF 'every GitLab MCP call but `get_user` takes `project_id`' "$here/skills/$n/SKILL.md"; done
+for n in next start ship; do t 0 "skill $n: every GitLab MCP call but get_user takes project_id" grep -qF 'every GitLab MCP call but `get_user` takes `project_id`' "$here/skills/$n/SKILL.md"; done
 t 1 "start names no list_branches, which detects no fork" grep -qF 'list_branches' "$here/skills/start/SKILL.md"
 t 0 "start takes a merge request's branch unasked only when its author is me" grep -qF "taken without asking only when its author's username is mine" "$here/skills/start/SKILL.md"
 t 0 "start asks before taking anyone else's" grep -qF "show the branch, author and URL and take it only on the user's yes" "$here/skills/start/SKILL.md"
@@ -2334,26 +2334,44 @@ t 0 "start: confidential is gitlab's flag or jira's security level, never github
 t 0 "start: gitlab reads the flag and the internal notes" grep -qF 'whether the issue is `confidential` and which notes are `internal`' "$st"
 t 0 "start: jira reads the security level" grep -qF '`getJiraIssue` with `fields: [security]` for its security level' "$st"
 t 0 "start: jira reads each comment's visibility" grep -qF "which gives each comment's visibility restriction and, on JSM, its \`jsdPublic\`" "$st"
-t 0 "start: gates create behind a cover" grep -qF 'Confidential and no `cover` line in `state $issue` (a `state` refused because the issue is not In Progress yet has none) → before `create`, propose a cover' "$st"
-t 0 "start: and lists what goes public" grep -qF "List what goes public once shipped: the branch, every commit message, the PR's title and description, and the diff." "$st"
+t 0 "start: gates create behind a cover, on internal text and on a plan's cover too" grep -qF 'The cover gate. Confidential, step 1 read internal text, or the latest `<!-- coddy:plan -->` comment of mine carries a `Cover:` line, and no `cover` line in `state $issue` (a `state` refused because the issue is not In Progress yet has none) → before `create`, propose a cover: that `Cover:` line'"'"'s when there is one' "$st"
+t 0 "start: and lists what goes public, the review and closing lines exactly" grep -qF "List what goes public once shipped: the branch, every commit message, the PR's title, its description exactly (the description line, then \`Review loop completed.\` or \`Review loop not completed.\`, then the closing line, \`Closes #\$issue\` on gitlab or \`\$issue\` on its own line on jira, then a \`Stacked on\` line when stacked), and the diff." "$st"
+t 0 "start: the gate again after step 5 reads internal text" grep -qF 'Step 5 read internal text and no `cover` line in `state $issue` → the cover gate of step 3 now, `<branch>` fixed as on a resume' "$st"
+t 0 "start: step 5 reads a referenced jira ticket's security level" grep -qF 'jira `getJiraIssue`, and with `fields: [security]` for its security level; gitlab `get_work_item`, which says whether it is `confidential`' "$st"
+t 0 "start: internal text is any text of a confidential issue, from step 1 or 5" grep -qF 'or any text of a confidential issue, read in step 1 or in step 5.' "$st"
+t 0 "start: internal posts key on step 5 and, on a resume, the plan's own visibility" grep -qF 'Step 1 or step 5 read internal text, or the latest `<!-- coddy:plan -->` comment of mine is internal or restricted (a resume skips step 5) → every plan and questions comment this skill posts is internal too, and as restricted as that one' "$st"
+t 0 "start: posts internal only where the tool takes the field" grep -qF "Before each such post, the tool's input schema must list the field it sets (\`internal\`; \`commentVisibility\`, \`jsmCommentType\`), else post nothing and stop, saying so." "$st"
+t 0 "start: reads each internal post back" grep -qF 'not internal, or not so restricted → stop and say to delete it by hand, naming it, since no tool here deletes one.' "$st"
+t 0 "start: an edited branch is checked like any other" grep -qF 'or an edited `<branch>` that fails the check above, → ask again.' "$st"
+for f in "$st" "$shp"; do
+  t 0 "${f##*/skills/}: two cover lines count as none" grep -qF 'more than one `cover` or `cover_body` line, or a `cover` or `cover_body` line holding' "$f"
+  t 0 "${f##*/skills/}: a cover counts only as the latest plan carries it" grep -qF 'does not carry as its line `Cover: "<cover>" "<cover_body>"`' "$f"
+done
+t 0 "start: every plan comment carries the cover" grep -qF 'Every plan comment this skill posts while `state $issue` has a cover carries that line.' "$st"
+t 0 "start: the plan shown carries it for approval" grep -qF 'while `state $issue` has a cover, its `Cover:` line, which the yes approves' "$st"
+t 0 "start: a cover agreed against an older plan reposts it" grep -qF 'when there is one, does not carry its `Cover:` line → post that plan again with it, as a new plan comment.' "$st"
+t 0 "ship: a cover line that does not hold stops before push" grep -qF 'A `cover` or `cover_body` line in that `state` and no cover that counts → stop before any push and say: run `/coddy:start <issue>`, which shows the cover again.' "$shp"
+for m in get_me get_user; do
+  t 0 "ship: allows $m to find my plan comment" sh -c "sed -n 's/^allowed-tools: //p' '$shp' | grep -qF __$m"
+done
 t 0 "start: stop creates nothing" grep -qF 'Ask: approve, edit or stop. Stop → stop, with nothing created.' "$st"
 t 0 "start: headless, the gate is an internal note or a covered comment" grep -qF 'Headless → post the cover and that list as the `<!-- coddy:questions -->` comment (gitlab `save_note` with `internal: true`; jira a comment' "$st"
 t 0 "start: a branch already given stays fixed" grep -qF 'fixed when a bullet above other than the last gave it' "$st"
-t 0 "start: a confidential issue is interviewed without a skill" grep -qF 'Confidential, or step 1 read internal text → the interview row'"'"'s fallback, never a skill' "$st"
+t 0 "start: a confidential issue is interviewed without a skill" grep -qF 'Confidential, step 1 or step 5 read internal text, or `state $issue` has a cover → the interview row'"'"'s fallback, never a skill' "$st"
 t 0 "start: the slug comes from the cover, never the title" grep -qF "from the cover's subject, never the title" "$st"
 t 0 "start: records the cover once claimed" grep -qF '`state $issue "cover=<subject>" "cover_body=<line>"`' "$st"
 t 0 "start: implement commits with the cover" grep -qF 'a `cover` line in `state $issue` → that cover in its place as the commit message' "$st"
 t 0 "start: and so does harden" grep -qF '`commit` (the cover in its place, as in step 8)' "$st"
 t 0 "start: no public text quotes internal text" grep -qF 'No public text (a branch, a commit message, a PR' "$st"
-t 0 "start: posts internal after reading internal text" grep -qF 'every plan and questions comment this skill posts is internal too: gitlab `save_note` with `internal: true`; jira `addOrEditJiraIssueComment` with `commentVisibility`' "$st"
-t 0 "start: leaves differently restricted text out" grep -qF 'restricted comments that carry different restrictions → their text stays out of the plan and the questions' "$st"
+t 0 "start: posts internal after reading internal text" grep -qF 'and as restricted as that one: gitlab `save_note` with `internal: true`; jira `addOrEditJiraIssueComment` with `commentVisibility`' "$st"
+t 0 "start: leaves differently restricted text out" grep -qF "restricted comments that carry different restrictions, or the text of another jira ticket whose security level is not this ticket's, → their text stays out of the plan and the questions" "$st"
 t 0 "start: a JSM internal note is internal even when restricted" grep -qF 'and `jsmCommentType: internalNote` when any has `jsdPublic: false`, since a restriction alone leaves a JSM comment customer-visible' "$st"
-t 0 "start: the cover holds nothing the shell expands" grep -qF 'The subject is never empty, and neither line holds a line break, `"`, `` ` ``, `$` or `\`, since both reach shell commands in double quotes; an edit that breaks this → ask again.' "$st"
-t 0 "start: the jira gate comment is restricted like any questions comment" grep -qF "jira a comment, which the ticket's security level covers, restricted as above when step 1 read internal text" "$st"
+t 0 "start: the cover holds nothing the shell expands" grep -qF 'The subject is never empty, and neither line holds a line break, `"`, `` ` ``, `$` or `\`, since both reach shell commands in double quotes; an edit that breaks this' "$st"
+t 0 "start: the jira gate comment is restricted like any questions comment" grep -qF '(gitlab `save_note` with `internal: true`; jira a comment, restricted as above) and stop' "$st"
 t 0 "policy: a cover is every commit message" grep -qF 'A cover given in the pattern'"'"'s place → every commit message is exactly the cover, with no body.' "$here/skills/start/references/policy.md"
 t 0 "ship: stops on a confidential issue with no cover" grep -qF 'No `cover` line in that `state` and the issue is confidential' "$shp"
 t 0 "ship: before any push, naming start" grep -qF 'stop before any push and say: run `/coddy:start <issue>`' "$shp"
-t 0 "ship: a failed confidential read stops too" grep -qF 'That call fails → stop before any push and show its error.' "$shp"
+t 0 "ship: a failed confidential or plan read stops too" grep -qF 'A call here fails → stop before any push and show its error.' "$shp"
 for f in "$st" "$shp"; do
   t 0 "${f##*/skills/}: a cover the shell would expand counts as none" grep -qF 'or a `cover` or `cover_body` line holding `"`, `` ` ``, `$` or `\`, counts as no `cover` line' "$f"
 done
