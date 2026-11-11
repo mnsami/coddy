@@ -1541,6 +1541,9 @@ tripped 2 "tripwire: local commit that was pushed to another branch" 'git commit
 # saying nothing, for the pre-push hook and branch protection to refuse.
 t 0 "push: git push origin main passes snap, saying nothing" silent 'git push origin main'
 t 2 "shim: guard refuses a path jq cannot read" sh -c "printf '{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"\\\\ud800\"}}' | CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' guard"
+shimin() { printf '%s' "$2" | CLAUDE_PROJECT_DIR="$repo" bash "$here/scripts/issue.sh" "$1"; }
+t 2 "shim: guard refuses a payload whose tool_input is not an object" shimin guard '{"session_id":"sess-a","tool_input":["x"]}'
+t 2 "shim: guard refuses two JSON values in one payload" shimin guard '{"session_id":"sess-a","tool_input":{"file_path":"x"}}{"session_id":"sess-a"}'
 # snap without jq and trip with it must name one snapshot, the call id read by sed on both sides
 sharedid() { printf '{"tool_use_id":"w","session_id":"s","cwd":"%s","tool_input":{"command":"true"}}' "$repo" > "$tmp/w.json"; PATH="$tmp/nojq" run snap < "$tmp/w.json" >/dev/null && o=$(run trip < "$tmp/w.json" 2>&1) && ! grep -q lost <<<"$o"; }
 t 0 "shim: snap without jq and trip with it name the same snapshot" sharedid

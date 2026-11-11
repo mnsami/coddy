@@ -54,13 +54,16 @@ export HERMY_ROOT HERMY_SESSION HERMY_PID HERMY_AGENT_DIR HERMY_HOOKS
 # Claude Code's hook payload as the core's neutral input. The call id and
 # session are read with sed, as the core did, so snap without jq and trip with
 # it name the same snapshot; when jq is missing or fails, the raw payload
-# rides along so the core's jq fails on it exactly as before and refuses.
+# rides along after a word that is no JSON, so the core's jq fails on it and refuses.
 hermy_in() {
   local r id ss
   r=$(cat)
   id=$(sed -n 's/.*"tool_use_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$r" 2>/dev/null | head -n1)
   ss=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$r" 2>/dev/null | head -n1)
-  command -v jq >/dev/null && jqh -c --arg c "$id" '{paths: [.tool_input.file_path // .tool_input.notebook_path // empty], command: (.tool_input.command // ""), cwd: (.cwd // ""), call: $c, session: (.session_id // "")}' <<<"$r" 2>/dev/null ||
-    printf '{"raw":%s,"call":"%s","session":"%s"}\n' "$r" "$id" "$ss"
+  if command -v jq >/dev/null && o=$(jqh -cn --arg c "$id" '[inputs] | if length == 1 then .[0] | {paths: [.tool_input.file_path // .tool_input.notebook_path // empty], command: (.tool_input.command // ""), cwd: (.cwd // ""), call: $c, session: (.session_id // "")} else error("not one value") end' <<<"$r" 2>/dev/null); then
+    printf '%s\n' "$o"
+  else
+    printf 'hermy-unreadable %s "call":"%s","session":"%s"\n' "$r" "$id" "$ss"
+  fi
 }
 . "${0%/*}/../bin/hermy"
