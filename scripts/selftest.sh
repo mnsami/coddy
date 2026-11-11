@@ -2353,6 +2353,9 @@ t 0 "policy: a cover is every commit message" grep -qF 'A cover given in the pat
 t 0 "ship: stops on a confidential issue with no cover" grep -qF 'No `cover` line in that `state` and the issue is confidential' "$shp"
 t 0 "ship: before any push, naming start" grep -qF 'stop before any push and say: run `/coddy:start <issue>`' "$shp"
 t 0 "ship: a failed confidential read stops too" grep -qF 'That call fails → stop before any push and show its error.' "$shp"
+for f in "$st" "$shp"; do
+  t 0 "${f##*/skills/}: a cover the shell would expand counts as none" grep -qF 'or a `cover` or `cover_body` line holding `"`, `` ` ``, `$` or `\`, counts as no `cover` line' "$f"
+done
 t 0 "ship: pushes with the cover" grep -qF 'The message is the `cover` from step 1'"'"'s `state` when it has one' "$shp"
 t 0 "ship: titles and describes by the cover alone" grep -qF 'the title is the cover and the body (gitlab: `description`) is `cover_body`, then `Review loop completed.`' "$shp"
 t 0 "ship: with no summary keys" grep -qF 'nothing else: no `summary` keys' "$shp"
