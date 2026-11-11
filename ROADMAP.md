@@ -60,7 +60,7 @@ One plugin per agent, each carrying the same skills, briefs and `bin/coddy`; wha
 - #30 Spike: build agent adapters on an existing cross-agent hook layer
 - #31 Codex adapter: `.codex-plugin/plugin.json` with PreToolUse hooks
 - #32 Cursor adapter: a Cursor plugin; a blocking pre-edit hook is unconfirmed
-- #33 Copilot CLI adapter: reads `.claude-plugin/` directly and passes `CLAUDE_PLUGIN_ROOT` and `CLAUDE_PROJECT_DIR` to hooks, so the Claude Code shims run as they are
+- #33 Copilot CLI adapter: loads the plugin's skills but drops the `args` of the exec form in `hooks/hooks.json` (so no hook guardrail runs) and expands nothing in skill bodies, so it needs its own hook manifest and shim
 - Gemini CLI adapter: an extension (`gemini-extension.json`) with BeforeTool hooks (issue to be filed)
 - #34 coddy doctor: prerequisites and per-agent enforcement level
 
