@@ -542,6 +542,10 @@ hookson() {
 # jq for the hooks: HOME=/dev/null, so a ~/.jq (loaded into every program)
 # is never read. Not named jq, so command -v jq still finds the real one.
 jqh() { HOME=/dev/null jq "$@"; }
+# The hook verbs read one neutral JSON line (paths, command, cwd, call,
+# session). A host's shim defines hermy_in to map its own payload to it; with
+# none, stdin already is that line.
+readin() { if declare -F hermy_in >/dev/null; then in=$(hermy_in); else in=$(cat); fi; }
 # Hook context for the agent, as Claude Code reads it: no permissionDecision,
 # so the usual permission flow still applies.
 note() { jqh -cn --arg m "$*" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $m}}'; }
@@ -649,13 +653,13 @@ if [ "${1-}" = guard ]; then
   # .hermy.yml must never go through unasked. So the payload is read before
   # warnmode, whose die lets the edit through.
   command -v jq >/dev/null || die "the edit guard needs jq"
-  # The hook's session_id is the editing session's HERMY_SESSION.
+  # The input's session is the editing session's HERMY_SESSION.
   # jq once per field, not read per line: a path may hold a newline. $(...)
   # strips trailing ones, so a path ends in an x it then drops, here and from
   # phys and inroot below (abspath's own line ends in a newline).
-  in=$(cat)
-  me=$(jqh -r '.session_id // ""' <<<"$in") &&
-    f=$(jqh -j '.tool_input.file_path // .tool_input.notebook_path // empty' <<<"$in" && printf x) &&
+  readin
+  me=$(jqh -r '.session // ""' <<<"$in") &&
+    f=$(jqh -j '.paths[0] // empty' <<<"$in" && printf x) &&
     cwd=$(jqh -j '.cwd // empty' <<<"$in" && printf x) || die "the edit guard could not read the hook payload with jq"
   f=${f%x} cwd=${cwd%x}
   [ -n "$f" ] || die "the edit guard could not read a path from the hook payload"
@@ -835,7 +839,7 @@ if [ "${1-}" = guard ]; then
     # its mkdir and that line.
     [ ! -d "$root/.git/hermy/$issue" ] || [ -s "$root/.git/hermy/$issue/owner" ] || die "issue $issue's claim is in flight or died halfway. Run /hermy:start $issue."
     # The lock's owner, as claim wrote it; a plain-file marker has none. A
-    # claim run by hand, or a hook payload without session_id, names no
+    # claim run by hand, or a hook input without a session, names no
     # session, and then the edit is not held to the owner.
     owner "$issue"
     [ -z "$sid" ] || [ -z "$me" ] || mine ||
@@ -1185,9 +1189,9 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # reads as none, so it cannot name a path outside TMPDIR. Read without jq:
   # onboard installs jq inside one command, so snap runs without it and trip
   # with it, and the name must come out the same on both sides. Inside a JSON
-  # string a quote is escaped, so a bare "tool_use_id" is a key, never text.
-  in=$(cat)
-  id=$(sed -n 's/.*"tool_use_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
+  # string a quote is escaped, so a bare "call" is a key, never text.
+  readin
+  id=$(sed -n 's/.*"call"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
   R=$(cd "$root" 2>/dev/null && pwd -P)
   # The common dir git worktree list reads, physical, read past each side's
   # onboarding gate: it runs at the root, whose .git is, past oddly, a real
@@ -1351,7 +1355,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # when it is no directory, since BusyBox's rm has no -d), and none when
     # .git/hermy is a link or no directory; a session's first has fp prune
     # those over a day old (pd).
-    ss=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
+    ss=$(sed -n 's/.*"session"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
     if [ -d "$root/.git" ] && m=$(smark "$ss"); then
       { [ -e "${m%/*}" ] || [ -L "${m%/*}" ] || mkdir "${m%/*}"
         if [ -d "${m%/*}" ] && [ ! -L "${m%/*}" ]; then

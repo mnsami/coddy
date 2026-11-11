@@ -1540,6 +1540,10 @@ tripped 2 "tripwire: local commit that was pushed to another branch" 'git commit
 # snap reads no command's text: a push to the default branch passes it,
 # saying nothing, for the pre-push hook and branch protection to refuse.
 t 0 "push: git push origin main passes snap, saying nothing" silent 'git push origin main'
+t 2 "shim: guard refuses a path jq cannot read" sh -c "printf '{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"\\\\ud800\"}}' | CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' guard"
+# snap without jq and trip with it must name one snapshot, the call id read by sed on both sides
+sharedid() { printf '{"tool_use_id":"w","session_id":"s","cwd":"%s","tool_input":{"command":"true"}}' "$repo" > "$tmp/w.json"; PATH="$tmp/nojq" run snap < "$tmp/w.json" >/dev/null && o=$(run trip < "$tmp/w.json" 2>&1) && ! grep -q lost <<<"$o"; }
+t 0 "shim: snap without jq and trip with it name the same snapshot" sharedid
 # jq loads ~/.jq into every program; the hooks run it with HOME=/dev/null,
 # so a broken one leaves the guard reading the payload as before.
 mkdir "$tmp/badhome"; printf 'def x: ;\n' > "$tmp/badhome/.jq"
