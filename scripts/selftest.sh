@@ -2327,6 +2327,34 @@ for f in skills/onboard/SKILL.md README.md templates/coddy.gitlab-ci.yml; do
   t 0 "$f: CODDY_TOKEN is tied to this project alone" grep -qF 'tied to this project alone, never a personal one' "$here/$f"
   t 0 "$f: and any branch's pipeline can read it" grep -qiF "any branch's pipeline can read it" "$here/$f"
 done
+# A confidential gitlab issue or a jira ticket with a security level reaches
+# public text only through a cover the user approves; internal text never does.
+st="$here/skills/start/SKILL.md" shp="$here/skills/ship/SKILL.md"
+t 0 "start: confidential is gitlab's flag or jira's security level, never github" grep -qF 'Confidential is a gitlab issue that is `confidential` or a jira ticket with a security level, as step 1 reads them; github has none.' "$st"
+t 0 "start: gitlab reads the flag and the internal notes" grep -qF 'whether the issue is `confidential` and which notes are `internal`' "$st"
+t 0 "start: jira reads the security level" grep -qF '`getJiraIssue` with `fields: [security]` for its security level' "$st"
+t 0 "start: jira reads each comment's visibility" grep -qF "which gives each comment's visibility restriction and, on JSM, its \`jsdPublic\`" "$st"
+t 0 "start: gates create behind a cover" grep -qF 'Confidential and no `cover` line in `state $issue` (a `state` refused because the issue is not In Progress yet has none) → before `create`, propose a cover' "$st"
+t 0 "start: and lists what goes public" grep -qF "List what goes public once shipped: the branch, every commit message, the PR's title and description, and the diff." "$st"
+t 0 "start: stop creates nothing" grep -qF 'Ask: approve, edit or stop. Stop → stop, with nothing created.' "$st"
+t 0 "start: headless, the gate is an internal note or a covered comment" grep -qF 'Headless → post the cover and that list as the `<!-- coddy:questions -->` comment (gitlab `save_note` with `internal: true`; jira a comment' "$st"
+t 0 "start: a branch already given stays fixed" grep -qF 'fixed when a bullet above other than the last gave it' "$st"
+t 0 "start: the slug comes from the cover, never the title" grep -qF "from the cover's subject, never the title" "$st"
+t 0 "start: records the cover once claimed" grep -qF '`state $issue "cover=<subject>" "cover_body=<line>"`' "$st"
+t 0 "start: implement commits with the cover" grep -qF 'a `cover` line in `state $issue` → that cover in its place as the commit message' "$st"
+t 0 "start: and so does harden" grep -qF '`commit` (the cover in its place, as in step 8)' "$st"
+t 0 "start: no public text quotes internal text" grep -qF 'No public text (a branch, a commit message, a PR' "$st"
+t 0 "start: posts internal after reading internal text" grep -qF 'every plan and questions comment this skill posts is internal too: gitlab `save_note` with `internal: true`; jira `addOrEditJiraIssueComment` with `commentVisibility`' "$st"
+t 0 "start: leaves differently restricted text out" grep -qF 'restricted comments that carry different restrictions → their text stays out of the plan and the questions' "$st"
+t 0 "policy: a cover is every commit message" grep -qF 'A cover given in the pattern'"'"'s place → every commit message is exactly the cover, with no body.' "$here/skills/start/references/policy.md"
+t 0 "ship: stops on a confidential issue with no cover" grep -qF 'No `cover` line in that `state` and the issue is confidential' "$shp"
+t 0 "ship: before any push, naming start" grep -qF 'stop before any push and say: run `/coddy:start <issue>`' "$shp"
+t 0 "ship: pushes with the cover" grep -qF 'The message is the `cover` from step 1'"'"'s `state` when it has one' "$shp"
+t 0 "ship: titles and describes by the cover alone" grep -qF 'the title is the cover and the body (gitlab: `description`) is `cover_body`, then `Review loop completed.`' "$shp"
+t 0 "ship: with no summary keys" grep -qF 'nothing else: no `summary` keys' "$shp"
+t 0 "ship: reads jira's security level" sh -c "sed -n 's/^allowed-tools: //p' '$shp' | grep -qF mcp__plugin_atlassian_atlassian__getJiraIssue"
+t 0 "README: the diff stays public on a confidential issue" grep -qF 'The diff itself is public once pushed' "$here/README.md"
+t 0 "README: triage ideas from it are not covered" grep -qF 'Ideas `/coddy:triage` files from that work are not covered' "$here/README.md"
 
 # Merging main into an issue branch brings the bookmark of every merged PR
 # into its history, and a newer one must not be taken for the issue's branch.

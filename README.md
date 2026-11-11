@@ -97,6 +97,22 @@ The PR check workflow alone runs `gh`, inside GitHub Actions, where it is
 built in; the GitLab job alone calls the API, with `curl`, inside its
 pipeline.
 
+A confidential GitLab issue, or a Jira ticket with a security level, is
+hidden, while its branch, commits and pull request are not. So
+`/coddy:start` first proposes a cover written without the issue's words:
+the branch, one commit subject used for every commit and as the PR title,
+and one line of description, with a list of what goes public once shipped.
+Nothing is created until you approve it, and `/coddy:ship` stops on such an
+issue that has none. A GitLab note marked internal, or a Jira comment
+restricted to a group or role, is never quoted in public text, and the plan
+and questions `/coddy:start` posts on that issue are internal too. Its
+ceilings:
+
+- The diff itself is public once pushed: the cover hides the issue's words,
+  not the change.
+- Ideas `/coddy:triage` files from that work are not covered: it files them
+  as issues that are not confidential.
+
 The mechanics live in one command, `bin/coddy`, with no Claude Code
 dependency: Claude Code puts the plugin's `bin/` on the Bash tool's `PATH`
 while the plugin is enabled. claude.ai and Cowork do not install a plugin
