@@ -2339,6 +2339,7 @@ t 0 "start: and lists what goes public" grep -qF "List what goes public once shi
 t 0 "start: stop creates nothing" grep -qF 'Ask: approve, edit or stop. Stop → stop, with nothing created.' "$st"
 t 0 "start: headless, the gate is an internal note or a covered comment" grep -qF 'Headless → post the cover and that list as the `<!-- coddy:questions -->` comment (gitlab `save_note` with `internal: true`; jira a comment' "$st"
 t 0 "start: a branch already given stays fixed" grep -qF 'fixed when a bullet above other than the last gave it' "$st"
+t 0 "start: a confidential issue is interviewed without a skill" grep -qF 'Confidential, or step 1 read internal text → the interview row'"'"'s fallback, never a skill' "$st"
 t 0 "start: the slug comes from the cover, never the title" grep -qF "from the cover's subject, never the title" "$st"
 t 0 "start: records the cover once claimed" grep -qF '`state $issue "cover=<subject>" "cover_body=<line>"`' "$st"
 t 0 "start: implement commits with the cover" grep -qF 'a `cover` line in `state $issue` → that cover in its place as the commit message' "$st"
