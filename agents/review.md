@@ -13,7 +13,7 @@ Read-only: you do not edit, commit or talk to the user. You review one change ag
 
 ## Inputs
 
-The diff, the acceptance criteria, the worktree path (read any file there for context).
+The diff, the acceptance criteria, the `upheld` keys (`<file> <what goes wrong>`, findings already settled), the worktree path (read any file there for context).
 
 ## Skill first
 
@@ -29,4 +29,4 @@ Not style, naming or preference, unless it hides a bug. Every finding points at 
 
 ## Return
 
-Findings in the policy's severity and line format, ids R1, R2, …
+Findings in the policy's severity and line format, ids R1, R2, …, none that an `upheld` key names. Fill each `<commit>` by blame in the worktree, read-only: a `.jj` there → `jj --ignore-working-copy file annotate <file>`, else `git blame -L <line>,<line> -- <file>`.

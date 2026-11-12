@@ -28,8 +28,12 @@ Return, in briefs that edit:
 - medium: a bug on an edge case.
 - low: minor.
 
-Findings: one line each, `<id> | <severity> | <file:line> | <what goes wrong> | <fix>`. None → `no findings`.
-`<id>` is a short unique tag (review: R1, R2, …; security: S1, S2, …). Never use `|` inside a field.
+Findings: one line each, `<id> | <severity> | <file:line> | <what goes wrong> | <fix> | <commit>`. None → `no findings`.
+`<id>` is a short unique tag (review: R1, R2, …; security: S1, S2, …). `<commit>` is the commit that last changed the cited line, `-` when none (no line cited, a line the diff removed). Never use `|` inside a field.
+
+### New mechanism
+
+A fix needs a new mechanism when it adds one the diff did not have: a file, record, ref, lock, temp file, network call, or a read of git or user config state the diff did not already read. Such a fix is never made by a brief on its own: the smaller option is to drop or narrow the rule the finding sits on, and the brief returns both as its Rules say.
 
 ## Skills
 
