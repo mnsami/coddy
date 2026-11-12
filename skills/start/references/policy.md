@@ -29,7 +29,7 @@ Return, in briefs that edit:
 - low: minor.
 
 Findings: one line each, `<id> | <severity> | <file:line> | <what goes wrong> | <fix> | <commit>`. None → `no findings`.
-`<id>` is a short unique tag (review: R1, R2, …; security: S1, S2, …). `<commit>` is the commit that last changed the cited line, `-` when none (no line cited, a line the diff removed). Never use `|` inside a field.
+`<id>` is a short unique tag (review: R1, R2, …; security: S1, S2, …). `<commit>` is the commit that last changed the cited line, `-` when none (no line cited, a line the diff removed). A finding on code the diff did not change starts its `<fix>` with `pre-existing:`, one no change can fully fix with `no full fix:`. Never use `|` inside a field.
 
 ### New mechanism
 
