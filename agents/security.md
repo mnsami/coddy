@@ -31,4 +31,4 @@ A skill matching the Review for security row of policy.md's Skills table is list
 
 ## Return
 
-Findings in the policy's severity and line format, ids S1, S2, …, none that an `upheld` key names. Fill each `<commit>` by blame in the worktree, read-only: a `.jj` there → `jj --ignore-working-copy file annotate <file>`, else `git blame -L <line>,<line> -- <file>`.
+Findings in the policy's severity and line format, ids S1, S2, …, none that an `upheld` key names. Fill each `<commit>` by blame in the worktree, read-only, each command starting `cd <worktree> &&`, since from anywhere else jj and git read the main checkout: a `.jj` there → `jj --ignore-working-copy file annotate <file>`, else `git blame --no-textconv -L <line>,<line> -- <file>`.
