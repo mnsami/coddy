@@ -28,7 +28,7 @@ holds() { read -r a b _ < "$2" && [ "$a $b" = "$1" ]; }
 # guard <path> [session]: the edit hook's payload; another session runs in another process
 guard() { local s=${2-sess-a} p=1; [ "$s" != sess-a ] || p=$$; printf '{"session":"%s","paths":["%s"]}' "$s" "$1" | HERMY_PID=$p run guard; }
 # asks <path>: guard exits 0 and asks the user, as hook JSON
-asks() { out=$(guard "$1") && printf %s "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and .permissionDecision == "ask" and (.permissionDecisionReason | contains(".hermy.yml"))'; }
+asks() { out=$(guard "$1") && printf %s "$out" | jq -e '.hermy == "ask" and (.text | contains(".hermy.yml"))'; }
 wire() { printf '{"call":"%s"}' "$2" | run "$1"; }
 tripped() { wire snap w; (cd "$repo" && eval "$3") >/dev/null 2>&1; t "$1" "$2" wire trip w; }
 # report <name> <shell snippet>: as tripped, with trip's exit in $r and its report in $out
@@ -50,6 +50,7 @@ mkdir .claude sub
 t 1 "the core reads no CLAUDE_ variable" grep -q CLAUDE_ "$here/bin/hermy"
 # nor an input under the name from before the rename (spelled as a class, so this line holds no old name)
 t 1 "the core reads no input under the old name" grep -q 'C[O]DDY_' "$here/bin/hermy"
+t 1 "the core names no host payload key or envelope" grep -qE 'tool_input|tool_use_id|session_id|hookSpecificOutput|permissionDecision|additionalContext|hookEventName' "$here/bin/hermy"
 t 0 "root: from HERMY_ROOT" rooted /
 t 0 "root: from the working directory without HERMY_ROOT" rooted "$repo" -u HERMY_ROOT
 t 0 "root: from a subdirectory without HERMY_ROOT" rooted "$repo/sub" -u HERMY_ROOT
@@ -330,7 +331,7 @@ for p in "$repo/./.hermy.yml" "$repo//.hermy.yml" "$repo/sub/../.hermy.yml" "$re
 # .coddy.yml, from before the rename, below a live .hermy.yml is let go by the
 # config lock, so an edit of it is held like any path in the main checkout, and
 # one that is a link to .git/config is refused, never asked.
-casks() { out=$(guard "$1") && printf %s "$out" | jq -e '.hookSpecificOutput.permissionDecision == "ask" and (.hookSpecificOutput.permissionDecisionReason | contains(".coddy.yml"))'; }
+casks() { out=$(guard "$1") && printf %s "$out" | jq -e '.hermy == "ask" and (.text | contains(".coddy.yml"))'; }
 t 2 "guard does not ask on .coddy.yml below a live .hermy.yml" guard "$repo/.coddy.yml"
 t 0 "guard: holding it as the main checkout" says 'edits belong in an issue worktree' guard "$repo/.coddy.yml"
 ln -s .git/config .coddy.yml
@@ -343,7 +344,7 @@ for p in "$repo/.coddy.yml" "$repo/sub/../.coddy.yml" "$repo/.CODDY.YML"; do t 0
 t 0 "guard asks on .hermy.yml above a live .coddy.yml" asks "$repo/.hermy.yml"
 # The legacy .claude/coddy.yml below it lies in the agent dir, free like any
 # path there, and one that is a link to .git/config is refused.
-lasks() { out=$(guard "$1") && jq -e '.hookSpecificOutput.permissionDecision == "ask" and (.hookSpecificOutput.permissionDecisionReason | contains(".claude/coddy.yml"))' <<<"$out"; }
+lasks() { out=$(guard "$1") && jq -e '.hermy == "ask" and (.text | contains(".claude/coddy.yml"))' <<<"$out"; }
 HERMY_AGENT_DIR=.claude t 0 "guard does not ask on the legacy config below a live .coddy.yml" quiet guard "$repo/.claude/coddy.yml"
 ln -s ../.git/config .claude/coddy.yml
 HERMY_AGENT_DIR=.claude t 2 "guard refuses a legacy config below a live .coddy.yml that is a link to .git/config" guard "$repo/.claude/coddy.yml"
@@ -579,7 +580,7 @@ slow() { : > "$tmp/slow/pids"; printf '{"call":"w"}' | HERMY_BUDGET=2 PATH="$tmp
 left() { [ -s "$tmp/slow/pids" ] || return 0; while read -r p; do ! kill -0 "$p" 2>/dev/null || return 0; done < "$tmp/slow/pids"; return 1; }
 SECONDS=0; out=$(slow snap); r=$?
 t 0 "budget: snap past it lets the command run, within seconds" test "$r:$((SECONDS <= 8))" = 0:1
-t 0 "budget: telling the agent it goes unchecked" jq -e '.hookSpecificOutput.additionalContext | contains("so this command runs unchecked")' <<<"$out"
+t 0 "budget: telling the agent it goes unchecked" jq -e '.hermy == "note" and (.text | contains("so this command runs unchecked"))' <<<"$out"
 t 0 "budget: its snapshot says so" grep -qx unchecked "$snapfile"
 t 1 "budget: and no git of its fingerprint is left running" left
 rm .hermy.yml; out=$(wire trip w 2>&1); r=$?
@@ -599,7 +600,7 @@ t 0 "budget: nor any snapshot record" none
 mkdir "$tmp/slowh"; sed 's/ merge-base / hash-object /' "$tmp/slow/git" > "$tmp/slowh/git"; chmod +x "$tmp/slowh/git"
 echo a > dirty.txt; : > "$tmp/slow/pids"
 out=$(printf '{"call":"w"}' | HERMY_BUDGET=2 PATH="$tmp/slowh:$PATH" run snap)
-t 0 "budget: past git status, the notice names the dirty paths it listed" jq -e '.hookSpecificOutput.additionalContext | test("checkout, which has [0-9]+ dirty or untracked paths, within")' <<<"$out"
+t 0 "budget: past git status, the notice names the dirty paths it listed" jq -e '.hermy == "note" and (.text | test("checkout, which has [0-9]+ dirty or untracked paths, within"))' <<<"$out"
 t 1 "budget: and no git of its fingerprint is left running" left
 wire trip w 2>/dev/null; rm -r dirty.txt "$tmp/slowh"
 # A member of its group that ignores TERM gets KILL once the job is gone.
@@ -648,7 +649,7 @@ done
 unchecked() {
   for i in 1 2; do
     out=$(PATH="$3:$PATH" wire snap w); echo x >> README.md
-    t 0 "unchecked: $1 failing, snap says the command runs unchecked ($i)" jq -e --arg s "since $2 failed, so this command runs unchecked" '.hookSpecificOutput.additionalContext | contains($s)' <<<"$out"
+    t 0 "unchecked: $1 failing, snap says the command runs unchecked ($i)" jq -e --arg s "since $2 failed, so this command runs unchecked" '.hermy == "note" and (.text | contains($s))' <<<"$out"
     out=$(PATH="$3:$PATH" wire trip w 2>&1); r=$?
     t 0 "unchecked: and trip reports the edit's command ($i)" test "$r" = 2
     t 0 "unchecked: as one that ran unchecked, naming $2 ($i)" grep -q "ran unchecked: the main checkout could not be fingerprinted before it ran, since $2 failed" <<<"$out"
@@ -712,7 +713,7 @@ t 0 "unchecked: trip's fingerprint failing, with an edit, trips" test "$r" = 2
 t 0 "unchecked: saying the fingerprint failed" grep -q 'could not be fingerprinted after that command ran, since the fingerprint failed' <<<"$out"
 git checkout -q README.md
 out=$(PATH="$tmp/nosort:$PATH" wire snap w)
-t 0 "unchecked: snap's fingerprint failing says the command runs unchecked" jq -e '.hookSpecificOutput.additionalContext | contains("since the fingerprint failed, so this command runs unchecked")' <<<"$out"
+t 0 "unchecked: snap's fingerprint failing says the command runs unchecked" jq -e '.hermy == "note" and (.text | contains("since the fingerprint failed, so this command runs unchecked"))' <<<"$out"
 t 0 "unchecked: its snapshot says so" grep -qx 'unchecked fp' "$snapfile"
 out=$(wire trip w 2>&1); r=$?
 t 0 "unchecked: and trip reports it" test "$r" = 2
@@ -1401,6 +1402,7 @@ t 0 "removed config: and that a tracked config comes back from HEAD in your own 
 t 2 "removed config: guard refuses a path outside the project too" guard "$tmp/elsewhere.txt"
 t 0 "removed config: a Write of .hermy.yml is asked" asks "$repo/.hermy.yml"
 t 1 "removed config: naming no /hermy:config, which stops without a config" grep -qF '/hermy:config' <<<"$out"
+lasks() { out=$(guard "$1") && jq -e '.hermy == "ask" and (.text | contains(".claude/coddy.yml"))' <<<"$out"; }
 t 0 "removed config: and one of .claude/coddy.yml" lasks "$repo/.claude/coddy.yml"
 t 0 "removed config: and one of .coddy.yml" casks "$repo/.coddy.yml"
 t 2 "removed config: but no other edit under .claude/" guard "$repo/.claude/notes.md"

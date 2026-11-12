@@ -66,4 +66,18 @@ hermy_in() {
     printf 'hermy-unreadable %s "call":"%s","session":"%s"\n' "$r" "$id" "$ss"
   fi
 }
+# The core's verdict line as Claude Code's hook JSON, by parameter expansion
+# alone: the text is already a JSON string, so it moves over byte for byte.
+hermy_out() {
+  local l=$1 n='{"hermy":"note","text":' a='{"hermy":"ask","text":'
+  if [[ $l == "$n"*'}' ]]; then
+    l=${l#"$n"}
+    printf '%s\n' "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":${l%\}}}}"
+  elif [[ $l == "$a"*'}' ]]; then
+    l=${l#"$a"}
+    printf '%s\n' "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":${l%\}}}}"
+  else
+    printf '%s\n' "$l"
+  fi
+}
 . "${0%/*}/../bin/hermy"

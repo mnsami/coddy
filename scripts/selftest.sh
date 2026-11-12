@@ -1216,6 +1216,11 @@ t 1 "claim needs a worktree first" run claim 99
 warned() { out=$(guard "$1" "${2-sess-a}") && printf %s "$out" | jq -e --arg s "${3-/hermy:start}" '.hookSpecificOutput | .hookEventName == "PreToolUse" and (.additionalContext | contains($s))'; }
 printf 'tracker: github\ndefault_branch: main\nguard: warn\n' > .claude/coddy.yml
 t 0 "warn: guard lets the main checkout through with the message" warned "$repo/README.md"
+mkdir "$repo/we\"ird"; wp="$repo/we\"ird/../"$'\n'"x.txt"
+wout=$(jq -cn --arg p "$wp" '{session_id: "sess-a", tool_input: {file_path: $p}}' | CLAUDE_PID=$$ run guard)
+t 0 "shim: a note with a quote and newline (a JSON backslash escape) maps byte-identically" jq -e --arg s "$wp" '.hookSpecificOutput.hookEventName == "PreToolUse" and (.hookSpecificOutput.additionalContext | contains($s))' <<<"$wout"
+t 1 "shim: and prints one line" test "$(printf '%s\n' "$wout" | wc -l)" -ne 1
+rmdir "$repo/we\"ird"
 t 0 "warn: guard lets an unclaimed worktree through with the message" warned "$repo/.worktrees/77/a.txt"
 mkdir -p .git/hermy/77 && echo "sess-z 1" > .git/hermy/77/owner # claimed by another session, in another process
 t 0 "warn: guard lets another session's worktree through, naming the owner" warned "$repo/.worktrees/77/a.txt" sess-a "belongs to session sess-z"

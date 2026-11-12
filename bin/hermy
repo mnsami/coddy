@@ -546,9 +546,11 @@ jqh() { HOME=/dev/null jq "$@"; }
 # session). A host's shim defines hermy_in to map its own payload to it; with
 # none, stdin already is that line.
 readin() { if declare -F hermy_in >/dev/null; then in=$(hermy_in); else in=$(cat); fi; }
-# Hook context for the agent, as Claude Code reads it: no permissionDecision,
-# so the usual permission flow still applies.
-note() { jqh -cn --arg m "$*" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $m}}'; }
+# One verdict line, in the host's hook output when its shim defines hermy_out.
+emit() { if declare -F hermy_out >/dev/null; then hermy_out "$1"; else printf '%s\n' "$1"; fi; }
+# Hook context for the agent: a note, with no decision, so the usual
+# permission flow still applies.
+note() { emit "$(jqh -cn --arg m "$*" '{hermy: "note", text: $m}')"; }
 # guard: warn lets the $1 (edit) through and hands the agent die's
 # message as context instead.
 warnmode() { [ "$(cfg guard)" = warn ] || return 0; wm=$1; die() { note "hermy warning, the $wm was let through (guard: warn): $*"; exit 0; }; }
@@ -761,7 +763,7 @@ if [ "${1-}" = guard ]; then
   nm=$(byname "$f" && printf x) && nm=${nm%?x} && at=$(phys "$nm" new) && at=${at%x} || die "$nf"
   pr=$(cd "$root" && pwd -P && printf x) && pr=${pr%?x} || pr=$root
   # Removed (tamp), /hermy:config stops on NOT_ONBOARDED, so the ask names none.
-  ask() { local m="Editing $1 changes the hermy guardrails. Allow it only if you asked for this change (/hermy:config)."; [ -z "$tamp" ] || m="Writing $1 puts back the hermy config that was removed, and with it the hermy guardrails. Allow it only if you asked for this change."; jqh -cn --arg m "$m" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'; exit 0; }
+  ask() { local m="Editing $1 changes the hermy guardrails. Allow it only if you asked for this change (/hermy:config)."; [ -z "$tamp" ] || m="Writing $1 puts back the hermy config that was removed, and with it the hermy guardrails. Allow it only if you asked for this change."; emit "$(jqh -cn --arg m "$m" '{hermy: "ask", text: $m}')"; exit 0; }
   lc=$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')
   # Each config path from the highest down to the live one ($cname), the
   # legacy one in the agent dir (free otherwise) asked as .hermy.yml is, its
@@ -1294,7 +1296,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   }
   # Hook context of fixed text alone (no quote, backslash or control
   # character), without jq.
-  ctx() { printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$*"; }
+  ctx() { emit "$(printf '{"hermy":"note","text":"%s"}' "$*")"; }
   tl="usually thousands of dirty or untracked files; ignored ones cost nothing"
   sx="stat gave no size, change time and inode for one of its dirty files"
   ut="so this command runs unchecked: what it changes there, and a worktree it makes, go unreported, though a change to the config is still put back."
