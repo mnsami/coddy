@@ -872,6 +872,14 @@ ln -s ../../.hermy.yml .worktrees/1/cfg; ln .hermy.yml .worktrees/1/hard
 t 0 "guard asks on .hermy.yml through a symlink in the owner's worktree" asks "$repo/.worktrees/1/cfg"
 t 0 "guard asks on .hermy.yml through a hard link in the owner's worktree" asks "$repo/.worktrees/1/hard"
 rm .worktrees/1/cfg .worktrees/1/hard
+# An edit naming several paths is held on every one.
+guardp() { printf '{"session":"sess-a","paths":%s}' "$1" | run guard; }
+t 2 "guard: two paths, one outside any worktree, is refused" guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/README.md\"]"
+t 0 "guard: two paths, one the config, asks" guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.hermy.yml\"]"
+t 0 "guard: that ask is one neutral line" eval 'guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.hermy.yml\"]" | jq -e ".hermy == \"ask\""'
+t 2 "guard: a refused path beats an ask" guardp "[\"$repo/.hermy.yml\",\"$repo/README.md\"]"
+t 2 "guard: an empty paths list is refused" guardp '[]'
+t 0 "guard: two paths in the claimed worktree pass" guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.worktrees/1/b.txt\"]"
 # Shift_JIS, GBK and GB18030 take 0x78 as a trail byte, so a path ending in
 # a lead byte reads with the x the guard puts after it as one character: the
 # guard reads byte-wise. ぁ, in UTF-8 as the payload carries it, ends in 0x81.

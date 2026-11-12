@@ -636,6 +636,8 @@ abspath() {
   p="${p%/}$t"; echo "${p:-/}"
 }
 
+# This file by a path the cd below leaves valid, for the git hooks start writes.
+src="${BASH_SOURCE[0]-}"; case "$src" in /*|'') ;; *) src="$PWD/$src" ;; esac
 if [ "${1-}" = guard ]; then
   # Byte-wise, before the payload is read: under Shift_JIS, GBK or GB18030
   # (LC_ALL, LC_CTYPE or LANG, which an env can set) a path ending in a lead
@@ -660,6 +662,26 @@ if [ "${1-}" = guard ]; then
   # strips trailing ones, so a path ends in an x it then drops, here and from
   # phys and inroot below (abspath's own line ends in a newline).
   readin
+  # An edit naming several paths is held on each: guard runs itself once per
+  # path, and the first refusal, else the first ask, else the notes, win.
+  if n=$(jqh -r '(.paths // []) | length' <<<"$in" 2>/dev/null) && [ "$n" -gt 1 ] 2>/dev/null; then
+    ask="" notes="" i=0
+    while [ "$i" -lt "$n" ]; do
+      # A child prints on stderr when it blocks and on stdout when it lets
+      # through, never both, so one capture holds the message or the line.
+      o=$(jqh -c --argjson i "$i" '.paths = [.paths[$i]]' <<<"$in" | "$BASH" -p "$src" guard 2>&1); c=$?
+      [ "$c" -ne 2 ] || { printf '%s\n' "$o" >&2; exit 2; }
+      [ "$c" -eq 0 ] || exit 1
+      if [ -n "$o" ]; then
+        k=$(jqh -r '.hermy // ""' <<<"$o"); t=$(jqh -r '.text // ""' <<<"$o")
+        case "$k" in ask) [ -n "$ask" ] || ask=$t ;; note) notes="${notes:+$notes }$t" ;; esac
+      fi
+      i=$((i+1))
+    done
+    [ -z "$ask" ] || { emit "$(jqh -cn --arg t "$ask" '{hermy:"ask",text:$t}')"; exit 0; }
+    [ -z "$notes" ] || emit "$(jqh -cn --arg t "$notes" '{hermy:"note",text:$t}')"
+    exit 0
+  fi
   me=$(jqh -r '.session // ""' <<<"$in") &&
     f=$(jqh -j '.paths[0] // empty' <<<"$in" && printf x) &&
     cwd=$(jqh -j '.cwd // empty' <<<"$in" && printf x) || die "the edit guard could not read the hook payload with jq"
@@ -1594,8 +1616,6 @@ if [ "${1-}" = doctor ]; then
 fi
 [ -z "$odd" ] || { [ "${1-}" = sweep ] && exit 0; oddly; }
 [ -f "$conf" ] || { [ "${1-}" = sweep ] && exit 0; die "NOT_ONBOARDED"; }
-# This file by a path the cd below leaves valid, for the git hooks start writes.
-src="${BASH_SOURCE[0]-}"; case "$src" in /*|'') ;; *) src="$PWD/$src" ;; esac
 # Where the call began, physical, for wtroots: a session's sandbox writes it.
 began=$(cd "$dir" 2>/dev/null && pwd -P)
 cd "$root" || die "cannot enter $root"
