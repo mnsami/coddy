@@ -33,7 +33,7 @@ Findings: one line each, `<id> | <severity> | <file:line> | <what goes wrong> | 
 
 ### New mechanism
 
-A fix needs a new mechanism when it adds one the diff did not have: a file, record, ref, lock, temp file, network call, or a read of git or user config state the diff did not already read. Such a fix is never made by a brief on its own: the smaller option is to drop or narrow the rule the finding sits on, and the brief returns both as its Rules say.
+A fix needs a new mechanism when it adds one the diff did not have and the plan does not name: a file, record, ref, lock, temp file, network call, or a read of git or user config state the diff did not already read. Such a fix is never made by a brief on its own: the smaller option is to drop or narrow the rule the finding sits on, and the brief returns both as its Rules say.
 
 ## Skills
 

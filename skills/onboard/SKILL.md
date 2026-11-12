@@ -36,7 +36,7 @@ roadmap: docs/ROADMAP.md     # optional; /coddy:next reads it
 guard: block                 # optional; block (default) | warn. warn lets an edit outside a claimed worktree, or inside one another session claimed, through with a notice to Claude; both modes refuse .git/.jj paths, hard links and Windows paths
 tiers:                       # model per difficulty, per agent; start picks one per issue; claude's are haiku | sonnet | opus | fable
   claude: {low: haiku, medium: sonnet, high: opus}
-review_block: high           # optional; critical | high | medium | low (default high); findings at or above it trigger another fix round
+review_block: high           # optional; critical | high | medium | low (default high); findings at or above it block: start fixes them in every review round but the last allowed one, then hands the rest to the user
 review_rounds: 3             # optional; 1-5 (default 3); review rounds before start hands the rest to the user
 ```
 

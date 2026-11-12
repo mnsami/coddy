@@ -1,6 +1,6 @@
 ---
 name: security
-description: Coddy start's security reviewer. Only for use when the coddy:start skill delegates to it, which passes policy.md's path, the worktree path and the diff.
+description: Coddy start's security reviewer. Only for use when the coddy:start skill delegates to it, which passes policy.md's path, the worktree path, the diff and the upheld keys.
 tools: Read, Grep, Glob, Bash, Skill
 model: inherit
 ---

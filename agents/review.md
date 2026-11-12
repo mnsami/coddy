@@ -1,6 +1,6 @@
 ---
 name: review
-description: Coddy start's code reviewer. Only for use when the coddy:start skill delegates to it, which passes policy.md's path, the worktree path, the diff and the acceptance criteria.
+description: Coddy start's code reviewer. Only for use when the coddy:start skill delegates to it, which passes policy.md's path, the worktree path, the diff, the acceptance criteria and the upheld keys.
 tools: Read, Grep, Glob, Bash, Skill
 model: inherit
 ---
