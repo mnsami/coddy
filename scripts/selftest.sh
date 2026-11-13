@@ -419,6 +419,11 @@ leg() {
   # The same worktree back, held by this session: swept as before.
   run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
   t 0 "$tool: sweep cleans a merged worktree this session holds" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
+  # A lock that will not go once the worktree has gone: cleaned all the same, its branch deleted.
+  run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"; chmod 500 ".git/coddy/$p"
+  t 0 "$tool: sweep cleans a merged worktree whose lock will not go" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
+  t 1 "$tool: and deletes its local branch" git show-ref -q "refs/heads/ext/pr-$p"
+  chmod 700 ".git/coddy/$p"; rm -rf ".git/coddy/$p"
   # Ignored files (a .env) are in no commit: the worktree moves whole under
   # .git/coddy/swept/<issue>, its .git and .jj dropped, unless a copy is there.
   run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
@@ -561,6 +566,8 @@ leg() {
   d=$((n + 110)); claimdrop "$d"; echo v > ".worktrees/$d/v.txt"; wcommit "$d" v.txt
   t 1 "$tool: drop refuses a commit on no remote" run drop "$d"
   t 0 "$tool: naming the base and --force" says "1 commit(s) not on origin/main.*--force" run drop "$d"
+  if [ "$tool" = jj ]; then kw="stay in jj's history, at the commit the dropped: line names"; else kw="stay on the local branch"; fi
+  t 0 "$tool: and where --force leaves them" says "$kw" run drop "$d"
   run push "$d" >/dev/null 2>&1; echo w > ".worktrees/$d/w.txt"; wcommit "$d" w.txt; c=$(tipof "feat/$d-drop")
   t 1 "$tool: and one past the pushed branch" run drop "$d"
   t 0 "$tool: naming that branch" says "not on origin/feat/$d-drop" run drop "$d"
@@ -573,7 +580,38 @@ leg() {
     t 0 "git: naming it" says "which no branch holds" run drop "$d" --force
     t 0 "git: and leaves the worktree and its claim" test -d ".worktrees/$d" -a -d ".git/coddy/$d"
     git -C ".worktrees/$d" checkout -q "feat/$d-drop"; run drop "$d" --force >/dev/null 2>&1
+    # The index goes with the worktree: --force saves what is staged as a patch in the copy first, and refuses when it cannot.
+    d=$((n + 160)); claimdrop "$d"; w=".worktrees/$d"
+    echo a > "$w/s.txt"; git -C "$w" add s.txt; echo b > "$w/s.txt"
+    echo staged >> "$w/README.md"; git -C "$w" add README.md; echo unstaged >> "$w/README.md"
+    git config diff.noprefix true; git config color.diff always; : > "$w/.coddy-staged.patch" # neither shapes the patch
+    t 1 "git: drop --force refuses when the staged changes cannot be saved" run drop "$d" --force
+    t 0 "git: naming that file" says "\.coddy-staged\.patch exists already" run drop "$d" --force
+    t 0 "git: and leaves the worktree, its index, that file and its claim" sh -c "test -d '.git/coddy/$d' && test -f '$w/.coddy-staged.patch' && test ! -s '$w/.coddy-staged.patch' && git -C '$w' diff --cached --name-only | grep -qx s.txt"
+    rm "$w/.coddy-staged.patch"
+    t 0 "git: drop --force saves the staged changes beside the moved files" says "^dropped: $d (.*) (files kept under \.git/coddy/swept/$d, staged changes in \.git/coddy/swept/$d/\.coddy-staged\.patch)\$" run drop "$d" --force
+    sp=".git/coddy/swept/$d/.coddy-staged.patch"
+    t 0 "git: the patch holds the staged content alone" sh -c "grep -qx '+a' '$sp' && grep -qx '+staged' '$sp' && ! grep -q unstaged '$sp'"
+    t 0 "git: and applies to the base as plain git output" sh -c "git apply --check '$sp'"
+    t 0 "git: the copy holds the unstaged content" grep -qx b ".git/coddy/swept/$d/s.txt"
+    git config --unset diff.noprefix; git config --unset color.diff
   fi
+  # A session standing in the worktree, where it was opened or its working
+  # directory, through a link too, is refused: the directory would go from under it.
+  d=$((n + 150)); claimdrop "$d"; ln -s "$repo/.worktrees/$d" "$tmp/in$d"; mkdir ".worktrees/$d/sub"
+  t 1 "$tool: drop refuses a session opened in the worktree" sh -c "cd '.worktrees/$d' && CLAUDE_PROJECT_DIR='$repo/.worktrees/$d' bash '$here/scripts/issue.sh' drop $d"
+  t 1 "$tool: or standing in it" sh -c "cd '.worktrees/$d/sub' && CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' drop $d"
+  t 1 "$tool: or standing in it through a link" sh -c "cd '$tmp/in$d' && CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' drop $d"
+  t 0 "$tool: naming it" says "this session stands inside \.worktrees/$d" sh -c "cd '$tmp/in$d' && CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' drop $d"
+  t 0 "$tool: and leaves the worktree and its claim" test -d ".worktrees/$d/sub" -a -d ".git/coddy/$d"
+  rm "$tmp/in$d"; rmdir ".worktrees/$d/sub"
+  t 0 "$tool: and drops it from the main checkout" run drop "$d"
+  # A lock that will not go once the worktree has gone: dropped, the lock named as left.
+  d=$((n + 170)); claimdrop "$d"; chmod 500 ".git/coddy/$d"
+  t 0 "$tool: drop drops a claim whose lock will not go, naming it as left" says "^left: \.git/coddy/$d (could not be removed" run drop "$d"
+  t 1 "$tool: and the worktree is gone" test -e ".worktrees/$d"
+  t 1 "$tool: and only the lock is left" test -e ".git/coddy/$d.branch"
+  chmod 700 ".git/coddy/$d"; rm -rf ".git/coddy/$d"
   # Another session's claim: drop refuses it while that session runs, and
   # sweep names it as not merged once that session is gone.
   d=$((n + 120)); claimdrop "$d"; echo "sess-b 1" > ".git/coddy/$d/owner"

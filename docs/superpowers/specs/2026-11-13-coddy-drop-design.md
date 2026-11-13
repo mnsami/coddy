@@ -31,12 +31,13 @@ A claim ends only when its PR merges (`sweep`). An abandoned issue keeps its loc
 
 **bin/coddy**
 - `landed`, `ignored` and `lines` move out of the `sweep` case to top level. The removal code becomes one function:
-  - **Move to swept/:** when the worktree holds ignored files, or is dirty under `--force`, it moves whole to `.git/coddy/swept/<n>`, as #254 does today. If `swept/<n>` already exists, the worktree stays and the function reports it.
+  - **Move to swept/:** when the worktree holds ignored files, or is dirty under `--force`, it moves whole to `.git/coddy/swept/<n>`, as #254 does today. If `swept/<n>` already exists, the worktree stays and the function reports it. Under git, `drop --force` first saves anything staged as `.coddy-staged.patch` in the worktree (`git diff-index --cached -p --binary HEAD`), since the index goes with the worktree's admin dir; a save that fails refuses the drop.
   - **Otherwise:** `git worktree remove` / `jj workspace forget`.
-  - **Last:** the lock and the `.branch`/`.base` records are removed.
+  - **Last:** the lock and the `.branch`/`.base` records are removed. One that will not go once the worktree has gone is its own status: `sweep` still deletes the branch and prints `cleaned:`, `drop` prints a `left:` line for it.
   - **Branch:** the function never touches the branch. `sweep` deletes it after the function returns (as today: `git branch -D` / `jj bookmark forget`); `drop` keeps it.
 - `drop <issue> [--force]` refuses with exit 1 in these cases:
   - no worktree, or no lock;
+  - the caller stands in the worktree: where the session was opened, or its working directory, at or under it, compared physically, since removing it would take that directory from under the session;
   - the lock belongs to another session that is still running (the sweep form: a gone owner, no owner line and a caller with no session are all allowed);
   - **without `--force` only:** the worktree is dirty (git `status --porcelain`; jj `diff --summary` plus untracked files), or it has commits not on `origin/<branch>`. When the remote has no `origin/<branch>`, those are the commits since the base.
   - It then prints `dropped: <n> (<branch> at <sha>)`, adding the swept note when files were moved.
