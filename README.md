@@ -83,7 +83,7 @@ You also need:
   `worktree: git`, the default, needs nothing more. `/coddy:onboard`
   installs either one that is missing (Homebrew, apt-get, dnf or winget)
   through a shell command you allow; `jj` has no apt-get package, so there
-  it names the install page and recommends `worktree: git`.
+  it names the install page. Onboard recommends `worktree: git` either way.
 - For GitHub Issues: the GitHub plugin, enabled and signed in with a token
   that can read and write the repository's issues and pull requests.
 - For GitLab: the GitLab plugin, enabled and signed in. As shipped it
@@ -131,8 +131,10 @@ Run `/coddy:onboard` inside the project. It is a wizard of seven steps,
 `checks → tracker → branch → verify → tiers → AGENTS.md → review`, with an
 agenda before each and at most one question per step. It detects what it
 can and asks for the rest; a missing `jq` or `jj` is installed through a
-shell command you allow (declining `jq` stops it, declining `jj` picks
-`worktree: git`). Your answers are saved under `.claude/coddy/`, so a run
+shell command you allow (declining `jq` stops it). The branch step
+recommends `worktree: git` first, with `jj` offered after it. coddy assumes
+a single remote, `origin`, and collaborator access to the tracker's
+repository; forks are not supported yet (#280). Your answers are saved under `.claude/coddy/`, so a run
 that stops resumes where it was. At review it shows the config and, on your
 yes, writes the PR check workflow and the coddy block into `AGENTS.md` (so
 an agent without the plugin reads the rules), backing up any file it
@@ -529,6 +531,8 @@ It is not a board, a planner or a factory, and it pairs with tools that are:
 - Releases are a version bump of `.claude-plugin/plugin.json` through a PR of
   its own, never a direct commit to `main`. The marketplace installs from
   `main`, and an installed copy changes only after a bump.
+- PRs merge with a merge commit, never squash or rebase merge: stacked PRs need their base's commits intact.
+- coddy assumes one remote, `origin`, and write or triage access to the tracker's repository; forks are not supported yet (#280). Outside contributors open a PR by hand with `Closes #<n>`; the coddy flow is for collaborators.
 - Brand assets and their uses are listed in [`assets/README.md`](assets/README.md).
 
 ## Develop
