@@ -61,6 +61,13 @@ mkdir "$tmp/nojq"; for x in bash sed awk cat grep git jj cmp sort comm tr cut ck
 mkdir "$tmp/badjq"; printf '#!/bin/sh\nexit 1\n' > "$tmp/badjq/jq"; chmod +x "$tmp/badjq/jq"
 # kept <what>: sweep leaves worktree $p alone
 kept() { run sweep >/dev/null 2>&1; t 0 "$tool: sweep keeps $1" test -d ".worktrees/$p"; }
+# For drop: claimdrop <issue> starts and claims it on feat/<issue>-drop;
+# tipof <branch> is the local branch's commit, branched <branch> that it exists;
+# wcommit <issue> <file> commits the new file in its worktree, the branch moved to it.
+claimdrop() { run create "$1" "feat/$1-drop" >/dev/null 2>&1 && run claim "$1" >/dev/null 2>&1; }
+tipof() { if [ "$tool" = jj ]; then jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; else git rev-parse -q --verify "refs/heads/$1"; fi; }
+branched() { [ -n "$(tipof "$1")" ]; }
+wcommit() { if [ "$tool" = jj ]; then (cd ".worktrees/$1" && jj file track "$2" && jj commit -m "$2" && jj bookmark set "feat/$1-drop" -r @-) >/dev/null 2>&1; else git -C ".worktrees/$1" add "$2" && git -C ".worktrees/$1" commit -q -m "$2"; fi; }
 
 git init -q --bare "$tmp/origin.git"
 git clone -q "$tmp/origin.git" "$repo" 2>/dev/null
@@ -511,6 +518,57 @@ leg() {
   # with nothing of its own yet: not finished.
   r=$((n + 30)); run create "$r" "feat/$r-fresh" >/dev/null 2>&1; run claim "$r" >/dev/null 2>&1
   t 0 "$tool: sweep leaves a fresh worktree alone" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep >/dev/null; test -d .worktrees/$r"
+  # drop ends a claim here: the worktree, lock and records go, the branch
+  # stays, and a file in no commit is moved under .git/coddy/swept, never deleted.
+  d=$((n + 70)); run create "$d" "feat/$d-drop" "$n" >/dev/null 2>&1; run claim "$d" >/dev/null 2>&1
+  t 0 "$tool: drop drops a claim stacked on another issue's branch, naming its branch and commit" says "^dropped: $d (feat/$d-drop at [0-9a-f]\{7\})\$" run drop "$d"
+  t 1 "$tool: drop removed the worktree" test -e ".worktrees/$d"
+  t 1 "$tool: and the lock and the branch and base records" test -e ".git/coddy/$d" -o -e ".git/coddy/$d.branch" -o -e ".git/coddy/$d.base"
+  t 1 "$tool: status lists it no longer" says "^worktrees:.*[ :]$d=" run status
+  t 0 "$tool: and the local branch stays" branched "feat/$d-drop"
+  t 1 "$tool: drop refuses an issue with no worktree" run drop "$d"
+  d=$((n + 80)); claimdrop "$d"; echo .env >> .git/info/exclude; echo secret > ".worktrees/$d/.env"
+  t 0 "$tool: drop moves a worktree holding ignored files under .git/coddy/swept" says "^dropped: $d (feat/$d-drop at [0-9a-f]\{7\}) (files kept under \.git/coddy/swept/$d)\$" run drop "$d"
+  t 0 "$tool: the ignored file is in the swept copy" grep -qx secret ".git/coddy/swept/$d/.env"
+  t 1 "$tool: which holds no .git" test -e ".git/coddy/swept/$d/.git"
+  t 1 "$tool: and no .jj" test -e ".git/coddy/swept/$d/.jj"
+  t 1 "$tool: and the worktree and its lock are gone" test -e ".worktrees/$d" -o -e ".git/coddy/$d"
+  t 0 "$tool: and the local branch stays" branched "feat/$d-drop"
+  d=$((n + 90)); claimdrop "$d"; echo wip > ".worktrees/$d/wip.txt"; echo mod >> ".worktrees/$d/README.md"
+  t 1 "$tool: drop refuses uncommitted work" run drop "$d"
+  t 0 "$tool: naming --force" says "uncommitted work.*--force" run drop "$d"
+  t 0 "$tool: and leaves the worktree and its claim" test -f ".worktrees/$d/wip.txt" -a -d ".git/coddy/$d"
+  t 0 "$tool: drop --force moves uncommitted work under .git/coddy/swept" says "^dropped: $d (.*) (files kept under \.git/coddy/swept/$d)\$" run drop "$d" --force
+  t 0 "$tool: keeping the untracked file" grep -qx wip ".git/coddy/swept/$d/wip.txt"
+  t 0 "$tool: and the changed one" grep -qx mod ".git/coddy/swept/$d/README.md"
+  t 1 "$tool: and the worktree and its lock are gone" test -e ".worktrees/$d" -o -e ".git/coddy/$d"
+  d=$((n + 100)); claimdrop "$d"; echo secret > ".worktrees/$d/.env"; mkdir -p ".git/coddy/swept/$d"
+  t 1 "$tool: drop refuses when .git/coddy/swept holds an earlier copy" run drop "$d"
+  t 0 "$tool: naming that copy" says "\.git/coddy/swept/$d already holds an earlier copy" run drop "$d"
+  t 0 "$tool: and leaves the worktree, its claim and the copy as they were" test -f ".worktrees/$d/.env" -a -d ".git/coddy/$d" -a -z "$(ls -A ".git/coddy/swept/$d")"
+  rmdir ".git/coddy/swept/$d"; run drop "$d" >/dev/null 2>&1
+  sed -i.bak '/^\.env$/d' .git/info/exclude && rm -f .git/info/exclude.bak
+  # Commits on no remote: past origin/<branch>, or, with none there, past the base.
+  d=$((n + 110)); claimdrop "$d"; echo v > ".worktrees/$d/v.txt"; wcommit "$d" v.txt
+  t 1 "$tool: drop refuses a commit on no remote" run drop "$d"
+  t 0 "$tool: naming the base and --force" says "1 commit(s) not on origin/main.*--force" run drop "$d"
+  run push "$d" >/dev/null 2>&1; echo w > ".worktrees/$d/w.txt"; wcommit "$d" w.txt; c=$(tipof "feat/$d-drop")
+  t 1 "$tool: and one past the pushed branch" run drop "$d"
+  t 0 "$tool: naming that branch" says "not on origin/feat/$d-drop" run drop "$d"
+  t 0 "$tool: drop --force drops it" run drop "$d" --force
+  t 0 "$tool: and the commit stays on the local branch" test "$(tipof "feat/$d-drop")" = "$c"
+  # Another session's claim: drop refuses it while that session runs, and
+  # sweep names it as not merged once that session is gone.
+  d=$((n + 120)); claimdrop "$d"; echo "sess-b 1" > ".git/coddy/$d/owner"
+  t 1 "$tool: drop refuses another running session's claim" run drop "$d"
+  t 0 "$tool: naming that session" says "claimed by session sess-b" run drop "$d"
+  t 1 "$tool: sweep names no unmerged claim a running session holds" says "^kept: $d " run sweep
+  echo "sess-a $$" > ".git/coddy/$d/owner"
+  t 1 "$tool: nor one this session holds" says "^kept: $d " run sweep
+  echo "sess-b $(sh -c 'echo $$')" > ".git/coddy/$d/owner" # that process has exited
+  t 0 "$tool: sweep names an unmerged claim whose session is gone" says "^kept: $d (not merged)\$" run sweep
+  t 0 "$tool: and keeps it" test -d ".worktrees/$d"
+  t 0 "$tool: drop drops a claim whose session is gone" run drop "$d"
   t 0 "$tool: the whole flow left the main checkout alone" wire trip "leg$n"
 }
 

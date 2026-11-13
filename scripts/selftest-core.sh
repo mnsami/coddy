@@ -1693,6 +1693,7 @@ for sd in "$tmp/sa/sub" "$tmp/sb/src/b"; do
   done
   t 2 "verify: and a verb that mutates refuses (${sd#"$tmp"/})" env CODDY_ROOT="$sd" "$here/bin/coddy" verify 1
   t 2 "exclude: and so does exclude (${sd#"$tmp"/})" env CODDY_ROOT="$sd" "$here/bin/coddy" exclude config
+  t 2 "drop: and so does drop (${sd#"$tmp"/})" env CODDY_ROOT="$sd" "$here/bin/coddy" drop 1
 done
 rm -rf "$tmp/sE" "$tmp/sa" "$tmp/sb" "$tmp/sfsm" "$tmp/sMark" "$tmp/sout"
 # githook reads the root's .git/config and runs its hooks: from a bare repository nested in a project whose .git is a link to E's, it runs none of E's
