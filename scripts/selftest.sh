@@ -663,6 +663,17 @@ leg() {
   t 0 "$tool: refresh: and now holds origin/main$([ "$tool" = jj ] && echo ', rebased' || echo ' through a merge commit')" merged "$r"
   t 0 "$tool: refresh: and is current then" says "^current: $r\$" run refresh "$r"
   t 1 "$tool: refresh: and flags nothing" says needs_rebase run state "$r"
+  echo "/ig$r.txt" >> .git/info/exclude; echo local > ".worktrees/$r/ig$r.txt"; upmain "ig$r.txt"
+  t 1 "$tool: refresh: a file it would bring where the worktree holds an ignored one is refused" run refresh "$r"
+  t 0 "$tool: refresh: and that refusal names it" says "'ig$r.txt'" run refresh "$r"
+  t 0 "$tool: refresh: and the ignored file is left as it was" grep -qx local ".worktrees/$r/ig$r.txt"
+  rm ".worktrees/$r/ig$r.txt"
+  if [ "$tool" = git ]; then
+    git -C ".worktrees/$r" merge -q --no-commit -s ours origin/main >/dev/null 2>&1
+    t 0 "git: refresh: a merge not yet concluded is skipped as uncommitted work" says "^skipped: $r (uncommitted work)\$" run refresh "$r"
+    t 0 "git: refresh: and that merge is left in place" git -C ".worktrees/$r" rev-parse -q --verify MERGE_HEAD
+    git -C ".worktrees/$r" merge --abort
+  fi
   f=$((n + 210)); claimdrop "$f"; upmain "u$f.txt"
   t 0 "$tool: refresh: one whose verify fails once updated is failed" says "^failed: $f\$" run refresh "$f"
   t 0 "$tool: refresh: and flags needs_rebase at origin/main for start" says "^needs_rebase=$(git rev-parse origin/main)\$" run state "$f"
@@ -682,6 +693,9 @@ leg() {
   run drop "$r" --force >/dev/null 2>&1; if [ "$tool" = jj ]; then jj bookmark forget "feat/$r-drop" >/dev/null 2>&1; else git branch -qD "feat/$r-drop"; fi
   t 0 "$tool: refresh: once its base is gone it is updated like any other" says "^refreshed: $s\$" run refresh "$s"
   t 1 "$tool: refresh: and its base record is removed" test -e ".git/coddy/$s.base"
+  echo "feat/$r-drop" > ".git/coddy/$s.base"
+  t 0 "$tool: refresh: a current one whose base is gone" says "^current: $s\$" run refresh "$s"
+  t 1 "$tool: refresh: loses its base record too" test -e ".git/coddy/$s.base"
   t 1 "$tool: refresh refuses an issue with no worktree" run refresh "$r"
   mkdir ".worktrees/$r"
   t 1 "$tool: refresh refuses a worktree with no claim" run refresh "$r"

@@ -2715,17 +2715,39 @@ $bad" ;;
     [ "$issue" != swept ] && [ -e ".git/coddy/$issue" ] || die "issue $issue is not In Progress. Run /coddy:start $issue."
     me="${CODDY_SESSION-}"; owner "$issue"
     if [ -n "$sid" ] && ! mine && alive "$pid" "$start"; then echo "skipped: $issue (session $sid holds it)"; exit 0; fi
-    wtstate; [ -z "$dirty" ] || { echo "skipped: $issue (uncommitted work)"; exit 0; }
+    # A git merge not yet concluded counts as uncommitted work, though status
+    # shows none once nothing is left to stage: the merge below would fail on
+    # it, and its abort would take it.
+    wtstate; [ -z "$dirty" ] && { [ "$tool" = jj ] || ! git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; } || { echo "skipped: $issue (uncommitted work)"; exit 0; }
     stacked; [ -z "$from" ] || { echo "skipped: $issue (stacked on $from)"; exit 0; }
+    # A base that no longer resolves is gone from here: its record goes
+    # whatever follows, current or conflict included, or ship would open the
+    # PR against it.
+    rm -f ".git/coddy/$issue.base"
     git fetch -q origin "$base" >/dev/null 2>&1
     d=$(git rev-parse -q --verify "origin/$base^{commit}") || die "origin/$base is missing here, so $wt was not brought up to date: fetch origin, or set default_branch with /coddy:config"
     f=".git/coddy/$issue/state"
     flag() { { grep -v '^needs_rebase=' "$f" 2>/dev/null; echo "needs_rebase=$d"; } > "$f.tmp" && mv "$f.tmp" "$f" || die "could not write needs_rebase to $f"; }
+    # git's merge writes over an ignored file where it brings a new one
+    # (merge-ort keeps --no-overwrite-ignore to fast-forwards), and jj keeps
+    # it as a change to the new file, which push would commit: refused, by
+    # name, before anything moves. $1 is the worktree's commit; the files are
+    # those origin/$base added since the fork that it does not track.
+    # ponytail: the path itself alone, so an ignored file where a new
+    # directory goes is not seen; walk each path's parents if that bites.
+    inway() {
+      local way
+      [ -n "$1" ] && way=$(set -o pipefail; git diff --name-only -z --no-renames --diff-filter=A "$1...$d" -- | while IFS= read -r -d '' p; do
+        if { [ -e "$wt/$p" ] || [ -L "$wt/$p" ]; } && ! git cat-file -e "$1:$p" 2>/dev/null; then q "$p"; fi
+      done) || die "could not tell which files origin/$base brings into $wt, so it was not brought up to date"
+      [ -z "$way" ] || die "origin/$base brings files where $wt holds ignored ones, so it was not brought up to date: ${way//$'\n'/ }. Move them out of the way by hand, then refresh again."
+    }
     n=""
     if [ "$tool" = jj ]; then
       jhas() { [ -n "$(jjn log --no-graph -r "$1" -T '"x"' 2>/dev/null)" ]; }
       ! jhas "$d & ::@" || { echo "current: $issue"; exit 0; }
       ! jhas "roots($d..@):: ~ ::@" || { echo "skipped: $issue (other commits build on its branch)"; exit 0; }
+      inway "$(jjn log --no-graph -r @ -T commit_id 2>/dev/null)"
       rs=$(jjn log --no-graph -r "roots($d..@)" -T 'change_id ++ " " ++ parents.map(|p| p.commit_id()).join(" ") ++ "\n"' 2>/dev/null) && [ -n "$rs" ] || die "jj could not read the branch in $wt"
       e=$(jjn rebase -b @ -d "$d" 2>&1) || die "jj rebase failed in $wt: $e"
       if jhas "conflicts() & ($d..@)"; then
@@ -2738,6 +2760,7 @@ $bad" ;;
       fi
     else
       ! git -C "$wt" merge-base --is-ancestor "$d" HEAD 2>/dev/null || { echo "current: $issue"; exit 0; }
+      inway "$tip"
       if ! e=$(git -C "$wt" merge --no-edit --no-overwrite-ignore -q "origin/$base" 2>&1); then
         n=$(git -C "$wt" diff --name-only -z --diff-filter=U | while IFS= read -r -d '' p; do q "$p"; done)
         ! git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null || git -C "$wt" merge --abort >/dev/null 2>&1
@@ -2746,7 +2769,6 @@ $bad" ;;
       fi
     fi
     if [ -n "$n" ]; then flag; echo "conflict: $issue (${n//$'\n'/ })"; exit 0; fi
-    rm -f ".git/coddy/$issue.base"
     if (verify) >/dev/null 2>&1; then echo "refreshed: $issue"; else flag; echo "failed: $issue"; fi ;;
 
   verify) verify; exit $? ;;
