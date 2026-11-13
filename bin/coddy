@@ -2711,8 +2711,13 @@ $bad" ;;
     # needs_rebase=<origin/$base> in the state file for start, written here,
     # since the state verb refuses a gone owner's lock.
     [ $# -le 2 ] || die "usage: $self refresh <issue>"
-    [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
+    # A directory that is no worktree (no .git file, no .jj) is refused: git
+    # -C would find the main checkout above it and merge into that.
+    [ -d "$wt" ] && if [ "$tool" = jj ]; then [ -d "$wt/.jj" ]; else [ -f "$wt/.git" ]; fi || die "no worktree for $issue. Run /coddy:start $issue."
     [ "$issue" != swept ] && [ -e ".git/coddy/$issue" ] || die "issue $issue is not In Progress. Run /coddy:start $issue."
+    # needs_rebase goes into the lock directory: a marker from before locks
+    # is refused before anything moves, as state refuses it.
+    [ -d ".git/coddy/$issue" ] || die "issue $issue's claim is from before locks. Run /coddy:start $issue to re-claim it."
     me="${CODDY_SESSION-}"; owner "$issue"
     if [ -n "$sid" ] && ! mine && alive "$pid" "$start"; then echo "skipped: $issue (session $sid holds it)"; exit 0; fi
     # A git merge not yet concluded counts as uncommitted work, though status
@@ -2727,7 +2732,8 @@ $bad" ;;
     git fetch -q origin "$base" >/dev/null 2>&1
     d=$(git rev-parse -q --verify "origin/$base^{commit}") || die "origin/$base is missing here, so $wt was not brought up to date: fetch origin, or set default_branch with /coddy:config"
     f=".git/coddy/$issue/state"
-    flag() { { grep -v '^needs_rebase=' "$f" 2>/dev/null; echo "needs_rebase=$d"; } > "$f.tmp" && mv "$f.tmp" "$f" || die "could not write needs_rebase to $f"; }
+    # a new file (set -C), so a link planted at state.tmp is never written through
+    flag() { rm -f "$f.tmp" && (set -C; { grep -v '^needs_rebase=' "$f" 2>/dev/null; echo "needs_rebase=$d"; } > "$f.tmp") && mv "$f.tmp" "$f" || die "could not write needs_rebase to $f"; }
     # git's merge writes over an ignored file where it brings a new one
     # (merge-ort keeps --no-overwrite-ignore to fast-forwards), and jj keeps
     # it as a change to the new file, which push would commit: refused, by

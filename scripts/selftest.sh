@@ -674,8 +674,9 @@ leg() {
     t 0 "git: refresh: and that merge is left in place" git -C ".worktrees/$r" rev-parse -q --verify MERGE_HEAD
     git -C ".worktrees/$r" merge --abort
   fi
-  f=$((n + 210)); claimdrop "$f"; upmain "u$f.txt"
+  f=$((n + 210)); claimdrop "$f"; echo x > ".worktrees/$f/x$f.txt"; wcommit "$f" "x$f.txt"; upmain "u$f.txt"
   t 0 "$tool: refresh: one whose verify fails once updated is failed" says "^failed: $f\$" run refresh "$f"
+  t 0 "$tool: refresh: and was brought up to date all the same" merged "$f"
   t 0 "$tool: refresh: and flags needs_rebase at origin/main for start" says "^needs_rebase=$(git rev-parse origin/main)\$" run state "$f"
   c=$((n + 220)); claimdrop "$c"; echo mine > ".worktrees/$c/c$c.txt"; wcommit "$c" "c$c.txt"; upmain "c$c.txt" theirs; w=$(wtip "$c")
   t 0 "$tool: refresh: a conflict names its files" says "^conflict: $c ('c$c\.txt')\$" run refresh "$c"
@@ -699,7 +700,9 @@ leg() {
   t 1 "$tool: refresh refuses an issue with no worktree" run refresh "$r"
   mkdir ".worktrees/$r"
   t 1 "$tool: refresh refuses a worktree with no claim" run refresh "$r"
-  rmdir ".worktrees/$r"
+  mkdir ".git/coddy/$r"
+  t 1 "$tool: refresh refuses a claimed directory that is no worktree, never merging into the main checkout above it" run refresh "$r"
+  rmdir ".git/coddy/$r" ".worktrees/$r"
   for x in "$f" "$c" "$s"; do run drop "$x" --force >/dev/null 2>&1; done
   t 0 "$tool: the whole flow left the main checkout alone" wire trip "leg$n"
 }
