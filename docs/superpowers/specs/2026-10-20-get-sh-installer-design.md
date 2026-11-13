@@ -13,7 +13,7 @@ coddy installs only as a Claude Code plugin. Codex, Cursor, Copilot CLI and Gemi
 
 ## Non-goals
 
-- Release tags, GitHub releases, version pinning, checksums. (Tags and releases: CI, #282, per #285 D6, not yet built; the installer is unchanged.)
+- Release tags, GitHub releases, version pinning, checksums. (Tags and releases: CI, #282, per #285 D6, not yet built; `get.sh` keeps installing from `main` whatever the tag.)
 - Per-agent packaging (#31, #32, #33, #150) and #34's prerequisite and enforcement checks.
 - Installing `jq`, `jj` or anything else; editing shell rc files.
 
