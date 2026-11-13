@@ -7,13 +7,13 @@ coddy installs only as a Claude Code plugin. Codex, Cursor, Copilot CLI and Gemi
 ## Goals
 
 - `get.sh` at the repo root: `curl -fsSL https://raw.githubusercontent.com/mnsami/coddy/main/get.sh | bash`.
-- Installs from `main`, always (user). No tags, no `--version`, no release check: the repo has no tags or releases, and the release process stays a `plugin.json` bump.
+- Installs from `main`, always (user). No tags, no `--version`, no release check: the repo has no tags or releases, and the release process stays a `plugin.json` bump. (2026-11-13, #285 D6: CI will tag `v<version>` and create a release for each bump merged to `main`, #282, not yet built; `get.sh` still installs from `main`, with no `--version`, release check or `CODDY_REF`.)
 - A minimal `coddy doctor` that reports which install it runs from (user); #34 extends the same verb later.
 - README's Install section lists both ways.
 
 ## Non-goals
 
-- Release tags, GitHub releases, version pinning, checksums.
+- Release tags, GitHub releases, version pinning, checksums. (Tags and releases: CI, #282, per #285 D6, not yet built; `get.sh` keeps installing from `main` whatever the tag.)
 - Per-agent packaging (#31, #32, #33, #150) and #34's prerequisite and enforcement checks.
 - Installing `jq`, `jj` or anything else; editing shell rc files.
 

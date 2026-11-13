@@ -2,7 +2,7 @@
 
 coddy's purpose stays the same: **every change an agent makes is tied to a claimed issue, lives in its own worktree, and lands through a pull request, enforced by tooling rather than by prompts.** Within one issue, coddy also runs its own stage from the agreed plan to a reviewed diff: an implementer on a model matched to the issue's difficulty, two hardening passes, and a code and security review loop.
 
-What this roadmap changes is reach and concurrency. coddy aims to support **Claude Code, Codex, Cursor, Copilot CLI and Gemini CLI** first-class, and to stay correct when several terminals, a lead session with subagents or agent teams, or several teammates work the same repository.
+What this roadmap changes is reach and concurrency. coddy aims to support **Claude Code, Codex, Cursor, Copilot CLI and Gemini CLI or Antigravity CLI** (a spike picks the Google host, #150) first-class, and to stay correct when several terminals, a lead session with subagents or agent teams, or several teammates work the same repository.
 
 Each phase below is a [GitHub milestone](https://github.com/mnsami/coddy/milestones). Issue numbers are listed per milestone; the milestone pages are the live source.
 
@@ -30,18 +30,18 @@ Bugs in the current release.
 - #20 Guard lets edits under .claude/ through, including Claude Code's own worktrees
 
 ### M1 · Test window: parallel-safe on Claude Code
-Make parallel sessions safe on Claude Code, add the PR check, lower adoption friction, then test with real users. **Go/no-go gate for M2 onwards.**
+Make parallel sessions safe on Claude Code, add the PR check, lower adoption friction, then test with real users. The go/no-go gate (#26) was waived by the owner on 2026-10-15: #26 closed GO without the test window. The stand-in is #283: three cold-user onboarding sessions on the M1.1 release (#284), run before M1.5 feature work and before any M4 adapter is built.
 - #21 Make claims exclusive: an atomic lock owned by the claiming session
 - #22 Guard allows edits only in worktrees owned by the calling session
 - #23 next recommends issues another session already claimed
 - #24 Claim fails when someone else already owns the issue in the tracker
 - #25 PR check: fail PRs that aren't linked to a claimed, in-progress issue
-- #26 Run the test window: dogfooding and 5 cold onboarding sessions
+- #26 Run the test window: dogfooding and 5 cold onboarding sessions (waived 2026-10-15, closed GO; stand-in #283)
 - #13 Add a warn mode for the edit guard
 - #88 Redesign start: think with the user, tier by difficulty, implement, harden, review and security loop
 - #17 Add repo description, topics and a demo of the guard
 
-Go signals: still in use at the end of 4 weeks of dogfooding; at least 3 of 5 cold users finish onboarding and ship a PR; at least 2 people outside the project file issues or PRs; cold users ship a PR that passed start's review loop.
+Go signals (the waived gate's, kept as the bar #283 is read against): still in use at the end of 4 weeks of dogfooding; at least 3 of 5 cold users finish onboarding and ship a PR; at least 2 people outside the project file issues or PRs; cold users ship a PR that passed start's review loop.
 
 ### M2 · Agent-agnostic core
 Extract a `coddy` CLI core with no Claude Code dependencies; Claude Code becomes the first adapter.
@@ -56,12 +56,12 @@ Enforcement every agent gets.
 - #14 Make git the default worktree tool, keep jj opt-in
 
 ### M4 · Agent adapters
-One plugin per agent, each carrying the same skills, briefs and `bin/coddy`; what differs is the manifest and the hook names.
+No adapter is built before the M6 spike (#40) reports; the M4 spikes (#30, the Copilot spike) run alongside. One plugin per agent, each carrying the same skills, briefs and `bin/coddy`; what differs is the manifest and the hook names.
 - #30 Spike: build agent adapters on an existing cross-agent hook layer
 - #31 Codex adapter: `.codex-plugin/plugin.json` with PreToolUse hooks
 - #32 Cursor adapter: a Cursor plugin; a blocking pre-edit hook is unconfirmed
 - #33 Copilot CLI adapter: loads the plugin's skills but drops the `args` of the exec form in `hooks/hooks.json` (so no hook guardrail runs) and expands nothing in skill bodies, so it needs its own hook manifest and shim
-- Gemini CLI adapter: an extension (`gemini-extension.json`) with BeforeTool hooks (issue to be filed)
+- #150 Google adapter: Gemini CLI or Antigravity CLI, a spike picks; Gemini CLI's is an extension (`gemini-extension.json`) with BeforeTool hooks
 - #34 coddy doctor: prerequisites and per-agent enforcement level
 
 ### M5 · Parallel-convenient
@@ -72,11 +72,12 @@ One plugin per agent, each carrying the same skills, briefs and `bin/coddy`; wha
 - #39 Ownership for subagents and agent teams
 
 ### M6 · Strict mode
+The spike (#40) reports before any M4 adapter is built.
 - #40 Strict mode: confine each agent to its issue's worktree with a sandbox
 
 ## Risks
 
 - **Maintenance.** Five agents' hook APIs are still changing. M4 starts with a spike on building on an existing cross-agent hook layer instead of maintaining five adapters here.
-- **Adoption is untested.** That's what M1's test window is for; M2 onwards waits for its result.
+- **Adoption is untested.** The M1 test window was waived (2026-10-15); #283's three cold-user sessions are the stand-in and run before any M4 adapter is built.
 - **Platform absorption.** GitHub already enforces the remote half for its own cloud agent. coddy's value rests on the local, cross-vendor layer and on tracker semantics (exclusive claims, Jira, lifecycle cleanup).
 - **Orchestrators can grow a guard.** Autonomous board executors such as [super-board](https://github.com/EricTechPro/super-board) already have worktree-per-card, atomic assignee claims, merged-worktree cleanup and a Codex host, and could add interactive-session enforcement from above. The defence is the same: tracker breadth (Jira), the human-in-the-merge promise, and being the guard a factory runs on top of rather than a rival to it.

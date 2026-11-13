@@ -1,6 +1,6 @@
 # Releasing
 
-Release = a version bump PR of its own, never a direct commit to `main`. Tags and GitHub releases are out of scope (#282).
+Release = a version bump PR of its own, never a direct commit to `main`. Tags and GitHub releases come from CI (#282, not yet built; per #285 D6, a workflow will tag `v<version>` and create a release for each `plugin.json` bump merged to `main`), so none exist yet. `get.sh` keeps installing from `main` whatever the tag.
 
 1. List the installed GitHub and Atlassian plugin tools in a session; compare them with `grep -oh 'mcp__[A-Za-z0-9_]*' skills/*/SKILL.md | sort -u`. A name that differs → stop and fix the skills first.
 2. The release branch `chore/<issue>-release-X-Y-Z` comes from `/coddy:start <issue>`. Rebase it on the remote's `main`, which the local `main` may lag: `git fetch origin && git rebase origin/main`, or `jj git fetch && jj rebase -d main@origin` in a jj worktree.
