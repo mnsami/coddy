@@ -11,6 +11,7 @@
 #   coddy log    <issue> <path>...  the last 15 commits on the paths, on the issue's base
 #   coddy mark   <issue> [digest]   a fingerprint of the issue's worktree and its records under .git/coddy, its digest first; given one, exit 1 when it differs
 #   coddy sweep                     remove what issues with a merged PR left behind
+#   coddy drop   <issue> [--force]  end a claim here: its worktree, lock and records go, its branch stays; without --force, refused for uncommitted work or commits on no remote
 #   coddy status                    the root, the config path and the claimed worktrees, for the prompts
 #   coddy config | detect           the config, or NOT_ONBOARDED; facts about the project for onboarding
 #   coddy exclude answers | config  put the agent's coddy/ directory, or .coddy.yml, into git's info/exclude unless git ignores it already
@@ -2311,6 +2312,92 @@ exec "$b" -p "$c" githook %s "$@"
   done
 }
 
+# The worktree's last commit, into tip, and its uncommitted work, into dirty
+# (empty when there is none): untracked files are uncommitted work too, since
+# auto-track is off, and whatever status.showUntrackedFiles says, since git
+# worktree remove deletes the ones its status hides; a jj listing that fails
+# reads as some.
+wtstate() {
+  if [ "$tool" = jj ]; then
+    tip=$(jj -R "$wt" log --no-graph -r @- -T commit_id 2>/dev/null)
+    dirty=$(set -o pipefail; jj -R "$wt" diff --summary 2>/dev/null && untracked 2>/dev/null | tr '\0' '\n' || echo unknown)
+  else
+    tip=$(git -C "$wt" rev-parse HEAD 2>/dev/null); dirty=$(git -C "$wt" status --porcelain --untracked-files=normal 2>/dev/null)
+  fi
+}
+# $tip landed in origin/$base, whose first-parent line is $line: as an
+# ancestor (a merge commit), as an upstream copy of every commit since the
+# fork (a rebase merge), or as one upstream commit holding the fork's whole
+# diff (a squash merge). On that line it is a worktree started from $base
+# with nothing of its own yet, which has not.
+# ponytail: matched by patch id, so a squash or rebase whose conflicts
+# were resolved upstream is not seen and stays; read the PR state if that bites.
+landed() {
+  if git merge-base --is-ancestor "$tip" "origin/$base" 2>/dev/null; then
+    case "$line" in *"$tip"*) return 1 ;; esac; return 0
+  fi
+  fork=$(git merge-base "$tip" "origin/$base" 2>/dev/null) || return 1
+  cherry=$(git cherry "origin/$base" "$tip" "$fork" 2>/dev/null) || return 1
+  [ -n "$cherry" ] && ! grep -q '^+' <<<"$cherry" && return 0
+  id=$(git diff "$fork" "$tip" 2>/dev/null | git patch-id --stable | cut -d' ' -f1)
+  [ -n "$id" ] && git log -p --no-merges "$fork..origin/$base" 2>/dev/null | git patch-id --stable | grep -q "^$id "
+}
+# The worktree, clean, holds files its tool ignores. jj lists none, so
+# they are the paths on disk its commit does not name (it names some it
+# never writes: a gitlink, a path outside the sparse patterns), each
+# quoted to one line and matched whole; a listing that fails counts as
+# some: the worktree is moved, never deleted.
+ignored() {
+  local n m
+  if [ "$tool" = jj ]; then
+    n=$(set -o pipefail; jj -R "$wt" --ignore-working-copy file list -r @ -T '"./" ++ path ++ "\0"' 2>/dev/null | lines) || return 0
+    m=$(set -o pipefail; cd "$wt" && find . \( -path ./.jj -o -path ./.git \) -prune -o ! -type d -print0 2>/dev/null | lines) || return 0
+    [ -n "$m" ] || return 1
+    LC_ALL=C grep -qFxv -e "$n" <<<"$m"; [ $? -ne 1 ]
+  else
+    n=$(git -C "$wt" ls-files -o -i --exclude-standard --directory 2>/dev/null) || return 0; [ -n "$n" ]
+  fi
+}
+lines() { while IFS= read -r -d '' p; do printf '%q\n' "$p"; done; }
+# Issue $issue's worktree $wt goes, then its lock and its .branch and .base
+# records; never its branch, which sweep deletes and drop keeps. Files in no
+# commit (ignored ones: a .env, a local database; every file, with $1 set)
+# are never deleted: the worktree moves whole to .git/coddy/swept/<issue>
+# ($keep), as plain files, and stays there until the user deletes it, moved
+# set. git forgets that one worktree by its missing path (jj's git worktree
+# too), never another whose directory is away. Status 3 when a copy is at
+# $keep already, which is never touched; 1 when the worktree stays as it was,
+# as it always does while .git/coddy or .worktrees is a link, which every
+# removal below would go through, or .git/coddy no directory; 2 when the
+# worktree went but a record would not (those left are still there).
+release() {
+  keep=".git/coddy/swept/$issue" moved=
+  [ ! -L .git/coddy ] && [ ! -L .worktrees ] && [ -d .git/coddy ] || return 1
+  if [ -n "${1-}" ] || ignored; then
+    if [ -e "$keep" ] || [ -L "$keep" ]; then return 3; fi
+    # Submodules checked out in a git worktree keep their repositories in
+    # its git dir, which forgetting it would delete: it stays, as git
+    # refuses to remove it.
+    [ "$tool" = jj ] || [ ! -d "$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null)/modules" ] || return 1
+    # A link is never moved, nor moved through, and only a worktree's .git
+    # file and a workspace's .jj (its repo a file) are dropped, never a repository.
+    [ ! -L "$wt" ] && [ ! -L .git/coddy/swept ] && mkdir -p .git/coddy/swept 2>/dev/null && mv "$wt" "$keep" 2>/dev/null || return 1
+    # The record goes while the copy is still whole: one that will not go
+    # (a locked worktree) gets its directory back and stays, as before.
+    if [ "$tool" = jj ]; then jj workspace forget "$issue" >/dev/null 2>&1; else git worktree remove "$wt" >/dev/null 2>&1; fi || { mv "$keep" "$wt" 2>/dev/null; return 1; }
+    [ "$tool" = git ] || git worktree remove "$wt" >/dev/null 2>&1
+    rm -f "$keep/.git"; [ ! -f "$keep/.jj/repo" ] || rm -rf "$keep/.jj"
+    moved=1
+  fi
+  if [ "$tool" = jj ]; then
+    [ -n "$moved" ] || jj workspace forget "$issue" >/dev/null 2>&1 || return 1
+    rm -rf "$wt"
+  else
+    [ -n "$moved" ] || git worktree remove "$wt" >/dev/null 2>&1 || return 1
+  fi
+  rm -rf ".git/coddy/$issue" ".git/coddy/$issue.branch" ".git/coddy/$issue.base" 2>/dev/null || return 2
+}
+
 case "$cmd" in
   start|create)
     branch="${3-}"; [ -n "$branch" ] || die "usage: $self $cmd <issue> <branch> [base-issue]"
@@ -2499,38 +2586,7 @@ $bad" ;;
     # started from $base with nothing of its own yet, which stays.
     git fetch -q origin "$base" >/dev/null 2>&1
     line=$(git rev-list --first-parent "origin/$base" 2>/dev/null)
-    # $tip landed in origin/$base: as an ancestor (a merge commit), as an
-    # upstream copy of every commit since the fork (a rebase merge), or as one
-    # upstream commit holding the fork's whole diff (a squash merge).
-    # ponytail: matched by patch id, so a squash or rebase whose conflicts
-    # were resolved upstream is not seen and stays; read the PR state if that bites.
-    landed() {
-      if git merge-base --is-ancestor "$tip" "origin/$base" 2>/dev/null; then
-        case "$line" in *"$tip"*) return 1 ;; esac; return 0
-      fi
-      fork=$(git merge-base "$tip" "origin/$base" 2>/dev/null) || return 1
-      cherry=$(git cherry "origin/$base" "$tip" "$fork" 2>/dev/null) || return 1
-      [ -n "$cherry" ] && ! grep -q '^+' <<<"$cherry" && return 0
-      id=$(git diff "$fork" "$tip" 2>/dev/null | git patch-id --stable | cut -d' ' -f1)
-      [ -n "$id" ] && git log -p --no-merges "$fork..origin/$base" 2>/dev/null | git patch-id --stable | grep -q "^$id "
-    }
-    # The worktree, clean, holds files its tool ignores. jj lists none, so
-    # they are the paths on disk its commit does not name (it names some it
-    # never writes: a gitlink, a path outside the sparse patterns), each
-    # quoted to one line and matched whole; a listing that fails counts as
-    # some: the worktree is moved, never deleted.
-    ignored() {
-      local n m
-      if [ "$tool" = jj ]; then
-        n=$(set -o pipefail; jj -R "$wt" --ignore-working-copy file list -r @ -T '"./" ++ path ++ "\0"' 2>/dev/null | lines) || return 0
-        m=$(set -o pipefail; cd "$wt" && find . \( -path ./.jj -o -path ./.git \) -prune -o ! -type d -print0 2>/dev/null | lines) || return 0
-        [ -n "$m" ] || return 1
-        LC_ALL=C grep -qFxv -e "$n" <<<"$m"; [ $? -ne 1 ]
-      else
-        n=$(git -C "$wt" ls-files -o -i --exclude-standard --directory 2>/dev/null) || return 0; [ -n "$n" ]
-      fi
-    }
-    lines() { while IFS= read -r -d '' p; do printf '%q\n' "$p"; done; }
+    me="${CODDY_SESSION-}"
     for rec in .git/coddy/*.branch; do
       issue=$(basename "$rec" .branch); wt=".worktrees/$issue"; branch=$(cat "$rec" 2>/dev/null)
       # swept is where the copies live, never an issue's lock to remove.
@@ -2539,54 +2595,107 @@ $bad" ;;
       # ponytail: compared as strings, so a session that reached its
       # worktree through a symlink is not recognised as being inside it.
       case "${CODDY_ROOT-}/ ${OLDPWD-}/" in *"$root/$wt/"*) continue ;; esac
-      if [ "$tool" = jj ]; then
-        tip=$(jj -R "$wt" log --no-graph -r @- -T commit_id 2>/dev/null)
-        # Untracked files are uncommitted work too: auto-track is off.
-        dirty=$(set -o pipefail; jj -R "$wt" diff --summary 2>/dev/null && untracked 2>/dev/null | tr '\0' '\n' || echo unknown)
-      else
-        tip=$(git -C "$wt" rev-parse HEAD 2>/dev/null); dirty=$(git -C "$wt" status --porcelain 2>/dev/null)
+      wtstate; [ -n "$tip" ] || continue
+      owner "$issue"
+      # An unmerged claim whose owner line names a session that is gone, and
+      # not this one, is named, for /coddy:drop; one a running session holds,
+      # this session's or one with no owner line is not.
+      if ! landed; then
+        [ -z "$sid" ] || mine || alive "$pid" "$start" || echo "kept: $issue (not merged)"
+        continue
       fi
-      [ -n "$tip" ] && landed || continue
       # Another session whose process still runs keeps its worktree, as the
       # guard and push hold to the lock's owner: a gone owner, a lock with no
       # owner or this session's own are swept.
-      me="${CODDY_SESSION-}"; owner "$issue"
       if [ -n "$sid" ] && ! mine && alive "$pid" "$start"; then
         echo "kept: $issue (merged into $base, session $sid still holds it)"; continue
       fi
       if [ -n "$dirty" ]; then echo "kept: $issue (merged into $base, but $wt holds uncommitted work)"; continue; fi
-      # Ignored files (a .env, a local database) are in no commit: the
-      # worktree moves whole to .git/coddy/swept/<issue>, as plain files, and
-      # stays there until the user deletes it. git forgets that one worktree
-      # by its missing path (jj's git worktree too), never another whose
-      # directory is away; a copy already there is never touched.
-      keep=".git/coddy/swept/$issue" moved=
-      if ignored; then
-        if [ -e "$keep" ] || [ -L "$keep" ]; then echo "kept: $issue (merged into $base, but $keep already holds an earlier copy)"; continue; fi
-        # Submodules checked out in a git worktree keep their repositories in
-        # its git dir, which forgetting it would delete: it stays, as git
-        # refuses to remove it.
-        [ "$tool" = jj ] || [ ! -d "$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null)/modules" ] || continue
-        # A link is never moved, nor moved through, and only a worktree's .git
-        # file and a workspace's .jj (its repo a file) are dropped, never a repository.
-        [ ! -L "$wt" ] && [ ! -L .git/coddy/swept ] && mkdir -p .git/coddy/swept 2>/dev/null && mv "$wt" "$keep" 2>/dev/null || continue
-        # The record goes while the copy is still whole: one that will not go
-        # (a locked worktree) gets its directory back and stays, as before.
-        if [ "$tool" = jj ]; then jj workspace forget "$issue" >/dev/null 2>&1; else git worktree remove "$wt" >/dev/null 2>&1; fi || { mv "$keep" "$wt" 2>/dev/null; continue; }
-        [ "$tool" = git ] || git worktree remove "$wt" >/dev/null 2>&1
-        rm -f "$keep/.git"; [ ! -f "$keep/.jj/repo" ] || rm -rf "$keep/.jj"
-        moved=" (ignored files kept under $keep)"
-      fi
-      if [ "$tool" = jj ]; then
-        [ -n "$moved" ] || jj workspace forget "$issue" >/dev/null 2>&1 || continue
-        rm -rf "$wt"; jj bookmark forget "$branch" >/dev/null 2>&1
-      else
-        [ -n "$moved" ] || git worktree remove "$wt" >/dev/null 2>&1 || continue
-        git branch -D "$branch" >/dev/null 2>&1
-      fi
-      rm -rf ".git/coddy/$issue" "$rec" ".git/coddy/$issue.base"; echo "cleaned: $issue$moved"
+      release; case $? in
+        0|2) ;;
+        3) echo "kept: $issue (merged into $base, but $keep already holds an earlier copy)"; continue ;;
+        *) continue ;;
+      esac
+      if [ "$tool" = jj ]; then jj bookmark forget "$branch" >/dev/null 2>&1; else git branch -D "$branch" >/dev/null 2>&1; fi
+      echo "cleaned: $issue${moved:+ (ignored files kept under $keep)}"
     done
     exit 0 ;;
+
+  drop)
+    # Ends a claim here, never in the tracker (/coddy:drop does that): the
+    # worktree, lock and records go as sweep removes them (release), the
+    # branch stays. Refused while .git/coddy or .worktrees is a link, which
+    # every removal would go through, for a caller standing in the worktree, for
+    # another running session's lock, unless the caller names no session (a
+    # script run by hand), and, without --force, for work in no commit or on
+    # no remote; with it, uncommitted files move whole under
+    # .git/coddy/swept/<issue>, git's staged changes saved there first as
+    # .coddy-staged.patch, since the index goes with the worktree, and
+    # commits stay on the local branch (jj: in its history, at the commit
+    # dropped: names), so nothing is deleted.
+    { [ $# -le 3 ] && case "${3-}" in ''|--force) ;; *) false ;; esac; } || die "usage: $self drop <issue> [--force]"
+    for l in .git/coddy .worktrees; do
+      [ ! -L "$l" ] || die "$l is a link, so issue $issue was not dropped: what drop removes under it would go where the link points, outside the project. Put the directory it stands for back in its place by hand."
+    done
+    [ -d "$wt" ] || die "no worktree for $issue, so there is nothing to drop."
+    # swept is where the copies live, never an issue's lock to remove.
+    [ "$issue" != swept ] && [ -e ".git/coddy/$issue" ] || die "issue $issue has no claim here, so there is nothing to drop."
+    # The caller stands in the worktree when where it began (its project
+    # dir) or its working directory, read physically, is at or under it:
+    # removing it would take that directory from under the session.
+    w=$(cd "$wt" 2>/dev/null && pwd -P) && for p in "$began" "${OLDPWD-}"; do
+      [ -n "$p" ] && p=$(cd "$p" 2>/dev/null && pwd -P) || continue
+      case "$p/" in "$w"/*) die "this session stands inside $wt (where it was opened, or its working directory), so issue $issue was not dropped: removing it would take that directory from under the session. Open a session in the main checkout at $root and drop it from there." ;; esac
+    done
+    me="${CODDY_SESSION-}"; owner "$issue"
+    if [ -n "$sid" ] && [ -n "$me" ] && ! mine && alive "$pid" "$start"; then
+      die "issue $issue is claimed by session $sid (pid $pid, running): drop it from that session, or once that session has ended."
+    fi
+    branch=$(cat "$rec" 2>/dev/null); wtstate; keep=".git/coddy/swept/$issue"
+    if [ "$tool" = jj ]; then stay="its commits stay in jj's history, at the commit the dropped: line names"; else stay="its commits stay on the local branch"; fi
+    # A git commit no ref holds (a detached HEAD) would go with the worktree's
+    # own HEAD; jj keeps every commit it shows. Refused first, so no
+    # refusal offers --force, which would not keep it either.
+    [ "$tool" = jj ] || [ -z "$tip" ] || [ -n "$(git for-each-ref --count=1 --contains "$tip" 2>/dev/null)" ] ||
+      die "$wt is on commit ${tip:0:7}, which no branch holds, so issue $issue was not dropped: check out a branch at that commit there first, or it would be lost with the worktree."
+    if [ -z "${3-}" ]; then
+      [ -z "$dirty" ] || die "$wt holds uncommitted work, so issue $issue was not dropped. With --force its files move whole to $keep, and nothing is deleted."
+      # Commits on no remote: past origin/<branch>, fetched, or, with none
+      # there, past the base: the stacked issue's branch, else origin/$base.
+      git fetch -q origin "$base" >/dev/null 2>&1
+      if [ -n "$branch" ] && git fetch -q origin "+refs/heads/$branch:refs/remotes/origin/$branch" >/dev/null 2>&1; then
+        up="refs/remotes/origin/$branch" what="origin/$branch"
+      else
+        stacked; up="refs/remotes/origin/$base" what=${from:-origin/$base}
+        if [ -n "$from" ]; then if [ "$tool" = jj ]; then up=$(jj log --no-graph -r "\"$from\"" -T commit_id 2>/dev/null); else up="refs/heads/$from"; fi; fi
+      fi
+      k=""; [ -z "$tip" ] || [ -z "$up" ] || k=$(git rev-list --count "$tip" --not "$up" -- 2>/dev/null) || k=""
+      case "$k" in
+        0) ;;
+        '') die "could not tell whether $wt has commits on no remote, so issue $issue was not dropped. With --force it is dropped anyway, and $stay." ;;
+        *) die "$wt has $k commit(s) not on $what, so issue $issue was not dropped. With --force it is dropped anyway, and $stay." ;;
+      esac
+    fi
+    # git's index goes with the worktree's admin dir, so whatever --force
+    # finds staged is saved first, as a patch against HEAD in the worktree
+    # (plumbing, so no diff config shapes it), and moves with it.
+    sp=""
+    if [ -n "${3-}" ] && [ "$tool" = git ] && ! git -C "$wt" diff-index --cached --quiet HEAD -- 2>/dev/null; then
+      sp="$wt/.coddy-staged.patch"
+      { [ ! -e "$sp" ] && [ ! -L "$sp" ]; } || die "$sp exists already, so the staged changes in $wt could not be saved there and issue $issue was not dropped."
+      (set -C; git -C "$wt" diff-index --cached -p --binary HEAD -- > "$sp") 2>/dev/null || { rm -f "$sp"; die "the staged changes in $wt could not be saved to $sp, so issue $issue was not dropped."; }
+    fi
+    release ${3:+"$dirty"}; r=$?; case $r in
+      0|2) ;;
+      3) [ -z "$sp" ] || rm -f "$sp"; die "$keep already holds an earlier copy, so $wt was not moved there and issue $issue was not dropped: move that copy away by hand, then drop again." ;;
+      *) [ -z "$sp" ] || rm -f "$sp"; die "$wt could not be removed (a locked worktree, submodules checked out in it, or a link), so issue $issue was not dropped and its claim stays." ;;
+    esac
+    s=${tip:0:7}
+    echo "dropped: $issue (${branch:+$branch }at ${s:-an unknown commit})${moved:+ (files kept under $keep${sp:+, staged changes in $keep/.coddy-staged.patch})}"
+    # The worktree went but a record would not: named, never reported as kept.
+    [ "$r" = 0 ] || for f in ".git/coddy/$issue" "$rec" ".git/coddy/$issue.base"; do
+      [ ! -e "$f" ] && [ ! -L "$f" ] || echo "left: $f (could not be removed: remove it by hand)"
+    done ;;
 
   verify) verify; exit $? ;;
 
@@ -2700,5 +2809,5 @@ $bad" ;;
         { grep -v "^$k=" "$f" 2>/dev/null; printf '%s=%s\n' "$k" "$v"; } > "$f.tmp" && mv "$f.tmp" "$f" || die "could not write $f"
       fi
     done ;;
-  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] [-- <path>...] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | mark <issue> [digest] | sweep | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard | githook pre-commit|pre-push" ;;
+  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] [-- <path>...] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | mark <issue> [digest] | sweep | drop <issue> [--force] | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard | githook pre-commit|pre-push" ;;
 esac
