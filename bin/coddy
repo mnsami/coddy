@@ -12,6 +12,7 @@
 #   coddy mark   <issue> [digest]   a fingerprint of the issue's worktree and its records under .git/coddy, its digest first; given one, exit 1 when it differs
 #   coddy sweep                     remove what issues with a merged PR left behind
 #   coddy drop   <issue> [--force]  end a claim here: its worktree, lock and records go, its branch stays; without --force, refused for uncommitted work or commits on no remote
+#   coddy refresh <issue>           bring the worktree up to date with default_branch on the remote (git: merge, jj: rebase) and verify it, in one line: current, refreshed, failed, conflict or skipped
 #   coddy status                    the root, the config path and the claimed worktrees, for the prompts
 #   coddy config | detect           the config, or NOT_ONBOARDED; facts about the project for onboarding
 #   coddy exclude answers | config  put the agent's coddy/ directory, or .coddy.yml, into git's info/exclude unless git ignores it already
@@ -2697,6 +2698,57 @@ $bad" ;;
       [ ! -e "$f" ] && [ ! -L "$f" ] || echo "left: $f (could not be removed: remove it by hand)"
     done ;;
 
+  refresh)
+    # One worktree brought up to date with origin/$base after a merge, then
+    # verified with its output dropped, in one line, exit 0. git merges, so
+    # nothing pushed is rewritten; jj rebases its branch. Skipped, as sweep
+    # keeps them: another running session's claim, uncommitted work, and a
+    # base issue's branch that still resolves; under jj also a branch others
+    # build on, which the rebase would move. A conflict leaves the worktree at
+    # its tip (git: merge --abort; jj: each root rebased back onto its old
+    # parents, the same change ids and trees, never op restore or undo,
+    # which act on every workspace); it and a failed verify flag
+    # needs_rebase=<origin/$base> in the state file for start, written here,
+    # since the state verb refuses a gone owner's lock.
+    [ $# -le 2 ] || die "usage: $self refresh <issue>"
+    [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
+    [ "$issue" != swept ] && [ -e ".git/coddy/$issue" ] || die "issue $issue is not In Progress. Run /coddy:start $issue."
+    me="${CODDY_SESSION-}"; owner "$issue"
+    if [ -n "$sid" ] && ! mine && alive "$pid" "$start"; then echo "skipped: $issue (session $sid holds it)"; exit 0; fi
+    wtstate; [ -z "$dirty" ] || { echo "skipped: $issue (uncommitted work)"; exit 0; }
+    stacked; [ -z "$from" ] || { echo "skipped: $issue (stacked on $from)"; exit 0; }
+    git fetch -q origin "$base" >/dev/null 2>&1
+    d=$(git rev-parse -q --verify "origin/$base^{commit}") || die "origin/$base is missing here, so $wt was not brought up to date: fetch origin, or set default_branch with /coddy:config"
+    f=".git/coddy/$issue/state"
+    flag() { { grep -v '^needs_rebase=' "$f" 2>/dev/null; echo "needs_rebase=$d"; } > "$f.tmp" && mv "$f.tmp" "$f" || die "could not write needs_rebase to $f"; }
+    n=""
+    if [ "$tool" = jj ]; then
+      jhas() { [ -n "$(jjn log --no-graph -r "$1" -T '"x"' 2>/dev/null)" ]; }
+      ! jhas "$d & ::@" || { echo "current: $issue"; exit 0; }
+      ! jhas "roots($d..@):: ~ ::@" || { echo "skipped: $issue (other commits build on its branch)"; exit 0; }
+      rs=$(jjn log --no-graph -r "roots($d..@)" -T 'change_id ++ " " ++ parents.map(|p| p.commit_id()).join(" ") ++ "\n"' 2>/dev/null) && [ -n "$rs" ] || die "jj could not read the branch in $wt"
+      e=$(jjn rebase -b @ -d "$d" 2>&1) || die "jj rebase failed in $wt: $e"
+      if jhas "conflicts() & ($d..@)"; then
+        n=$(jjn log --no-graph -r "conflicts() & ($d..@)" -T 'conflicted_files.map(|e| e.path() ++ "\0").join("")' 2>/dev/null | sort -zu | while IFS= read -r -d '' p; do q "$p"; done)
+        while read -r r p; do
+          a=(); for x in $p; do a+=(-d "$x"); done
+          e=$(jjn rebase -s "$r" "${a[@]}" 2>&1) || die "jj could not rebase $wt back after a conflict, so its branch is left on origin/$base with conflicts: $e"
+        done <<< "$rs"
+        n=${n:-unknown files}
+      fi
+    else
+      ! git -C "$wt" merge-base --is-ancestor "$d" HEAD 2>/dev/null || { echo "current: $issue"; exit 0; }
+      if ! e=$(git -C "$wt" merge --no-edit --no-overwrite-ignore -q "origin/$base" 2>&1); then
+        n=$(git -C "$wt" diff --name-only -z --diff-filter=U | while IFS= read -r -d '' p; do q "$p"; done)
+        ! git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null || git -C "$wt" merge --abort >/dev/null 2>&1
+        [ "$(git -C "$wt" rev-parse HEAD 2>/dev/null)" = "$tip" ] && [ -z "$(git -C "$wt" status --porcelain --untracked-files=normal)" ] || die "git merge failed in $wt and could not be undone, so it is left mid-merge: $e"
+        [ -n "$n" ] || die "git merge failed in $wt: $e"
+      fi
+    fi
+    if [ -n "$n" ]; then flag; echo "conflict: $issue (${n//$'\n'/ })"; exit 0; fi
+    rm -f ".git/coddy/$issue.base"
+    if (verify) >/dev/null 2>&1; then echo "refreshed: $issue"; else flag; echo "failed: $issue"; fi ;;
+
   verify) verify; exit $? ;;
 
   diff|log)
@@ -2809,5 +2861,5 @@ $bad" ;;
         { grep -v "^$k=" "$f" 2>/dev/null; printf '%s=%s\n' "$k" "$v"; } > "$f.tmp" && mv "$f.tmp" "$f" || die "could not write $f"
       fi
     done ;;
-  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] [-- <path>...] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | mark <issue> [digest] | sweep | drop <issue> [--force] | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard | githook pre-commit|pre-push" ;;
+  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] [-- <path>...] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | mark <issue> [digest] | sweep | drop <issue> [--force] | refresh <issue> | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard | githook pre-commit|pre-push" ;;
 esac

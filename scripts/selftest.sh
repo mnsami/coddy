@@ -61,13 +61,23 @@ mkdir "$tmp/nojq"; for x in bash sed awk cat grep git jj cmp sort comm tr cut ck
 mkdir "$tmp/badjq"; printf '#!/bin/sh\nexit 1\n' > "$tmp/badjq/jq"; chmod +x "$tmp/badjq/jq"
 # kept <what>: sweep leaves worktree $p alone
 kept() { run sweep >/dev/null 2>&1; t 0 "$tool: sweep keeps $1" test -d ".worktrees/$p"; }
-# For drop: claimdrop <issue> starts and claims it on feat/<issue>-drop;
+# For drop and refresh: claimdrop <issue> starts and claims it on feat/<issue>-drop;
 # tipof <branch> is the local branch's commit, branched <branch> that it exists;
 # wcommit <issue> <file> commits the new file in its worktree, the branch moved to it.
 claimdrop() { run create "$1" "feat/$1-drop" >/dev/null 2>&1 && run claim "$1" >/dev/null 2>&1; }
 tipof() { if [ "$tool" = jj ]; then jj log --no-graph -r "bookmarks(exact:\"$1\")" -T commit_id 2>/dev/null; else git rev-parse -q --verify "refs/heads/$1"; fi; }
 branched() { [ -n "$(tipof "$1")" ]; }
 wcommit() { if [ "$tool" = jj ]; then (cd ".worktrees/$1" && jj file track "$2" && jj commit -m "$2" && jj bookmark set "feat/$1-drop" -r @-) >/dev/null 2>&1; else git -C ".worktrees/$1" add "$2" && git -C ".worktrees/$1" commit -q -m "$2"; fi; }
+# For refresh: upmain <file> [content] commits a new file to main on the remote;
+# wtip <issue> is the worktree's tip (jj: its change id and tree, which a
+# rebase back keeps); merged <issue>: it holds origin/main, through a merge
+# commit under git, rebased with none under jj.
+upmain() { (rm -rf "$tmp/up" && git clone -q -b main "$tmp/origin.git" "$tmp/up" && cd "$tmp/up" && echo "${2-up}" > "$1" && git add -A && git commit -q -m "up $1" && git push -q origin main) >/dev/null 2>&1; }
+wtip() { if [ "$tool" = jj ]; then set -- "$(jj -R ".worktrees/$1" log --no-graph -r @- -T 'change_id ++ " " ++ commit_id' 2>/dev/null)"; echo "${1% *} $(git rev-parse "${1#* }^{tree}")"; else git -C ".worktrees/$1" rev-parse HEAD; fi; }
+merged() {
+  if [ "$tool" = jj ]; then set -- "$1" "$(git rev-parse origin/main)"; [ -n "$(jj -R ".worktrees/$1" log --no-graph -r "$2 & ::@" -T '"x"' 2>/dev/null)" ] && [ -z "$(jj -R ".worktrees/$1" log --no-graph -r "merges() & ($2..@)" -T '"x"' 2>/dev/null)" ]
+  else git -C ".worktrees/$1" merge-base --is-ancestor origin/main HEAD && git -C ".worktrees/$1" rev-parse -q --verify HEAD^2 >/dev/null; fi
+}
 
 git init -q --bare "$tmp/origin.git"
 git clone -q "$tmp/origin.git" "$repo" 2>/dev/null
@@ -137,7 +147,7 @@ t 1 "schema: a key added to one copy only fails it" schema "$tmp/onboard.md" "$h
 # skill takes; start's never-list also names `agents/`, where its briefs live.
 # A new skill goes in the table.
 fallback() { line=$(grep -F '`CLAUDE_PLUGIN_ROOT` unexpanded' "$1") && for w in "coddy $2" 'never a `bin/coddy`' ${3-}; do case "$line" in *"$w"*) ;; *) return 1;; esac; done; }
-for s in 'config status $ARGUMENTS' 'drop status $ARGUMENTS' 'migrate status' 'next status' 'onboard detect' 'ship status $ARGUMENTS' 'start status $issue $onto $base `agents/`' 'triage status $ARGUMENTS'; do read -r n v a <<< "$s"; t 0 "skill $n carries the fallback for a host that does not inject" fallback "$here/skills/$n/SKILL.md" "$v" "$a"; done
+for s in 'config status $ARGUMENTS' 'drop status $ARGUMENTS' 'migrate status' 'next status' 'onboard detect' 'refresh status' 'ship status $ARGUMENTS' 'start status $issue $onto $base `agents/`' 'triage status $ARGUMENTS'; do read -r n v a <<< "$s"; t 0 "skill $n carries the fallback for a host that does not inject" fallback "$here/skills/$n/SKILL.md" "$v" "$a"; done
 grep -vF '`CLAUDE_PLUGIN_ROOT` unexpanded' "$here/skills/next/SKILL.md" > "$tmp/next.md"
 t 1 "a skill that injects without the fallback fails it" fallback "$tmp/next.md" status
 sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s/coddy status/coddy stat/' "$here/skills/next/SKILL.md" > "$tmp/next.md"
@@ -644,6 +654,39 @@ leg() {
   t 0 "$tool: sweep names an unmerged claim whose session is gone" says "^kept: $d (not merged)\$" run sweep
   t 0 "$tool: and keeps it" test -d ".worktrees/$d"
   t 0 "$tool: drop drops a claim whose session is gone" run drop "$d"
+  # refresh brings one worktree up to date with origin/main (git: a merge
+  # commit; jj: a rebase), then verifies it (verify: s.txt exists).
+  r=$((n + 200)); claimdrop "$r"; echo s > ".worktrees/$r/s.txt"; wcommit "$r" s.txt
+  t 0 "$tool: refresh: a worktree holding origin/main is current" says "^current: $r\$" run refresh "$r"
+  upmain "u$r.txt"
+  t 0 "$tool: refresh: one behind it is refreshed once verify passes" says "^refreshed: $r\$" run refresh "$r"
+  t 0 "$tool: refresh: and now holds origin/main$([ "$tool" = jj ] && echo ', rebased' || echo ' through a merge commit')" merged "$r"
+  t 0 "$tool: refresh: and is current then" says "^current: $r\$" run refresh "$r"
+  t 1 "$tool: refresh: and flags nothing" says needs_rebase run state "$r"
+  f=$((n + 210)); claimdrop "$f"; upmain "u$f.txt"
+  t 0 "$tool: refresh: one whose verify fails once updated is failed" says "^failed: $f\$" run refresh "$f"
+  t 0 "$tool: refresh: and flags needs_rebase at origin/main for start" says "^needs_rebase=$(git rev-parse origin/main)\$" run state "$f"
+  c=$((n + 220)); claimdrop "$c"; echo mine > ".worktrees/$c/c$c.txt"; wcommit "$c" "c$c.txt"; upmain "c$c.txt" theirs; w=$(wtip "$c")
+  t 0 "$tool: refresh: a conflict names its files" says "^conflict: $c ('c$c\.txt')\$" run refresh "$c"
+  t 0 "$tool: refresh: and leaves the worktree at its tip" test "$(wtip "$c")" = "$w"
+  t 0 "$tool: refresh: neither mid-merge nor holding a conflict" sh -c "if [ $tool = jj ]; then test -z \"\$(jj -R .worktrees/$c log --no-graph -r 'conflicts()' -T '\"x\"' 2>/dev/null)\"; else ! git -C .worktrees/$c rev-parse -q --verify MERGE_HEAD; fi && grep -qx mine .worktrees/$c/c$c.txt"
+  t 0 "$tool: refresh: and flags needs_rebase at origin/main" says "^needs_rebase=$(git rev-parse origin/main)\$" run state "$c"
+  echo wip > ".worktrees/$r/wip.txt"; upmain "v$r.txt"
+  t 0 "$tool: refresh: uncommitted work is skipped" says "^skipped: $r (uncommitted work)\$" run refresh "$r"
+  rm ".worktrees/$r/wip.txt"; echo "sess-b 1" > ".git/coddy/$r/owner"
+  t 0 "$tool: refresh: another running session's claim is skipped" says "^skipped: $r (session sess-b holds it)\$" run refresh "$r"
+  echo "sess-a $$" > ".git/coddy/$r/owner"
+  s=$((n + 230)); run create "$s" "feat/$s-drop" "$r" >/dev/null 2>&1; run claim "$s" >/dev/null 2>&1
+  t 0 "$tool: refresh: one stacked on a base that still resolves is skipped" says "^skipped: $s (stacked on feat/$r-drop)\$" run refresh "$s"
+  [ "$tool" = git ] || t 0 "jj: refresh: a branch another workspace builds on is skipped, so the rebase moves none of its commits" says "^skipped: $r (other commits build on its branch)\$" run refresh "$r"
+  run drop "$r" --force >/dev/null 2>&1; if [ "$tool" = jj ]; then jj bookmark forget "feat/$r-drop" >/dev/null 2>&1; else git branch -qD "feat/$r-drop"; fi
+  t 0 "$tool: refresh: once its base is gone it is updated like any other" says "^refreshed: $s\$" run refresh "$s"
+  t 1 "$tool: refresh: and its base record is removed" test -e ".git/coddy/$s.base"
+  t 1 "$tool: refresh refuses an issue with no worktree" run refresh "$r"
+  mkdir ".worktrees/$r"
+  t 1 "$tool: refresh refuses a worktree with no claim" run refresh "$r"
+  rmdir ".worktrees/$r"
+  for x in "$f" "$c" "$s"; do run drop "$x" --force >/dev/null 2>&1; done
   t 0 "$tool: the whole flow left the main checkout alone" wire trip "leg$n"
 }
 
@@ -744,7 +787,7 @@ mirror() {
 # below. A new pre-approved form is added here on purpose; take and drop never.
 SH='bash "${CLAUDE_PLUGIN_ROOT}/scripts'
 shapes=("Bash($SH/config.sh\")" "Bash($SH/detect.sh\")" 'Bash(date +%Y%m%d-%H%M%S)')
-for v in 'claim *' 'create *' 'diff *' 'exclude answers' 'exclude config' 'forget answers' 'log *' 'mark *' migrate 'push *' 'state *' status sweep 'verify *'; do shapes+=("Bash($SH/issue.sh\" $v)"); done
+for v in 'claim *' 'create *' 'diff *' 'exclude answers' 'exclude config' 'forget answers' 'log *' 'mark *' migrate 'push *' 'refresh *' 'state *' status sweep 'verify *'; do shapes+=("Bash($SH/issue.sh\" $v)"); done
 gated() {
   local f r s ok
   for f in "$1"/*/SKILL.md; do

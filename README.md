@@ -149,7 +149,7 @@ config is sent to `/coddy:migrate` when it is behind the current version,
 
 The lifecycle is `next → start (think, implement, harden, review) → ship → merge`,
 or `drop` to give an issue up. The next `next` or `start` sweeps up what the
-merge left behind.
+merge left behind, and `refresh` brings the other open issues up to date with it.
 
 | Skill | What it does |
 |---|---|
@@ -160,6 +160,7 @@ merge left behind.
 | `/coddy:start <issue> [onto <base-issue>]` | Fetches the issue, claims it, moves it to In Progress and gives it its own worktree in `.worktrees/<issue>`. Then reads beyond the ticket, thinks the work through with you, and asks for one approval of the plan with its difficulty tier. On a yes it implements on that tier's model, hardens the result twice, and loops code and security review until nothing at `review_block` or above is left. After `review_rounds` rounds it stops and hands what is left to you: cut the rule those findings sit on, fix by hand, or go on as is. Run it again to resume. Name a PR or branch, or let the issue's open PR be found: that branch instead. `onto` starts from another issue's branch instead of the default branch |
 | `/coddy:ship [issue]` | Runs `verify` in the issue's worktree, commits its tracked changes and only the untracked files you name (any other untracked file stops it), pushes, opens the PR and links it back to the issue. Started `onto` another issue: the PR targets that issue's branch, so it shows only its own diff |
 | `/coddy:drop <issue>` | Gives a claimed issue up: removes its worktree and claim here, keeping its branch and moving any ignored or uncommitted files whole under `.git/coddy/swept/<issue>/`, then takes it out of In Progress in the tracker, and off you only when no PR stays open, closing its open PR if you say so. Uncommitted work or commits on no remote need your yes first |
+| `/coddy:refresh` | After a merge, brings every claimed worktree up to date with the default branch (git: a merge commit; jj: a rebase) and runs `verify` in each, one line per issue. A conflict, or a `verify` that fails, leaves the worktree as it was and flags the issue, so `/coddy:start <issue>` updates the branch before anything else. Another running session's worktree, uncommitted work and a branch stacked on an open issue are skipped. Never pushes |
 | `/coddy:triage` | Turns findings into issues, skipping ones already open |
 
 Each skill also triggers from plain language ("start issue 42", "what's
