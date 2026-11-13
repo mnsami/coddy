@@ -534,6 +534,10 @@ leg() {
   t 1 "$tool: and no .jj" test -e ".git/coddy/swept/$d/.jj"
   t 1 "$tool: and the worktree and its lock are gone" test -e ".worktrees/$d" -o -e ".git/coddy/$d"
   t 0 "$tool: and the local branch stays" branched "feat/$d-drop"
+  mkdir .worktrees/swept
+  t 0 "$tool: drop refuses swept, where the copies live, as no claim" says "issue swept has no claim here" run drop swept
+  t 0 "$tool: and leaves the copies there" grep -qx secret ".git/coddy/swept/$d/.env"
+  rmdir .worktrees/swept
   d=$((n + 90)); claimdrop "$d"; echo wip > ".worktrees/$d/wip.txt"; echo mod >> ".worktrees/$d/README.md"
   t 1 "$tool: drop refuses uncommitted work" run drop "$d"
   t 0 "$tool: naming --force" says "uncommitted work.*--force" run drop "$d"
@@ -557,6 +561,14 @@ leg() {
   t 0 "$tool: naming that branch" says "not on origin/feat/$d-drop" run drop "$d"
   t 0 "$tool: drop --force drops it" run drop "$d" --force
   t 0 "$tool: and the commit stays on the local branch" test "$(tipof "feat/$d-drop")" = "$c"
+  # A git commit on a detached HEAD would go with the worktree: refused, --force too.
+  if [ "$tool" = git ]; then
+    d=$((n + 130)); claimdrop "$d"; git -C ".worktrees/$d" checkout -q --detach; echo x > ".worktrees/$d/x.txt"; wcommit "$d" x.txt
+    t 1 "git: drop --force refuses a commit no branch holds" run drop "$d" --force
+    t 0 "git: naming it" says "which no branch holds" run drop "$d" --force
+    t 0 "git: and leaves the worktree and its claim" test -d ".worktrees/$d" -a -d ".git/coddy/$d"
+    git -C ".worktrees/$d" checkout -q "feat/$d-drop"; run drop "$d" --force >/dev/null 2>&1
+  fi
   # Another session's claim: drop refuses it while that session runs, and
   # sweep names it as not merged once that session is gone.
   d=$((n + 120)); claimdrop "$d"; echo "sess-b 1" > ".git/coddy/$d/owner"

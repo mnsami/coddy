@@ -2625,7 +2625,8 @@ $bad" ;;
     # branch, so nothing is deleted.
     { [ $# -le 3 ] && case "${3-}" in ''|--force) ;; *) false ;; esac; } || die "usage: $self drop <issue> [--force]"
     [ -d "$wt" ] || die "no worktree for $issue, so there is nothing to drop."
-    [ -e ".git/coddy/$issue" ] || die "issue $issue has no claim here, so there is nothing to drop."
+    # swept is where the copies live, never an issue's lock to remove.
+    [ "$issue" != swept ] && [ -e ".git/coddy/$issue" ] || die "issue $issue has no claim here, so there is nothing to drop."
     me="${CODDY_SESSION-}"; owner "$issue"
     if [ -n "$sid" ] && [ -n "$me" ] && ! mine && alive "$pid" "$start"; then
       die "issue $issue is claimed by session $sid (pid $pid, running): drop it from that session, or once that session has ended."
@@ -2649,6 +2650,10 @@ $bad" ;;
         *) die "$wt has $k commit(s) not on $what, so issue $issue was not dropped. With --force it is dropped anyway, and they stay on the local branch." ;;
       esac
     fi
+    # A git commit no ref holds (a detached HEAD) would go with the worktree's
+    # own HEAD; jj keeps every commit it shows.
+    [ "$tool" = jj ] || [ -z "$tip" ] || [ -n "$(git for-each-ref --count=1 --contains "$tip" 2>/dev/null)" ] ||
+      die "$wt is on commit ${tip:0:7}, which no branch holds, so issue $issue was not dropped: check out a branch at that commit there first, or it would be lost with the worktree."
     release ${3:+"$dirty"}; case $? in
       0) ;;
       3) die "$keep already holds an earlier copy, so $wt was not moved there and issue $issue was not dropped: move that copy away by hand, then drop again." ;;
