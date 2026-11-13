@@ -418,6 +418,12 @@ leg() {
   t 0 "$tool: sweep left the other worktree alone" test -d ".worktrees/$n"
   # The same worktree back, held by this session: swept as before.
   run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
+  # Never through a link at .git/coddy or .worktrees: every removal would go where it points.
+  for l in .git/coddy .worktrees; do
+    mv "$l" "$tmp/ln$n"; ln -s "$tmp/ln$n" "$l"; run sweep >/dev/null 2>&1
+    t 0 "$tool: sweep leaves a merged claim alone while $l is a link" test -d "$tmp/ln$n/$p" -a -d ".worktrees/$p" -a -d ".git/coddy/$p"
+    rm "$l"; mv "$tmp/ln$n" "$l"
+  done
   t 0 "$tool: sweep cleans a merged worktree this session holds" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
   # A lock that will not go once the worktree has gone: cleaned all the same, its branch deleted.
   run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"; chmod 500 ".git/coddy/$p"
@@ -579,6 +585,8 @@ leg() {
     t 1 "git: drop --force refuses a commit no branch holds" run drop "$d" --force
     t 0 "git: naming it" says "which no branch holds" run drop "$d" --force
     t 0 "git: and leaves the worktree and its claim" test -d ".worktrees/$d" -a -d ".git/coddy/$d"
+    t 0 "git: refused before the commits on no remote, without --force too" says "which no branch holds" run drop "$d"
+    t 1 "git: never offering --force" says "[-]-force" run drop "$d"
     git -C ".worktrees/$d" checkout -q "feat/$d-drop"; run drop "$d" --force >/dev/null 2>&1
     # The index goes with the worktree: --force saves what is staged as a patch in the copy first, and refuses when it cannot.
     d=$((n + 160)); claimdrop "$d"; w=".worktrees/$d"
@@ -603,9 +611,21 @@ leg() {
   t 1 "$tool: or standing in it" sh -c "cd '.worktrees/$d/sub' && CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' drop $d"
   t 1 "$tool: or standing in it through a link" sh -c "cd '$tmp/in$d' && CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' drop $d"
   t 0 "$tool: naming it" says "this session stands inside \.worktrees/$d" sh -c "cd '$tmp/in$d' && CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' drop $d"
+  t 0 "$tool: and saying to open a session in the main checkout" says "Open a session in the main checkout at .* and drop it from there" sh -c "cd '$tmp/in$d' && CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' drop $d"
   t 0 "$tool: and leaves the worktree and its claim" test -d ".worktrees/$d/sub" -a -d ".git/coddy/$d"
   rm "$tmp/in$d"; rmdir ".worktrees/$d/sub"
   t 0 "$tool: and drops it from the main checkout" run drop "$d"
+  # A link at .git/coddy or .worktrees: refused, nothing removed where it points.
+  d=$((n + 180)); claimdrop "$d"
+  for l in .git/coddy .worktrees; do
+    mv "$l" "$tmp/ln$d"; ln -s "$tmp/ln$d" "$l"; echo x > "$tmp/ln$d/$d/data.txt"
+    t 1 "$tool: drop refuses while $l is a link" run drop "$d"
+    t 0 "$tool: naming it" says "${l//./\\.} is a link, so issue $d was not dropped" run drop "$d"
+    t 0 "$tool: and leaves where it points as it was" grep -qx x "$tmp/ln$d/$d/data.txt"
+    rm "$l" "$tmp/ln$d/$d/data.txt"; mv "$tmp/ln$d" "$l"
+  done
+  t 0 "$tool: and leaves the worktree and its claim" test -d ".worktrees/$d" -a -d ".git/coddy/$d"
+  run drop "$d" >/dev/null 2>&1
   # A lock that will not go once the worktree has gone: dropped, the lock named as left.
   d=$((n + 170)); claimdrop "$d"; chmod 500 ".git/coddy/$d"
   t 0 "$tool: drop drops a claim whose lock will not go, naming it as left" says "^left: \.git/coddy/$d (could not be removed" run drop "$d"

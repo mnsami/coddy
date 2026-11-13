@@ -2366,10 +2366,13 @@ lines() { while IFS= read -r -d '' p; do printf '%q\n' "$p"; done; }
 # ($keep), as plain files, and stays there until the user deletes it, moved
 # set. git forgets that one worktree by its missing path (jj's git worktree
 # too), never another whose directory is away. Status 3 when a copy is at
-# $keep already, which is never touched; 1 when the worktree stays as it was;
-# 2 when the worktree went but a record would not (those left are still there).
+# $keep already, which is never touched; 1 when the worktree stays as it was,
+# as it always does while .git/coddy or .worktrees is a link, which every
+# removal below would go through, or .git/coddy no directory; 2 when the
+# worktree went but a record would not (those left are still there).
 release() {
   keep=".git/coddy/swept/$issue" moved=
+  [ ! -L .git/coddy ] && [ ! -L .worktrees ] && [ -d .git/coddy ] || return 1
   if [ -n "${1-}" ] || ignored; then
     if [ -e "$keep" ] || [ -L "$keep" ]; then return 3; fi
     # Submodules checked out in a git worktree keep their repositories in
@@ -2621,7 +2624,8 @@ $bad" ;;
   drop)
     # Ends a claim here, never in the tracker (/coddy:drop does that): the
     # worktree, lock and records go as sweep removes them (release), the
-    # branch stays. Refused for a caller standing in the worktree, for
+    # branch stays. Refused while .git/coddy or .worktrees is a link, which
+    # every removal would go through, for a caller standing in the worktree, for
     # another running session's lock, unless the caller names no session (a
     # script run by hand), and, without --force, for work in no commit or on
     # no remote; with it, uncommitted files move whole under
@@ -2630,6 +2634,9 @@ $bad" ;;
     # commits stay on the local branch (jj: in its history, at the commit
     # dropped: names), so nothing is deleted.
     { [ $# -le 3 ] && case "${3-}" in ''|--force) ;; *) false ;; esac; } || die "usage: $self drop <issue> [--force]"
+    for l in .git/coddy .worktrees; do
+      [ ! -L "$l" ] || die "$l is a link, so issue $issue was not dropped: what drop removes under it would go where the link points, outside the project. Put the directory it stands for back in its place by hand."
+    done
     [ -d "$wt" ] || die "no worktree for $issue, so there is nothing to drop."
     # swept is where the copies live, never an issue's lock to remove.
     [ "$issue" != swept ] && [ -e ".git/coddy/$issue" ] || die "issue $issue has no claim here, so there is nothing to drop."
@@ -2638,7 +2645,7 @@ $bad" ;;
     # removing it would take that directory from under the session.
     w=$(cd "$wt" 2>/dev/null && pwd -P) && for p in "$began" "${OLDPWD-}"; do
       [ -n "$p" ] && p=$(cd "$p" 2>/dev/null && pwd -P) || continue
-      case "$p/" in "$w"/*) die "this session stands inside $wt (where it was opened, or its working directory), so issue $issue was not dropped: removing it would take that directory from under the session. Drop it from the main checkout at $root." ;; esac
+      case "$p/" in "$w"/*) die "this session stands inside $wt (where it was opened, or its working directory), so issue $issue was not dropped: removing it would take that directory from under the session. Open a session in the main checkout at $root and drop it from there." ;; esac
     done
     me="${CODDY_SESSION-}"; owner "$issue"
     if [ -n "$sid" ] && [ -n "$me" ] && ! mine && alive "$pid" "$start"; then
@@ -2646,6 +2653,11 @@ $bad" ;;
     fi
     branch=$(cat "$rec" 2>/dev/null); wtstate; keep=".git/coddy/swept/$issue"
     if [ "$tool" = jj ]; then stay="its commits stay in jj's history, at the commit the dropped: line names"; else stay="its commits stay on the local branch"; fi
+    # A git commit no ref holds (a detached HEAD) would go with the worktree's
+    # own HEAD; jj keeps every commit it shows. Refused first, so no
+    # refusal offers --force, which would not keep it either.
+    [ "$tool" = jj ] || [ -z "$tip" ] || [ -n "$(git for-each-ref --count=1 --contains "$tip" 2>/dev/null)" ] ||
+      die "$wt is on commit ${tip:0:7}, which no branch holds, so issue $issue was not dropped: check out a branch at that commit there first, or it would be lost with the worktree."
     if [ -z "${3-}" ]; then
       [ -z "$dirty" ] || die "$wt holds uncommitted work, so issue $issue was not dropped. With --force its files move whole to $keep, and nothing is deleted."
       # Commits on no remote: past origin/<branch>, fetched, or, with none
@@ -2664,10 +2676,6 @@ $bad" ;;
         *) die "$wt has $k commit(s) not on $what, so issue $issue was not dropped. With --force it is dropped anyway, and $stay." ;;
       esac
     fi
-    # A git commit no ref holds (a detached HEAD) would go with the worktree's
-    # own HEAD; jj keeps every commit it shows.
-    [ "$tool" = jj ] || [ -z "$tip" ] || [ -n "$(git for-each-ref --count=1 --contains "$tip" 2>/dev/null)" ] ||
-      die "$wt is on commit ${tip:0:7}, which no branch holds, so issue $issue was not dropped: check out a branch at that commit there first, or it would be lost with the worktree."
     # git's index goes with the worktree's admin dir, so whatever --force
     # finds staged is saved first, as a patch against HEAD in the worktree
     # (plumbing, so no diff config shapes it), and moves with it.
