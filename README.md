@@ -139,10 +139,10 @@ under `.claude/coddy/`, so a run that stops resumes where it was. At review
 it shows the config and, on your yes, writes the PR check workflow and the
 coddy block into `AGENTS.md` (so an agent without the plugin reads the
 rules), backing up any file it replaces under `.claude/coddy/backup/`, and
-then `.coddy.yml` (see [Config](#config)). It tells you what to set by hand so the default branch
-requires a pull request. A project that already has a config is sent to
-`/coddy:migrate` when it is behind the current version, `/coddy:config`
-otherwise.
+then `.coddy.yml` (see [Config](#config)). It tells you what to set by hand so
+the default branch requires a pull request. A project that already has a
+config is sent to `/coddy:migrate` when it is behind the current version,
+`/coddy:config` otherwise.
 
 ## Skills
 
