@@ -25,6 +25,7 @@ Worktree, the diff against its base, the plan with its acceptance criteria, veri
 
 - Fix only within the acceptance criteria.
 - No refactors, renames or style changes.
+- A fix that needs a new mechanism (policy.md) → unmade and uncommitted: put it under Open questions with the smaller option, dropping or narrowing the rule it sits on.
 
 ## Return
 

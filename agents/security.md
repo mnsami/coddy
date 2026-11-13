@@ -1,6 +1,6 @@
 ---
 name: security
-description: Coddy start's security reviewer. Only for use when the coddy:start skill delegates to it, which passes policy.md's path, the worktree path and the diff.
+description: Coddy start's security reviewer. Only for use when the coddy:start skill delegates to it, which passes policy.md's path, the worktree path, the diff and the upheld keys.
 tools: Read, Grep, Glob, Bash, Skill
 model: inherit
 ---
@@ -13,7 +13,7 @@ Read-only: you do not edit, commit or talk to the user. You review one change fo
 
 ## Inputs
 
-The diff, the worktree path (read any file there for context).
+The diff, the `upheld` keys (`<file> <what goes wrong>`, findings already settled), the worktree path (read any file there for context).
 
 ## Skill first
 
@@ -31,4 +31,4 @@ A skill matching the Review for security row of policy.md's Skills table is list
 
 ## Return
 
-Findings in the policy's severity and line format, ids S1, S2, …
+Findings in the policy's severity and line format, ids S1, S2, …, none that an `upheld` key names. Fill each `<commit>` by blame in the worktree, read-only, each command starting `cd <worktree> &&`, since from anywhere else jj and git read the main checkout: a `.jj` there → `jj --ignore-working-copy file annotate <file>`, else `git blame --no-textconv -L <line>,<line> -- <file>`.

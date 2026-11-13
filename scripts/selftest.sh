@@ -235,6 +235,18 @@ leg() {
   t 0 "$tool: another session may read it" says "^phase=review$" as sess-b 1 state "$n"
   t 0 "$tool: the owner's process under a new session id (/clear) may write" as sess-b $$ state "$n" round=1
   run claim "$n" >/dev/null 2>&1 # the lock back to this session id
+  # The review loop's bound: review_rounds, 3 when the config has none.
+  t 1 "$tool: state refuses a round past review_rounds (absent: 3)" run state "$n" phase=gone round=4
+  t 0 "$tool: that refusal names the cap and 10.6" says "past review_rounds (3).*10\.6" run state "$n" round=4
+  t 0 "$tool: and writes none of it" says "^phase=review$" run state "$n"
+  t 0 "$tool: nor the round" says "^round=1$" run state "$n"
+  t 0 "$tool: round=3 is allowed" run state "$n" round=3
+  t 0 "$tool: round=0 is always allowed" run state "$n" round=0
+  t 1 "$tool: state refuses a round that is not a whole number" run state "$n" round=x
+  cp .claude/coddy.yml "$tmp/conf.rounds"; echo 'review_rounds: 1' >> .claude/coddy.yml
+  t 1 "$tool: with review_rounds: 1, round=2 is refused" run state "$n" round=2
+  t 0 "$tool: and round=1 is allowed" run state "$n" round=1
+  cp "$tmp/conf.rounds" .claude/coddy.yml
   t 1 "$tool: state refuses an issue with no claim" run state 999 phase=x
   echo x > ".worktrees/$n/a.txt"; echo secret > ".worktrees/$n/.env"
   t 1 "$tool: push refuses uncommitted work without a message" run push "$n"

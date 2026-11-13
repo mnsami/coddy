@@ -2681,6 +2681,15 @@ $bad" ;;
       case "$k" in ''|*[!abcdefghijklmnopqrstuvwxyz_]*) die "state keys are lower case words, got '$k'" ;; esac
       case "$v" in *"
 "*) die "state values are one line" ;; esac
+      # the review loop's bound: a round past review_rounds (absent or not a
+      # positive whole number: 3) is refused, so only a user action restarts it
+      if [ "$k" = round ]; then
+        case "$v" in ''|*[!0-9]*) die "state round is a whole number, got '$v'" ;; esac
+        cap=$(cfg review_rounds); cap=${cap#"${cap%%[!0]*}"}
+        case "$cap" in ''|*[!0-9]*) cap=3 ;; esac; [ "${#cap}" -le 9 ] || cap=3
+        r=${v#"${v%%[!0]*}"}
+        { [ "${#r}" -le 9 ] && [ "${r:-0}" -le "$cap" ]; } || die "round $v is past review_rounds ($cap): hand the blocking findings to the user as start's step 10.6 says"
+      fi
     done
     for kv; do
       k="${kv%%=*}" v="${kv#*=}" add=""
