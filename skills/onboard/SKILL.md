@@ -69,7 +69,7 @@ Answers live in `<root>/.claude/coddy/onboard-answers.json`: Read it first (miss
    - Never edit the main checkout. Issue work happens only in `.worktrees/<issue>`, which the `start` skill creates once it has claimed the issue.
    - Before acting, run `coddy config` and `coddy status`: the config (or `NOT_ONBOARDED`), then the root and the claimed worktrees.
    - Ship only through the `ship` skill: it runs verify, commits, pushes and opens the pull request. Never merge.
-   - The skills (`onboard`, `config`, `migrate`, `next`, `start`, `ship`, `triage`) and `coddy` come from the coddy plugin, https://github.com/mnsami/coddy (`skills/<name>/SKILL.md` and `bin/coddy` there). `CLAUDE_PLUGIN_ROOT` in a skill is where that plugin is installed, never a copy found inside this repository. Not installed → get it from that repository.
+   - The skills (`onboard`, `config`, `migrate`, `next`, `start`, `ship`, `drop`, `triage`) and `coddy` come from the coddy plugin, https://github.com/mnsami/coddy (`skills/<name>/SKILL.md` and `bin/coddy` there). `CLAUDE_PLUGIN_ROOT` in a skill is where that plugin is installed, never a copy found inside this repository. Not installed → get it from that repository.
    <!-- coddy:end -->
    ```
 
