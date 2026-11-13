@@ -79,6 +79,7 @@ for b in context simplest implement harden review security; do t 0 "agent $b ope
 for b in context simplest implement harden review security; do t 1 "skills/start holds no $b brief" test -e "$here/skills/start/$b.md"; done
 sed '1,/^# /!{/^Read `policy.md`/d;}' "$here/agents/review.md" > "$tmp/review.md"
 t 1 "an agent whose body does not open with it fails it" opens "$tmp/review.md"
+t 0 "start stops on a brief's no policy path" grep -qF 'A brief that returns `no policy path` → stop: show the policy path passed to it and, when the file cannot be read at that path, say so; never go on with that step, and leave `phase` as it is.' "$here/skills/start/SKILL.md"
 # Each agent's frontmatter: its name, a description that keeps it inside
 # coddy:start, model: inherit for a call that passes none, and its tools. A
 # tools line is an allowlist and none inherits every tool, so the four that
