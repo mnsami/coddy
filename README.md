@@ -133,13 +133,13 @@ agenda before each and at most one question per step. It detects what it
 can and asks for the rest; a missing `jq` or `jj` is installed through a
 shell command you allow (declining `jq` stops it). The branch step
 recommends `worktree: git` first, with `jj` offered after it. coddy assumes
-a single remote, `origin`, and collaborator access to the tracker's
-repository; forks are not supported yet (#280). Your answers are saved under `.claude/coddy/`, so a run
-that stops resumes where it was. At review it shows the config and, on your
-yes, writes the PR check workflow and the coddy block into `AGENTS.md` (so
-an agent without the plugin reads the rules), backing up any file it
-replaces under `.claude/coddy/backup/`, and then `.coddy.yml` (see
-[Config](#config)). It tells you what to set by hand so the default branch
+a single remote, `origin`, and write or triage access to the tracker's
+repository; forks are not supported yet (#280). Your answers are saved
+under `.claude/coddy/`, so a run that stops resumes where it was. At review
+it shows the config and, on your yes, writes the PR check workflow and the
+coddy block into `AGENTS.md` (so an agent without the plugin reads the
+rules), backing up any file it replaces under `.claude/coddy/backup/`, and
+then `.coddy.yml` (see [Config](#config)). It tells you what to set by hand so the default branch
 requires a pull request. A project that already has a config is sent to
 `/coddy:migrate` when it is behind the current version, `/coddy:config`
 otherwise.
@@ -531,8 +531,12 @@ It is not a board, a planner or a factory, and it pairs with tools that are:
 - Releases are a version bump of `.claude-plugin/plugin.json` through a PR of
   its own, never a direct commit to `main`. The marketplace installs from
   `main`, and an installed copy changes only after a bump.
-- PRs merge with a merge commit, never squash or rebase merge: stacked PRs need their base's commits intact.
-- coddy assumes one remote, `origin`, and write or triage access to the tracker's repository; forks are not supported yet (#280). Outside contributors open a PR by hand with `Closes #<n>`; the coddy flow is for collaborators.
+- PRs merge with a merge commit, never squash or rebase merge: stacked PRs
+  need their base's commits intact.
+- coddy assumes one remote, `origin`, and write or triage access to the
+  tracker's repository; forks are not supported yet (#280). Outside
+  contributors open a PR by hand with `Closes #<n>`; the coddy flow is for
+  collaborators.
 - Brand assets and their uses are listed in [`assets/README.md`](assets/README.md).
 
 ## Develop
