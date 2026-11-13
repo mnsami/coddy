@@ -2314,13 +2314,15 @@ exec "$b" -p "$c" githook %s "$@"
 
 # The worktree's last commit, into tip, and its uncommitted work, into dirty
 # (empty when there is none): untracked files are uncommitted work too, since
-# auto-track is off; a jj listing that fails reads as some.
+# auto-track is off, and whatever status.showUntrackedFiles says, since git
+# worktree remove deletes the ones its status hides; a jj listing that fails
+# reads as some.
 wtstate() {
   if [ "$tool" = jj ]; then
     tip=$(jj -R "$wt" log --no-graph -r @- -T commit_id 2>/dev/null)
     dirty=$(set -o pipefail; jj -R "$wt" diff --summary 2>/dev/null && untracked 2>/dev/null | tr '\0' '\n' || echo unknown)
   else
-    tip=$(git -C "$wt" rev-parse HEAD 2>/dev/null); dirty=$(git -C "$wt" status --porcelain 2>/dev/null)
+    tip=$(git -C "$wt" rev-parse HEAD 2>/dev/null); dirty=$(git -C "$wt" status --porcelain --untracked-files=normal 2>/dev/null)
   fi
 }
 # $tip landed in origin/$base, whose first-parent line is $line: as an

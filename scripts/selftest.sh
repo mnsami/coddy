@@ -546,6 +546,11 @@ leg() {
   t 0 "$tool: keeping the untracked file" grep -qx wip ".git/coddy/swept/$d/wip.txt"
   t 0 "$tool: and the changed one" grep -qx mod ".git/coddy/swept/$d/README.md"
   t 1 "$tool: and the worktree and its lock are gone" test -e ".worktrees/$d" -o -e ".git/coddy/$d"
+  # git worktree remove deletes the untracked files status.showUntrackedFiles hides.
+  d=$((n + 140)); claimdrop "$d"; echo wip > ".worktrees/$d/wip.txt"; git config status.showUntrackedFiles no
+  t 1 "$tool: drop refuses an untracked file status.showUntrackedFiles=no hides" run drop "$d"
+  t 0 "$tool: and leaves it" grep -qx wip ".worktrees/$d/wip.txt"
+  git config --unset status.showUntrackedFiles; run drop "$d" --force >/dev/null 2>&1
   d=$((n + 100)); claimdrop "$d"; echo secret > ".worktrees/$d/.env"; mkdir -p ".git/coddy/swept/$d"
   t 1 "$tool: drop refuses when .git/coddy/swept holds an earlier copy" run drop "$d"
   t 0 "$tool: naming that copy" says "\.git/coddy/swept/$d already holds an earlier copy" run drop "$d"
