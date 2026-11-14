@@ -31,7 +31,7 @@ Lines under Cleaned up → say so first, in one sentence.
    - `refreshed: <n>`: brought up to date (git: a merge commit; jj: rebased), and verify passes.
    - `failed: <n>`: brought up to date, and verify fails there.
    - `conflict: <n> (<files>)`: the update conflicts in those files, so the worktree was left as it was.
-   - `skipped: <n> (<reason>)`: left as it was: another running session holds it, it holds uncommitted work, it is stacked on an issue still open, or (jj) another branch builds on it.
+   - `skipped: <n> (<reason>)`: left as it was: another running session holds it, it holds uncommitted work, it is stacked on an issue still open, (git) its HEAD is detached, (jj) another branch builds on it, or the config has no verify command.
 
    `failed` and `conflict` flag the issue, so `/coddy:start <n>` brings it up to date before anything else. A call that times out → that issue's line is `failed: <n>`: the update flagged it before verify ran. A refusal (non-zero exit) → its output is that issue's line; go on.
 3. For each `refreshed:` line, look for an open PR on its `<branch>`:
