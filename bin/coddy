@@ -2704,8 +2704,9 @@ $bad" ;;
     # nothing pushed is rewritten; jj rebases its branch. Skipped, as sweep
     # keeps them: another running session's claim, uncommitted work, and a
     # base issue's branch that still resolves; under git also a detached
-    # HEAD; under jj also a branch others build on, which the rebase would
-    # move; and every one while the config names no verify. jj rebases the mutable part
+    # HEAD or a branch other than the recorded one; under jj also a branch
+    # others build on, which the rebase would move; and every one while the
+    # config names no verify, or one verify refuses. jj rebases the mutable part
     # alone: a base pushed, merged and swept leaves its commits behind an
     # untracked remote bookmark, immutable, and they drop off the branch. A
     # conflict leaves the worktree at its tip (git: merge --abort; jj: each
@@ -2734,11 +2735,17 @@ $bad" ;;
     # it, and its abort would take it.
     wtstate; [ -z "$dirty" ] && { [ "$tool" = jj ] || ! git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; } || { echo "skipped: $issue (uncommitted work)"; exit 0; }
     # A detached HEAD would take the merge while its branch stays, so ship
-    # would push nothing of it.
-    [ "$tool" = jj ] || git -C "$wt" symbolic-ref -q HEAD >/dev/null 2>&1 || { echo "skipped: $issue (detached HEAD)"; exit 0; }
+    # would push nothing of it; another branch would take it, and ship
+    # refuses a worktree off the recorded one.
+    if [ "$tool" != jj ]; then
+      h=$(git -C "$wt" symbolic-ref -q HEAD 2>/dev/null) || { echo "skipped: $issue (detached HEAD)"; exit 0; }
+      branch=$(cat "$rec" 2>/dev/null); [ "$h" = "refs/heads/$branch" ] || { echo "skipped: $issue (not on ${branch:-its recorded branch})"; exit 0; }
+    fi
     stacked; [ -z "$from" ] || { echo "skipped: $issue (stacked on $from)"; exit 0; }
-    # With no verify, verify would die after the update and flag it as failed.
-    [ -n "$(cfg verify)" ] || { echo "skipped: $issue (no verify command)"; exit 0; }
+    # With no verify, or one verify refuses (a block scalar, its pattern),
+    # verify would die after the update and flag it as failed.
+    v=$(cfg verify); [ -n "$v" ] || { echo "skipped: $issue (no verify command)"; exit 0; }
+    case $v in [\|\>]|[\|\>][-+1-9]|[\|\>][-+1-9][-+1-9]) echo "skipped: $issue (verify is a block scalar)"; exit 0 ;; esac
     # A base that no longer resolves is gone from here: its record goes
     # whatever follows, current or conflict included, or ship would open the
     # PR against it. stacked reads a jj that fails as a base gone, so under jj

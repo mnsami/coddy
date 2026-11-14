@@ -676,7 +676,10 @@ leg() {
     git -C ".worktrees/$r" checkout -q --detach; w=$(wtip "$r")
     t 0 "git: refresh: a detached HEAD is skipped" says "^skipped: $r (detached HEAD)\$" run refresh "$r"
     t 0 "git: refresh: and left where it was" test "$(wtip "$r")" = "$w"
-    git -C ".worktrees/$r" checkout -q "feat/$r-drop"
+    git -C ".worktrees/$r" checkout -q -b "other/$r"
+    t 0 "git: refresh: one on a branch other than its recorded one is skipped" says "^skipped: $r (not on feat/$r-drop)\$" run refresh "$r"
+    t 0 "git: refresh: and left where it was" test "$(wtip "$r")" = "$w"
+    git -C ".worktrees/$r" checkout -q "feat/$r-drop"; git -C ".worktrees/$r" branch -q -D "other/$r"
   fi
   f=$((n + 210)); claimdrop "$f"; echo x > ".worktrees/$f/x$f.txt"; wcommit "$f" "x$f.txt"; upmain "u$f.txt"
   t 0 "$tool: refresh: one whose verify fails once updated is failed" says "^failed: $f\$" run refresh "$f"
@@ -691,6 +694,9 @@ leg() {
   t 0 "$tool: refresh: the flag is there while verify runs" says "^refreshed: $f\$" run refresh "$f"
   printf 'tracker: github\nworktree: %s\ndefault_branch: main\n' "$tool" > .claude/coddy.yml; upmain "fn$f.txt"; w=$(wtip "$f")
   t 0 "$tool: refresh: with no verify command it is skipped" says "^skipped: $f (no verify command)\$" run refresh "$f"
+  t 0 "$tool: refresh: and left where it was" test "$(wtip "$f")" = "$w"
+  printf 'tracker: github\nworktree: %s\ndefault_branch: main\nverify: |\n  test -f s.txt\n' "$tool" > .claude/coddy.yml
+  t 0 "$tool: refresh: with a block-scalar verify it is skipped" says "^skipped: $f (verify is a block scalar)\$" run refresh "$f"
   t 0 "$tool: refresh: and left where it was" test "$(wtip "$f")" = "$w"
   cp "$tmp/leg.yml" .claude/coddy.yml
   # origin/main by its full name: a local tag of that name comes first.
