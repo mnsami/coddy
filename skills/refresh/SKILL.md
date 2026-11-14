@@ -26,14 +26,14 @@ Lines under Cleaned up → say so first, in one sentence.
 ## Steps
 
 1. The issues are those Worktrees lists as `<n>=<branch>`, less any Cleaned up reports as `cleaned`. An `<n>` holding anything but `A-Za-z0-9_-` → show its entry as it is and never put it in a command. None left → stop and say: no claimed worktree to refresh. End with: `/coddy:next`.
-2. For each, one at a time, one Bash call each, since verify can take minutes and a shell call is capped at 10: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" refresh <n>`. It prints one line:
+2. For each, one at a time, one Bash call each with the Bash tool's longest timeout (600000 ms), since verify can take minutes: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" refresh <n>`. It prints one line:
    - `current: <n>`: it already holds `origin/<default_branch>`.
    - `refreshed: <n>`: brought up to date (git: a merge commit; jj: rebased), and verify passes.
    - `failed: <n>`: brought up to date, and verify fails there.
    - `conflict: <n> (<files>)`: the update conflicts in those files, so the worktree was left as it was.
    - `skipped: <n> (<reason>)`: left as it was: another running session holds it, it holds uncommitted work, it is stacked on an issue still open, or (jj) another branch builds on it.
 
-   `failed` and `conflict` flag the issue, so `/coddy:start <n>` brings it up to date before anything else. A refusal (non-zero exit) → its output is that issue's line; go on.
+   `failed` and `conflict` flag the issue, so `/coddy:start <n>` brings it up to date before anything else. A call that times out → that issue's line is `failed: <n>`: the update flagged it before verify ran. A refusal (non-zero exit) → its output is that issue's line; go on.
 3. For each `refreshed:` line, look for an open PR on its `<branch>`:
    - github, jira: `list_pull_requests` with `state: open`, `head: <owner>:<branch>` and `fields: [number, html_url]` (`owner` and `repo` from `repo`; jira: from the remote).
    - gitlab: `get_work_item` with `work_item_iid: <n>` and `include: [related_merge_requests]`, paging with `related_merge_requests_first` and `related_merge_requests_after` to the last: an entry whose `webUrl` is under `repo`, whose `get_merge_request` says `opened` and whose `sourceBranch` is `<branch>`.
