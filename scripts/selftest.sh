@@ -668,6 +668,15 @@ leg() {
   t 0 "$tool: refresh: and that refusal names it" says "'ig$r.txt'" run refresh "$r"
   t 0 "$tool: refresh: and the ignored file is left as it was" grep -qx local ".worktrees/$r/ig$r.txt"
   rm ".worktrees/$r/ig$r.txt"
+  # A file the branch stopped tracking and keeps ignored (a .env) that origin
+  # changed: refused, or the merge writes over it (jj: tracks it in @).
+  e=$((n + 260)); upmain "e$e.txt" old; claimdrop "$e"; echo "/e$e.txt" >> .git/info/exclude
+  if [ "$tool" = jj ]; then (cd ".worktrees/$e" && jj file untrack "e$e.txt" && jj commit -m untrack && jj bookmark set "feat/$e-drop" -r @-) >/dev/null 2>&1; else git -C ".worktrees/$e" rm -q --cached "e$e.txt" && git -C ".worktrees/$e" commit -q -m untrack; fi
+  echo secret > ".worktrees/$e/e$e.txt"; upmain "e$e.txt" theirs; w=$(wtip "$e")
+  t 1 "$tool: refresh: a file origin changed where the worktree holds an ignored one it stopped tracking is refused" run refresh "$e"
+  t 0 "$tool: refresh: and that refusal names it" says "holds ignored ones.*'e$e\.txt'" run refresh "$e"
+  t 0 "$tool: refresh: and the ignored file keeps its content" test "$(cat ".worktrees/$e/e$e.txt")" = secret
+  t 0 "$tool: refresh: and the worktree stays at its tip" test "$(wtip "$e")" = "$w"
   if [ "$tool" = git ]; then
     git -C ".worktrees/$r" merge -q --no-commit -s ours origin/main >/dev/null 2>&1
     t 0 "git: refresh: a merge not yet concluded is skipped as uncommitted work" says "^skipped: $r (uncommitted work)\$" run refresh "$r"
@@ -749,7 +758,7 @@ leg() {
   mkdir ".git/coddy/$r"
   t 1 "$tool: refresh refuses a claimed directory that is no worktree, never merging into the main checkout above it" run refresh "$r"
   rmdir ".git/coddy/$r" ".worktrees/$r"
-  for x in "$f" "$c" "$s" "$k"; do run drop "$x" --force >/dev/null 2>&1; done
+  for x in "$f" "$c" "$s" "$k" "$e"; do run drop "$x" --force >/dev/null 2>&1; done
   t 0 "$tool: the whole flow left the main checkout alone" wire trip "leg$n"
 }
 

@@ -2759,16 +2759,18 @@ $bad" ;;
     # flag sets needs_rebase=$d, flag "" clears it; a new file (set -C), so a
     # link planted at state.tmp is never written through
     flag() { rm -f "$f.tmp" && (set -C; { grep -v '^needs_rebase=' "$f" 2>/dev/null; [ -z "$1" ] || echo "needs_rebase=$1"; } > "$f.tmp") && mv "$f.tmp" "$f" || die "could not write needs_rebase to $f"; }
-    # git's merge writes over an ignored file where it brings a new one
-    # (merge-ort keeps --no-overwrite-ignore to fast-forwards), and jj keeps
-    # it as a change to the new file, which push would commit: refused, by
-    # name, before anything moves. $1 is the worktree's commit; the files are
-    # those origin/$base added since the fork that it does not track.
+    # git's merge writes over an ignored file where it brings one (merge-ort
+    # keeps --no-overwrite-ignore to fast-forwards; a modify/delete conflict's
+    # abort then deletes it), and jj keeps it as a change, which push would
+    # commit: refused, by name, before anything moves. $1 is the worktree's
+    # commit; the files are those origin/$base changed since the fork, a
+    # delete aside, that it does not track: a new one, or one the branch
+    # stopped tracking and keeps ignored (a .env).
     # ponytail: the path itself alone, so an ignored file where a new
     # directory goes is not seen; walk each path's parents if that bites.
     inway() {
       local way
-      [ -n "$1" ] && way=$(set -o pipefail; git diff --name-only -z --no-renames --diff-filter=A "$1...$d" -- | while IFS= read -r -d '' p; do
+      [ -n "$1" ] && way=$(set -o pipefail; git diff --name-only -z --no-renames --diff-filter=d "$1...$d" -- | while IFS= read -r -d '' p; do
         if { [ -e "$wt/$p" ] || [ -L "$wt/$p" ]; } && ! git cat-file -e "$1:$p" 2>/dev/null; then q "$p"; fi
       done) || die "could not tell which files origin/$base brings into $wt, so it was not brought up to date"
       [ -z "$way" ] || die "origin/$base brings files where $wt holds ignored ones, so it was not brought up to date: ${way//$'\n'/ }. Move them out of the way by hand, then refresh again."
