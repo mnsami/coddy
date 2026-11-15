@@ -38,9 +38,10 @@
 # CODDY_SESSION in the last 60 s.
 # The config is .coddy.yml at the root, or .claude/coddy.yml from before.
 # An issue counts as In Progress once the lock .git/coddy/<issue>/ exists.
-# Only claim makes it (mkdir, so of two sessions claiming at once one wins;
+# Only claim makes it (mkdir -p for the directory alone; of two sessions
+# claiming at once the one that creates owner under set -C wins;
 # a plain-file marker from before locks still counts until the next claim
-# replaces it with a lock); its owner file holds "<session> <pid> <local start> <start>", and
+# replaces it with a lock); its owner file holds "<session> <pid> <local start> <start> [t<ticks>]", and
 # another session's claim is refused unless --take is passed or the owner's
 # pid no longer runs. The tracker is reached only through MCP tools, so the
 # skill moves the issue to In Progress and claim records that it did.
@@ -455,15 +456,33 @@ lstarted() { [ -n "$1" ] && LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | awk '{$
 # $1 is a start in started's format; one in any other cannot be compared,
 # so it counts as unknown.
 cstart() { local LC_ALL=C re='^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)_(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)__?[0-9]{1,2}_[0-9]{2}:[0-9]{2}:[0-9]{2}_[0-9]{4}_UTC$'; [[ $1 =~ $re ]]; }
+# When process $1 started, in clock ticks since boot: field 22 of
+# /proc/$1/stat, read with builtins, after the last ") " (the command name
+# may hold spaces, parentheses and line breaks); nothing without /proc
+# (macOS), or for anything but a pid.
+ticks() {
+  local s='' re='^([^ ]+ ){19}([0-9]+) '
+  [[ $1 =~ ^[0-9]+$ ]] && [ -r "/proc/$1/stat" ] || return 0
+  read -r -d '' s 2>/dev/null <"/proc/$1/stat"; s=${s##*") "}
+  [[ $s =~ $re ]] && echo "${BASH_REMATCH[2]}"
+}
 # The process $1 runs, and is the one that started at $2 when that is given:
 # a reused pid with another start time is gone. kill -0 needs no ps and sees
 # this user's processes; /proc sees everyone's on Linux, where images without
 # ps live; ps comes last, so a missing ps never reads as a dead owner, and a
 # start time ps cannot read, or one not in started's format, counts as a
-# match. No pid counts as running, as claim reads it.
+# match. No pid counts as running, as claim reads it. With the owner's ticks
+# ($3, t<n> as owner keeps it; every caller passes them) and /proc to read
+# them, they alone decide: ps derives lstart from the wall clock, which a
+# clock correction moves by a second, ticks it does not.
+# ponytail: ticks count from boot, so a lock that survives a reboot reads
+# alive only if a new process holds its pid with the same ticks; accepted
+# as negligible.
 alive() {
+  local t
   [ -z "$1" ] && return 0
   kill -0 "$1" 2>/dev/null || [ -d "/proc/$1" ] || ps -p "$1" >/dev/null 2>&1 || return 1
+  [ -n "${3-}" ] && t=$(ticks "$1") && [ -n "$t" ] && { [ "t$t" = "$3" ]; return; }
   now=$(started "$1"); [ -z "${2-}" ] || [ -z "$now" ] || ! cstart "$2" || [ "$now" = "$2" ]
 }
 die() { echo "coddy: $*" >&2; exit "$code"; }
@@ -484,18 +503,20 @@ wtool() {
   tool=$(cfg worktree "$@")
   [ -n "$tool" ] || { v=$(cfg version "$@" | tr -d '[:space:]'); v=${v#"${v%%[!0]*}"}; case "$v" in ''|1) tool=jj ;; *) tool=git ;; esac; }
 }
-# The lock's owner ($sid, $pid, $start) is this session ($me): the same
+# The lock's owner ($sid, $pid, $start, $tk) is this session ($me): the same
 # session id, or the same agent process, since Claude Code's /clear changes
 # the id and not the pid; a pid reused since the owner's start is not that process.
-mine() { [ "$sid" = "$me" ] || { [ -n "$pid" ] && [ "$pid" = "${CODDY_PID-}" ] && alive "$pid" "$start"; }; }
+mine() { [ "$sid" = "$me" ] || { [ -n "$pid" ] && [ "$pid" = "${CODDY_PID-}" ] && alive "$pid" "$start" "$tk"; }; }
 # Issue $1's owner line, as claim wrote it ("<session> <pid> <local start>
-# <start>"), into $own, $sid, $pid and $start, the UTC one; all empty for a
-# plain-file marker or a lock with no owner yet, and $start for a line
-# written before start times or by 0.6.0, whose third field is local.
-owner() { own=$(cat "$root/.git/coddy/$1/owner" 2>/dev/null); read -r sid pid _ start _ <<<"$own"; }
+# <start> [t<ticks>]"), into $own, $sid, $pid, $start, the UTC one, and $tk;
+# all empty for a plain-file marker or a lock with no owner yet, $start for
+# a line written before start times or by 0.6.0, whose third field is local,
+# and $tk for one without ticks or with a fifth field not t and digits.
+owner() { own=$(cat "$root/.git/coddy/$1/owner" 2>/dev/null); read -r sid pid _ start tk _ <<<"$own"; [[ $tk =~ ^t[0-9]+$ ]] || tk=; }
 # This session's owner line; the UTC start only after a local one, so it
-# never lands in the third field.
-myline() { local l; l=$(lstarted "${CODDY_PID-}"); echo "$me ${CODDY_PID-} $l${l:+ $(started "${CODDY_PID-}")}"; }
+# never lands in the third field, and the ticks only after a UTC start, so
+# they never land in the fourth, nor 0.6.0 reads them as its start.
+myline() { local l u='' t=''; l=$(lstarted "${CODDY_PID-}"); [ -z "$l" ] || u=$(started "${CODDY_PID-}"); [ -z "$u" ] || t=$(ticks "${CODDY_PID-}"); echo "$me ${CODDY_PID-} $l${l:+ $u}${t:+ t$t}"; }
 # The mark snap leaves at each run for session $1, which start and claim
 # read (hookson): a directory, the id kept to A-Za-z0-9_- and 128
 # characters, dot-named so it is never read as an issue's record; status 1
@@ -577,7 +598,7 @@ if [ "${1-}" = status ]; then
     b=$(cat ".git/coddy/$n.branch" 2>/dev/null); ws="$ws$n${b:+=$b} "
     b=$(cat ".git/coddy/$n.base" 2>/dev/null); [ -z "$b" ] || bases="$bases$n=$b "
     owner "$n"
-    if [ -z "$sid" ]; then o=unknown; elif mine; then o=me; elif alive "$pid" "$start"; then o="$sid (running)"; else o="$sid (gone)"; fi
+    if [ -z "$sid" ]; then o=unknown; elif mine; then o=me; elif alive "$pid" "$start" "$tk"; then o="$sid (running)"; else o="$sid (gone)"; fi
     owners="$owners$n=$o "
   done
   echo "root: $root"
@@ -811,7 +832,7 @@ if [ "${1-}" = guard ]; then
     # session, and then the edit is not held to the owner.
     owner "$issue"
     [ -z "$sid" ] || [ -z "$me" ] || mine ||
-      die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" && echo running || echo "not running")). Run /coddy:start $issue to take it over, or work on your own issue."
+      die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" "$tk" && echo running || echo "not running")). Run /coddy:start $issue to take it over, or work on your own issue."
     # The owner's edit from a new session id (/clear) or process (--resume)
     # moves the lock along, as its re-claim would: a pid left behind reads
     # as a dead owner to every other session. Only once every reading below
@@ -2479,14 +2500,30 @@ case "$cmd" in
     lock=".git/coddy/$issue" me="${CODDY_SESSION-}" note="" own="" again=""
     # A marker from before claims were locks is a plain file: nobody owns it;
     # the claim replaces it. rm -f never removes the lock another session
-    # just made of it, so the mkdir race stays atomic.
+    # just made of it, a directory, so the race below stays exclusive.
     [ -f "$lock" ] && rm -f "$lock"
     # The owner line is built before the mkdir and the write, so the lock is
     # never left without one, or with an empty one, while ps runs.
     ml=$(myline)
     mkdir -p .git/coddy || die "could not record the claim"
-    if ! mkdir "$lock" 2>/dev/null; then
-      for i in 1 2 3 4 5; do [ -s "$lock/owner" ] && break; sleep 0.1; done # the winner writes owner right after its mkdir
+    # ponytail: the tracker is reachable only through MCP tools, so this
+    # records the transition the skill just made instead of verifying it.
+    # Upgrade path: a PostToolUse hook on the tracker's write tool.
+    # The winner is the claim that creates owner, its line written in the
+    # same redirection, under bash's own noclobber (O_CREAT|O_EXCL): an
+    # external mkdir need not be exclusive (uutils coreutils, Ubuntu 26.04's
+    # default, lets two racing mkdirs both succeed). A lock there before is
+    # never won, so one with no owner file stays a claim in flight. Status
+    # 3: the create won and the write failed, so the lock goes.
+    r=1 made=""
+    [ -e "$lock" ] || ! mkdir -p "$lock" 2>/dev/null || { made=1; (set -C; { printf '%s\n' "$ml" >&3 || exit 3; } 3>"$lock/owner") 2>/dev/null; r=$?; }
+    [ "$r" != 3 ] || { rm -rf "$lock"; die "could not record the claim"; }
+    if [ "$r" != 0 ]; then
+      for i in 1 2 3 4 5; do [ -s "$lock/owner" ] && break; sleep 0.1; done # the winner writes owner in the redirection that creates it
+      # This claim made the lock and no owner is there: its create failed on
+      # its own (EACCES, ENOSPC), not to a racer's, so the empty lock goes;
+      # rmdir leaves one a racer has written owner into since.
+      [ -z "$made" ] || [ -e "$lock/owner" ] || [ -L "$lock/owner" ] || { rmdir "$lock" 2>/dev/null; die "could not record the claim"; }
       owner "$issue"
       if [ ! -s "$lock/owner" ]; then
         # A claim in flight, or one that died between its mkdir and its owner line.
@@ -2495,18 +2532,15 @@ case "$cmd" in
       # (/clear changes the one, --resume the other); $own stays, for the trap.
       elif mine; then again=1
       elif [ "${3-}" = --take ]; then note="taken over: $issue from session $sid (--take)"
-      elif ! alive "$pid" "$start"; then note="taken over: $issue from session $sid (pid $pid is not running)"
+      elif ! alive "$pid" "$start" "$tk"; then note="taken over: $issue from session $sid (pid $pid is not running)"
       else die "issue $issue is claimed by session $sid (pid $pid, running). To take it over deliberately: bash \"$0\" claim $issue --take"
       fi
+      # A claim whose owner line cannot be written leaves no lock behind; a
+      # takeover that fails hands the lock back to its owner as it was.
+      trap 'if [ -n "$own" ]; then echo "$own" > "$lock/owner"; else rm -rf "$lock"; fi' EXIT
+      printf '%s\n' "$ml" > "$lock/owner" || die "could not record the claim"
+      trap - EXIT
     fi
-    # A claim whose owner line cannot be written leaves no lock behind; a
-    # takeover that fails hands the lock back to its owner as it was.
-    trap 'if [ -n "$own" ]; then echo "$own" > "$lock/owner"; else rm -rf "$lock"; fi' EXIT
-    # ponytail: the tracker is reachable only through MCP tools, so this
-    # records the transition the skill just made instead of verifying it.
-    # Upgrade path: a PostToolUse hook on the tracker's write tool.
-    printf '%s\n' "$ml" > "$lock/owner" || die "could not record the claim"
-    trap - EXIT
     [ -z "$note" ] || echo "$note"
     if [ -n "$again" ]; then echo "claimed: $issue (already by this session)"; else echo "claimed: $issue"; fi ;;
 
@@ -2520,7 +2554,7 @@ case "$cmd" in
     # Held to the lock's owner as the guard is: a lock or a push that names
     # no session (a script run by hand) is not.
     me="${CODDY_SESSION-}"; owner "$issue"
-    [ -z "$sid" ] || [ -z "$me" ] || mine || die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" && echo running || echo "not running")). Ship it from that session, or run /coddy:start $issue to take it over."
+    [ -z "$sid" ] || [ -z "$me" ] || mine || die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" "$tk" && echo running || echo "not running")). Ship it from that session, or run /coddy:start $issue to take it over."
     # The branch create recorded, never one read off the history: once $base
     # is merged in, the history holds the branches of merged issues too.
     branch=$(cat "$rec" 2>/dev/null)
@@ -2602,13 +2636,13 @@ $bad" ;;
       # not this one, is named, for /coddy:drop; one a running session holds,
       # this session's or one with no owner line is not.
       if ! landed; then
-        [ -z "$sid" ] || mine || alive "$pid" "$start" || echo "kept: $issue (not merged)"
+        [ -z "$sid" ] || mine || alive "$pid" "$start" "$tk" || echo "kept: $issue (not merged)"
         continue
       fi
       # Another session whose process still runs keeps its worktree, as the
       # guard and push hold to the lock's owner: a gone owner, a lock with no
       # owner or this session's own are swept.
-      if [ -n "$sid" ] && ! mine && alive "$pid" "$start"; then
+      if [ -n "$sid" ] && ! mine && alive "$pid" "$start" "$tk"; then
         echo "kept: $issue (merged into $base, session $sid still holds it)"; continue
       fi
       if [ -n "$dirty" ]; then echo "kept: $issue (merged into $base, but $wt holds uncommitted work)"; continue; fi
@@ -2649,7 +2683,7 @@ $bad" ;;
       case "$p/" in "$w"/*) die "this session stands inside $wt (where it was opened, or its working directory), so issue $issue was not dropped: removing it would take that directory from under the session. Open a session in the main checkout at $root and drop it from there." ;; esac
     done
     me="${CODDY_SESSION-}"; owner "$issue"
-    if [ -n "$sid" ] && [ -n "$me" ] && ! mine && alive "$pid" "$start"; then
+    if [ -n "$sid" ] && [ -n "$me" ] && ! mine && alive "$pid" "$start" "$tk"; then
       die "issue $issue is claimed by session $sid (pid $pid, running): drop it from that session, or once that session has ended."
     fi
     branch=$(cat "$rec" 2>/dev/null); wtstate; keep=".git/coddy/swept/$issue"
@@ -2729,7 +2763,7 @@ $bad" ;;
     # is refused before anything moves, as state refuses it.
     [ -d ".git/coddy/$issue" ] || die "issue $issue's claim is from before locks. Run /coddy:start $issue to re-claim it."
     me="${CODDY_SESSION-}"; owner "$issue"
-    if [ -n "$sid" ] && ! mine && alive "$pid" "$start"; then echo "skipped: $issue (session $sid holds it)"; exit 0; fi
+    if [ -n "$sid" ] && ! mine && alive "$pid" "$start" "$tk"; then echo "skipped: $issue (session $sid holds it)"; exit 0; fi
     # A git merge not yet concluded counts as uncommitted work, though status
     # shows none once nothing is left to stage: the merge below would fail on
     # it, and its abort would take it.

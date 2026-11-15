@@ -328,12 +328,24 @@ leg() {
   # The other session's process is one of this test's own: $PPID may exit
   # under a launcher that backgrounds the test, and a dead pid is taken over.
   sleep 60 & live=$!
-  as sess-x $$ claim "$p" >/dev/null 2>&1 & x=$!
-  as sess-y "$live" claim "$p" >/dev/null 2>&1 & y=$!
-  wait "$x"; xr=$?; wait "$y"; yr=$?
-  t 0 "$tool: of two claims at once exactly one wins" test "$xr$yr" = 01 -o "$xr$yr" = 10
-  [ "$xr" = 0 ] && w="sess-x $$" || w="sess-y $live"
-  t 0 "$tool: the lock names the winner" holds "$w" ".git/coddy/$p/owner"
+  # race <name> [dir]: both claims, with dir first on PATH when named; $w the winner.
+  race() {
+    PATH="${2:+$2:}$PATH" as sess-x $$ claim "$p" >"$tmp/race.x" 2>&1 & x=$!
+    PATH="${2:+$2:}$PATH" as sess-y "$live" claim "$p" >"$tmp/race.y" 2>&1 & y=$!
+    wait "$x"; xr=$?; wait "$y"; yr=$?
+    t 0 "$tool: $1" test "$xr$yr" = 01 -o "$xr$yr" = 10
+    [ "$xr$yr" = 01 ] || [ "$xr$yr" = 10 ] || { echo "     xr=$xr yr=$yr"; sed 's/^/     x: /' "$tmp/race.x"; sed 's/^/     y: /' "$tmp/race.y"; }
+    [ "$xr" = 0 ] && w="sess-x $$" || w="sess-y $live"
+    t 0 "$tool: $1: the lock names the winner" holds "$w" ".git/coddy/$p/owner"
+  }
+  race "of two claims at once exactly one wins"
+  # A mkdir that is not exclusive, as uutils coreutils' (Ubuntu 26.04's
+  # default) is under a race: it succeeds on a directory that is there, and
+  # waits before making a new one, so both claims get past any check before it.
+  mkdir -p "$tmp/mkdirx"
+  printf '#!/bin/sh\nfor a; do :; done\n[ -e "$a" ] || sleep 0.5\n%s "$@" 2>/dev/null || [ -d "$a" ] || exec %s "$@"\n' "$(command -v mkdir)" "$(command -v mkdir)" > "$tmp/mkdirx/mkdir"; chmod +x "$tmp/mkdirx/mkdir"
+  rm -rf ".git/coddy/$p"
+  race "with a mkdir that is not exclusive, still exactly one wins" "$tmp/mkdirx"
   kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
   echo "more $p" > ".worktrees/$p/more.txt" # per leg: the other leg's is in main by now
   was=$(git ls-remote origin "refs/heads/ext/pr-$p")
@@ -2221,10 +2233,12 @@ echo "sess-f " > .git/coddy/other/owner
 t 0 "issue.sh status owners: another session without a pid is running, as claim reads it" owns "other=sess-f (running)"
 # A pid is the owner's only while it is the process that started then: the
 # fourth field, in UTC, is compared; the third is the local start 0.6.0
-# wrote and compares, as its started prints it in C.
+# wrote and compares, as its started prints it in C. Where /proc is (Linux),
+# a fifth, the start in clock ticks since boot, is compared instead.
 lstart=$(LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_")} 1')
 started=$(TZ=UTC0 LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}')
-echo "sess-e $$ $lstart $started" > .git/coddy/other/owner
+tks=$(awk '{sub(/.*\) /, ""); print " t" $20}' /proc/$$/stat 2>/dev/null)
+echo "sess-e $$ $lstart $started$tks" > .git/coddy/other/owner
 t 0 "issue.sh status owners: a running pid with the recorded start time is running" owns "other=sess-e (running)" sess-z 1
 echo "sess-e $$ $lstart Thu_Jan_1_00:00:00_1970_UTC" > .git/coddy/other/owner
 t 0 "issue.sh status owners: a running pid with another start time is gone" owns "other=sess-e (gone)"
@@ -2234,7 +2248,31 @@ echo "sess-e $$ Thu_Jan_1_00:00:00_1970" > .git/coddy/other/owner # 0.6.0's line
 t 0 "issue.sh status owners: a line 0.6.0 wrote counts by its running pid alone" owns "other=sess-e (running)" sess-z 1
 echo "sess-e $$ Thu_Jan_1_00:00:00_1970_UTC" > .git/coddy/other/owner
 t 0 "issue.sh status owners: and so does a three-field line in UTC" owns "other=sess-e (running)" sess-z 1
-t 0 "claim records the claiming process's start, local as 0.6.0 compares it, then UTC" grep -qx "sess-a $$ $lstart $started" .git/coddy/43/owner
+# ps derives lstart from the wall clock, which a clock correction moves by a
+# second; the ticks it does not.
+if [ -r /proc/$$/stat ]; then
+  # $started itself a second on, not a fresh ps, which the same correction
+  # could have moved back a second, onto $started
+  s=${started%_UTC}; off=$(TZ=UTC0 LC_ALL=C date -d "@$(($(TZ=UTC0 LC_ALL=C date -d "${s//_/ }" +%s) + 1))" '+%a %b %e %T %Y' | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}')
+  t 0 "ticks: the shifted start is another start in the same format" sh -c 'case $1 in "$2"|"") exit 1 ;; *_UTC) ;; *) exit 1 ;; esac' _ "$off" "$started"
+  echo "sess-e $$ $lstart $off$tks" > .git/coddy/other/owner
+  t 0 "ticks: a running pid with its ticks and a UTC start a second off is running" owns "other=sess-e (running)" sess-z 1
+  t 0 "ticks: and that pid's own process under a new session id is me" owns "other=me" sess-z $$
+  t 1 "ticks: and another session's claim is refused" as sess-z 1 claim other
+  echo "sess-e $$ $lstart $started t$((${tks# t} + 1))" > .git/coddy/other/owner
+  t 0 "ticks: a running pid with other ticks is gone, whatever its UTC start" owns "other=sess-e (gone)" sess-z 1
+  t 0 "ticks: and another session's claim takes it over" says "taken over: other from session sess-e (pid $$ is not running)" as sess-z 1 claim other
+  rm -r .git/coddy/other; PATH="$tmp/nops:$PATH" as sess-z $$ claim other >/dev/null 2>&1
+  t 0 "ticks: a claim with no ps writes no ticks, as it writes no start" grep -qx "sess-z $$ " .git/coddy/other/owner
+else
+  echo "skip the start in clock ticks: no /proc/$$/stat"
+fi
+t 0 "ticks: every alive call on an owner line passes its ticks" test "$(grep -c 'alive "$pid"' "$here/bin/coddy")" = "$(grep -c 'alive "$pid" "$start" "$tk"' "$here/bin/coddy")"
+# With ticks, they are compared and the starts by their format alone: a clock
+# correction may have moved lstart between claim's read and the one above.
+sfmt='(Mon|Tue|Wed|Thu|Fri|Sat|Sun)_(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)_[0-9]{1,2}_[0-9]{2}:[0-9]{2}:[0-9]{2}_[0-9]{4}'
+if [ -n "$tks" ]; then oline="$sfmt ${sfmt}_UTC$tks"; else oline="$lstart $started"; fi
+t 0 "claim records the claiming process's start, local as 0.6.0 compares it, then UTC, then its ticks where /proc is" grep -qxE "sess-a $$ $oline" .git/coddy/43/owner
 rm -r .git/coddy/other; : > .git/coddy/other
 t 0 "issue.sh status owners: a marker from before locks is unknown" owns "other=unknown"
 rm .git/coddy/other
