@@ -2,8 +2,7 @@
 
 This page says what each layer stops, what it lets through and where it falls short.
 The [README](../README.md) has the short version.
-The last section, sweep, drop and refresh, is not a layer. It sits here because it ends or updates a claim,
-and its ceilings have no better page.
+The last section, sweep, drop and refresh, is not a layer. It sits here because its ceilings have no better page.
 
 Each layer has the same rows. A row is left out when it does not apply.
 
@@ -33,13 +32,12 @@ Each layer has the same rows. A row is left out when it does not apply.
 ### A hook fails
 
 - The edit guard and the shell check block a call by exiting 2.
-- coddy turns any other exit of theirs into a 2. A coddy crash refuses every edit and shell command,
-  under `guard: warn` too, until you update, reinstall or disable the plugin.
-- From Claude Code 2.1.295 they also block on a timeout or when they cannot start.
-  Before 2.1.295 that call goes through.
+- A coddy crash in either also blocks. Every edit and shell command is refused, under `guard: warn` too,
+  until you update, reinstall or disable the plugin.
+- From Claude Code 2.1.295 a timeout, or a hook that cannot start, blocks too. Before 2.1.295 that call goes through.
 - Timeouts: 10 seconds for the edit guard, 60 for the shell check.
-- The shell check gives its fingerprint of the main checkout 20 seconds.
-  Past that the command runs, and Claude is told before and after it that it went unchecked.
+- The shell check gets 20 seconds to record the state of the main checkout.
+  Past that the command runs, and Claude is told it went unchecked.
 - The other hooks never block on a failure.
 
 ### Three ways out
@@ -86,7 +84,7 @@ Each layer has the same rows. A row is left out when it does not apply.
 - The hooks cannot start there. From Claude Code 2.1.295, that refuses every edit and shell command.
   Disable the plugin there. Before 2.1.295 nothing is guarded.
 - The hooks also need Claude Code 2.1.139 or later and `/usr/bin/env`.
-- Where the edit guard does run (the core called another way), it refuses every edit.
+- Where bash itself runs on native Windows, the edit guard refuses every edit.
 - `/coddy:onboard` stops. `coddy doctor` exits 1.
 
 ### `bin/coddy` and the `CODDY_*` variables
@@ -128,7 +126,7 @@ A `PreToolUse` hook on Edit, Write and NotebookEdit.
   - A command that swaps the target for a link between the check and the write.
   - A project whose path holds a backslash cannot be edited through these tools on macOS or Linux.
 - **When it blocks you:** see "When hooks fail or are off".
-- **Needs:** `jq`. Without a working one, or for a payload with no path it can read, every edit is refused.
+- **Needs:** `jq`. Without a working one, or for a call that names no path it can read, every edit is refused.
 
 ### Claims
 
@@ -142,8 +140,7 @@ A `PreToolUse` hook on Edit, Write and NotebookEdit.
   It does not hold against a shell command that rewrites the lock.
 - The tripwire does not see shell writes inside any worktree, claimed or not.
   So only the edit guard and `push` are held to the owner.
-- Both hold only when the lock and the caller name a session.
-  A claim, a hook payload or a push without one, such as a script run by hand, is not held to the owner.
+- Both need the lock and the caller to name a session. A script run by hand names none, so it is not held.
 
 ### `guard: warn`
 
@@ -157,10 +154,10 @@ A `PreToolUse` hook on Edit, Write and NotebookEdit.
 ## Shell tripwire
 
 A shell command's writes cannot be told from its text.
-So one hook takes a fingerprint of the main checkout before each shell command and another compares after it.
+So one hook records the state of the main checkout before each shell command and another compares after it.
 Claude is told to undo whatever the command left there. Only additions count, so an undo is quiet.
 
-The fingerprint holds:
+The record (a fingerprint) holds:
 
 - every changed path, with a hash of its content;
 - the default branch, when it has commits its remote branch lacks, and `HEAD`, when it has left the default branch;
@@ -175,9 +172,7 @@ The fingerprint holds:
     It names the tool that removes it (`git worktree remove`, `jj workspace forget`, once you have checked
     what the directory holds) or puts it back (`git worktree move`, `jj workspace rename`).
     It gives no command to paste, since a command can arrange for one to remove something it did not make.
-    Paths and names are quoted and escaped, so none can pass for a second entry.
-    A worktree moved out of `.worktrees/<issue>/` (by `mv` or `git worktree move`), or reached there through a link,
-    counts as outside. The command that moves or deletes it is reported once.
+    A worktree moved out of `.worktrees/<issue>/`, or reached there through a link, counts as outside.
   - A `git worktree add` or `jj workspace add` that would put a worktree anywhere else, refused before it runs.
     It names `/coddy:start <issue>`.
   - A `git push`, `git send-pack` or `jj git push` to the default branch, refused before it runs.
@@ -191,14 +186,14 @@ The fingerprint holds:
 - **Lets through:**
   - A dry run, `--help`, and `jj git push -c`.
   - A command with a word it cannot work out. It passes with a notice, and the check after it still looks.
-  - A command that goes over the 20-second budget. It runs, and Claude is told it went unchecked.
+  - A command past the 20-second limit. It runs, and Claude is told it went unchecked.
 - **Always refuses:** every shell command, in either guard mode, when:
   - `HOME` or `XDG_CONFIG_HOME` lies at or under the project, since git and jj read `core.fsmonitor` from there;
   - no `git` is left on the hooks' `PATH`, or no `jj` where the project holds a `.jj`;
   - the config is over 64 KiB (see Config lock);
   - `.git/worktrees` holds more entries than coddy can check in 10 seconds.
     Remove the ones no worktree uses. `git worktree prune` drops those whose worktree is gone.
-    The same refusal comes when a file there that git would wait on forever is not a plain file.
+    So does a file there that git would wait on forever, because it is not a plain file.
   - the config was removed while a claim lock is still there.
 - **Doesn't catch:**
   - A background command's changes.
@@ -209,28 +204,26 @@ The fingerprint holds:
     A submodule is seen once, when it leaves the commit recorded for it, and not again while it stays off it.
   - A commit on the default branch, if the command also writes `refs/remotes/origin/<default_branch>`.
     Branch protection catches it at the push.
-  - A clean filter. The fingerprint runs none on a changed file, but `git status`, which finds them, still runs
-    the clean filter of a driver you set up in your git config, on a modified tracked file whose `.gitattributes`
-    names it.
-  - A hook a command plants inside the project does not run: the fingerprint's git calls write no index and run no hook.
+  - A clean filter. The check runs none on a new file. But `git status` still runs the clean filter of a driver
+    you set up in your git config, on a modified tracked file whose `.gitattributes` names it.
   - A jj workspace whose path jj cannot give (made before jj 0.38, or, before jj 0.46, its directory gone).
-  - A git worktree moved, renamed or re-created by a command that also left a git admin file that is not a plain file.
+  - A git worktree moved, renamed or re-created by a command that also broke git's own record of worktrees.
   - A worktree check or push check that was dodged. See below.
 - **Needs:** `git`, and `jj` where the project holds a `.jj` and has jj 0.38 or later.
   Without `jq`, the worktree and push checks pass with a notice.
 
 ### A check that fails is never read as a clean one
 
-- A failing `git status`, `git worktree list`, `jj workspace list` or fingerprint is not read as an empty list.
+- A failing `git status`, `git worktree list`, `jj workspace list` or record is not read as an empty list.
   The command is reported as unchecked, naming the call that failed.
 - A command that moves or removes the root's `.git` or `.jj/repo` is reported the same way,
   and so is every command after it while the `.git` stays away.
 - While one keeps failing (a bad line in a staged nested repository's config, a corrupt index),
   every command runs unchecked and nothing it changes is named.
-  Each check starts from a fingerprint taken just before the command. Once the call works again,
+  Each check starts from the state just before the command. Once the call works again,
   whatever changed meanwhile (a main-checkout edit, a worktree outside `.worktrees/`, a `core.hooksPath` change)
-  is part of that fingerprint and is never named.
-- A main checkout too large to fingerprint in 20 seconds runs every command unchecked.
+  is part of that starting state and is never named.
+- A main checkout too large to record in 20 seconds runs every command unchecked.
 - `/coddy:start` refuses, and `coddy doctor` reports it, when the listing it checks the coddy path against fails.
 
 ### Settings files
@@ -266,7 +259,7 @@ It looks for a worktree add and for a push.
   it does not know.
 - The check afterwards still reports a worktree it missed, except from a background command.
 - It does not check the issue's claim. The edit guard does.
-- A payload a working `jq` cannot read is refused. Under `guard: warn` it is a notice.
+- A call a working `jq` cannot read is refused. Under `guard: warn` it is a notice.
 
 How the push check reads a push:
 
@@ -311,7 +304,7 @@ How the push check reads a push:
     after `.coddy.yml` is removed).
   - With the sandbox off, one command can remove the config and every leftover.
     Nothing then tells it from a project never onboarded.
-  - The snapshot the lock compares against is under `TMPDIR`. A shell command run as you can rewrite it.
+  - The copy the lock compares against is kept under `TMPDIR`. A shell command run as you can rewrite it.
 - **Needs:** nothing beyond the tripwire's.
 
 ## Git hooks
@@ -341,12 +334,12 @@ It writes a `pre-commit` and a `pre-push` there.
   - `core.hooksPath` is an absolute path. Moving or renaming the checkout turns every hook off, the old ones included,
     until the next `/coddy:start`.
   - A hook added to the old directory after `/coddy:start` ran runs from the next `/coddy:start`.
-  - An install the launcher does not cover (`claude --plugin-dir`, a coddy from `get.sh`)
+  - An install outside Claude Code's plugin cache (`claude --plugin-dir`, a coddy from `get.sh`)
     has the hooks run coddy by the path `/coddy:start` ran it from.
-  - `/resume` inside a process that still runs an install an update replaced points the launcher back to it
+  - `/resume` inside a session that still runs an install an update replaced points the hooks back to it
     until the next session starts.
 - **When it blocks you:**
-  - The hooks run coddy through a launcher, a link in the plugin's data directory.
+  - The hooks run coddy through a link in the plugin's data directory.
     Each Claude Code session points it at the current install, so an update leaves the hooks as they are.
     They never run a `coddy` on `PATH`.
   - A hook whose coddy is gone refuses and says in words what puts it back.

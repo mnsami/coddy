@@ -56,8 +56,7 @@ curl -fsSL https://raw.githubusercontent.com/mnsami/coddy/main/get.sh | bash
 - It clones `main` into `~/.coddy` and links `coddy` into `~/.local/bin`. A rerun fast-forwards it,
   and stops on local changes to tracked files. Your agent reads the skills from `~/.coddy/skills/`,
   starting with `onboard/SKILL.md`. The plugin does not use it.
-- `coddy doctor` says which install a `coddy` runs from. In a project it lists what is missing or off, with fixes.
-  It exits 1 on any problem and changes nothing.
+- `coddy doctor` says which install runs. In a project it lists what is missing or off, with fixes. It changes nothing.
 
 coddy runs on macOS, Linux and WSL, in the Claude Code CLI. claude.ai and Cowork do not install a plugin with a
 top-level `bin/`. Native Windows is not supported: [disable the plugin there](docs/enforcement.md#native-windows).
@@ -93,8 +92,7 @@ Run these inside your project. Each skill also starts from plain language ("star
   `/coddy:migrate` brings it up to the current `version`, and moves `.claude/coddy.yml` to `.coddy.yml`.
 - `/coddy:next`: recommends the next issue, skipping ones in progress, assigned to others or claimed here.
 - `/coddy:start <issue> [onto <base-issue>]`: claims the issue, moves it to In Progress and makes `.worktrees/<issue>`.
-  After one plan approval it implements, hardens twice and reviews. Run it again to resume.
-  `onto` starts from another issue's branch.
+  After one plan approval it implements, hardens twice and reviews. Rerun it to resume. `onto` stacks on that branch.
 - `/coddy:ship [issue]`: runs `verify`, commits, pushes and opens the PR. Under `onto` the PR targets that branch.
 - `/coddy:drop <issue>`: gives a claimed issue up and keeps its branch.
 - `/coddy:refresh`: after a merge, brings the other claimed worktrees up to date with the default branch.
@@ -125,8 +123,8 @@ The plan and questions `/coddy:start` posts on that issue are internal too. Its 
   A claim belongs to one session, but a shell command can still write to the lock.
   The assigned-to-someone-else check is a step of `/coddy:start`. The lock never reads the tracker.
 - **Shell tripwire.** Compares the main checkout before and after each shell command and reports what changed.
-  Its text check refuses a new worktree or a push to the default branch.
-  A `bash -c`, `eval`, a shell function, a git alias or `sudo` hides a command from that check.
+  It also reads each command's text, and refuses a new worktree or a push to the default branch.
+  A `bash -c`, `eval`, a shell function, a git alias or `sudo` hides a command from that reading.
   It reads a `jj git push` before it runs, and jj runs no git hooks, so jj coverage is partial.
 - **Config lock.** Undoes a shell command that removes or rewrites `.coddy.yml`, the switch for all of this.
 - **Git hooks.** `/coddy:start` installs a `pre-commit` and a `pre-push` that refuse the default branch
@@ -165,7 +163,7 @@ review_rounds: 3             # optional; 1-5 (default 3)
 - `worktree` is `git` (`git worktree add`, the default) or `jj` (`jj workspace add`, colocating the repo on first use).
   Below version 2, an absent key means `jj`. `/coddy:config` refuses to switch it while an issue worktree exists.
 - `guard: warn` turns the edit guard's rejections into [notices](docs/enforcement.md#guard-warn).
-  `/coddy:onboard` leaves the key out. Set it with `/coddy:config guard=warn`.
+  Set it with `/coddy:config guard=warn`.
 - A config at `.claude/coddy.yml`, or one without `version`, is still read. `/coddy:migrate` updates it.
   Every other skill refuses to run without the file.
 - To leave the workflow, [follow these steps](docs/enforcement.md#leaving-the-workflow) from your own terminal.
@@ -177,6 +175,8 @@ coddy guards one issue at a time. It is not a board or a factory.
   A lane can call `/coddy:start` and `/coddy:ship`.
 - [Vibe Kanban](https://www.vibekanban.com/) and [CCPM](https://github.com/automazeio/ccpm) launch several agents.
   coddy launches none. It keeps what runs in parallel off another issue's worktree.
+- Cross-agent guardrail tools such as [chock](https://github.com/open-coder-ai/chock) block dangerous commands
+  and files across agents. coddy's rules are about the workflow (claim, worktree, PR), not about which commands are.
 
 ## Contributing
 
