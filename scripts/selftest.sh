@@ -328,15 +328,24 @@ leg() {
   # The other session's process is one of this test's own: $PPID may exit
   # under a launcher that backgrounds the test, and a dead pid is taken over.
   sleep 60 & live=$!
-  # TEMPORARY (#445 debugging): trace both claims; drop before merge.
-  asx() { CLAUDE_CODE_SESSION_ID=$1 CLAUDE_PID=$2 CLAUDE_PROJECT_DIR="$repo" PS4='+ $BASHPID $(date +%s.%N) ${FUNCNAME[0]:-main}:$LINENO: ' bash -x "$here/scripts/issue.sh" "${@:3}"; }
-  asx sess-x $$ claim "$p" >"$tmp/race.x" 2>"$tmp/trace.x" & x=$!
-  asx sess-y "$live" claim "$p" >"$tmp/race.y" 2>"$tmp/trace.y" & y=$!
-  wait "$x"; xr=$?; wait "$y"; yr=$?
-  t 0 "$tool: of two claims at once exactly one wins" test "$xr$yr" = 01 -o "$xr$yr" = 10
-  [ "$xr$yr" = 01 ] || [ "$xr$yr" = 10 ] || { echo "     xr=$xr yr=$yr pwd=$PWD repo=$repo"; sed 's/^/     x: /' "$tmp/race.x"; sed 's/^/     y: /' "$tmp/race.y"; ls -la ".git/coddy/$p" ".git/coddy" 2>&1 | sed 's/^/     ls: /'; for w in x y; do echo "     == trace $w"; grep -E 'mkdir|cd |root=|CODDY_ROOT=|lock=|rm |owner|claim\)|exit|die' "$tmp/trace.$w" | grep -v 'hooks: off' | head -60 | cut -c1-220 | sed "s/^/     $w> /"; done; }
-  [ "$xr" = 0 ] && w="sess-x $$" || w="sess-y $live"
-  t 0 "$tool: the lock names the winner" holds "$w" ".git/coddy/$p/owner"
+  # race <name> [dir]: both claims, with dir first on PATH when named; $w the winner.
+  race() {
+    PATH="${2:+$2:}$PATH" as sess-x $$ claim "$p" >"$tmp/race.x" 2>&1 & x=$!
+    PATH="${2:+$2:}$PATH" as sess-y "$live" claim "$p" >"$tmp/race.y" 2>&1 & y=$!
+    wait "$x"; xr=$?; wait "$y"; yr=$?
+    t 0 "$tool: $1" test "$xr$yr" = 01 -o "$xr$yr" = 10
+    [ "$xr$yr" = 01 ] || [ "$xr$yr" = 10 ] || { echo "     xr=$xr yr=$yr"; sed 's/^/     x: /' "$tmp/race.x"; sed 's/^/     y: /' "$tmp/race.y"; }
+    [ "$xr" = 0 ] && w="sess-x $$" || w="sess-y $live"
+    t 0 "$tool: $1: the lock names the winner" holds "$w" ".git/coddy/$p/owner"
+  }
+  race "of two claims at once exactly one wins"
+  # A mkdir that is not exclusive, as uutils coreutils' (Ubuntu 26.04's
+  # default) is under a race: it succeeds on a directory that is there, and
+  # waits before making a new one, so both claims get past any check before it.
+  mkdir -p "$tmp/mkdirx"
+  printf '#!/bin/sh\nfor a; do :; done\n[ -e "$a" ] || sleep 0.5\n%s "$@" 2>/dev/null || [ -d "$a" ] || exec %s "$@"\n' "$(command -v mkdir)" "$(command -v mkdir)" > "$tmp/mkdirx/mkdir"; chmod +x "$tmp/mkdirx/mkdir"
+  rm -rf ".git/coddy/$p"
+  race "with a mkdir that is not exclusive, still exactly one wins" "$tmp/mkdirx"
   kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
   echo "more $p" > ".worktrees/$p/more.txt" # per leg: the other leg's is in main by now
   was=$(git ls-remote origin "refs/heads/ext/pr-$p")
