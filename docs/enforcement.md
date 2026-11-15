@@ -73,8 +73,8 @@ Each layer has the same rows. A row is left out when it does not apply.
   So is every shell command with no `jj`, where the project holds a `.jj`.
 - With no `jq`, every edit is refused.
 - `coddy doctor` prints the `bash` the hooks run.
-- These still reach the hooks: `LD_PRELOAD`, `LD_AUDIT`, `TMPDIR`, `JJ_CONFIG`
-  and an absolute `PATH` entry outside the project.
+- Set in a `.claude/settings.json` or `settings.local.json` `env`, these still reach the hooks:
+  `LD_PRELOAD`, `LD_AUDIT`, `TMPDIR`, `JJ_CONFIG` and an absolute `PATH` entry outside the project.
   So does a function exported into your own environment that is named like a builtin (`cd`, `pwd`, `printf`),
   on macOS, where `/bin/sh` is bash.
 
@@ -83,7 +83,7 @@ Each layer has the same rows. A row is left out when it does not apply.
 - Git Bash, MSYS2 and Cygwin are not supported. Use WSL.
 - The hooks cannot start there. From Claude Code 2.1.295, that refuses every edit and shell command.
   Disable the plugin there. Before 2.1.295 nothing is guarded.
-- The hooks also need Claude Code 2.1.139 or later and `/usr/bin/env`.
+- The hooks also need Claude Code 2.1.139 or later, `/usr/bin/env` and `/bin/sh`.
 - Where bash itself runs on native Windows, the edit guard refuses every edit.
 - `/coddy:onboard` stops. `coddy doctor` exits 1.
 
@@ -119,13 +119,15 @@ A `PreToolUse` hook on Edit, Write and NotebookEdit.
   - a path it cannot read or follow: over 4096 bytes, through `/proc` or macOS's `/.vol`, or one that is
     Windows-style (a drive letter, a backslash, a leading `//`);
   - every edit, where bash itself runs on native Windows;
+  - every edit in a project whose path holds a backslash, on macOS or Linux;
   - every edit, when the config was removed while a claim lock is still there (see Config lock).
 - **Doesn't catch:**
   - Shell commands. The tripwire reports those after they run.
   - An edit through a FUSE or network mount of the project, or a bind mount of a directory in it.
   - A command that swaps the target for a link between the check and the write.
-  - A project whose path holds a backslash cannot be edited through these tools on macOS or Linux.
-- **When it blocks you:** see "When hooks fail or are off".
+- **When it blocks you:** run `/coddy:start <issue>` and edit under `.worktrees/<issue>/`.
+  For a claim another session holds, `/coddy:start` offers to take it over once you say so.
+  For a crash or timeout, see "When hooks fail or are off".
 - **Needs:** `jq`. Without a working one, or for a call that names no path it can read, every edit is refused.
 
 ### Claims
@@ -148,7 +150,8 @@ A `PreToolUse` hook on Edit, Write and NotebookEdit.
   or in one another session claimed, and which command to run.
 - The ask on `.coddy.yml` stays an ask.
 - Everything in **Always refuses** stays refused, and so does a coddy crash.
-- Of the other layers, only the tripwire's worktree and push checks read the key. They become notices too.
+- Of the other layers, only the tripwire's worktree and push checks read the key. They become notices too:
+  a worktree add outside `.worktrees/`, a push to the default branch, every force push and every remote branch delete.
 - Set it with `/coddy:config guard=warn`. `/coddy:onboard` leaves the key out.
 
 ## Shell tripwire
@@ -165,7 +168,9 @@ The record (a fingerprint) holds:
 - `core.hooksPath`, once the git hooks are installed;
 - the two Claude Code settings files.
 
-- **Stops:**
+What it does with that:
+
+- **Stops** (under `guard: warn`, the refused commands below are let through with a notice):
   - A change a command left in the main checkout, reported after it ran.
   - A new git worktree or jj workspace outside `.worktrees/<issue>/` and `.claude/worktrees/`, reported after it ran.
     The report gives its path and says whether the command made it, or moved, renamed or re-created it.
@@ -185,21 +190,25 @@ The record (a fingerprint) holds:
     husky's `prepare` script does it on every `npm install` or `npm ci`, in a worktree too.
 - **Lets through:**
   - A dry run, `--help`, and `jj git push -c`.
-  - A command with a word it cannot work out. It passes with a notice, and the check after it still looks.
-  - A command past the 20-second limit. It runs, and Claude is told it went unchecked.
+  - A command with a word it cannot work out. It passes with a notice.
+    A worktree it makes is still reported after the command. A push is not.
+  - A command whose main checkout takes more than 20 seconds to record. It runs, and Claude is told it went unchecked.
 - **Always refuses:** every shell command, in either guard mode, when:
   - `HOME` or `XDG_CONFIG_HOME` lies at or under the project, since git and jj read `core.fsmonitor` from there;
   - no `git` is left on the hooks' `PATH`, or no `jj` where the project holds a `.jj`;
   - the config is over 64 KiB (see Config lock);
   - `.git/worktrees` holds more entries than coddy can check in 10 seconds.
     Remove the ones no worktree uses. `git worktree prune` drops those whose worktree is gone.
-    So does a file there that git would wait on forever, because it is not a plain file.
+  - a file under `.git/worktrees` that is not a plain file, which git would wait on forever.
+    Remove it, or replace it with a plain file, by hand.
   - the config was removed while a claim lock is still there.
 - **Doesn't catch:**
   - A background command's changes.
   - A shell write inside any worktree under `.worktrees/`, claimed or not, or another session's.
   - A file over 1 MiB, or one past the first 32 MiB hashed, is compared by its size, inode and change time.
-    A same-size rewrite in place that keeps those is not seen.
+    A file of 1 MiB or less that was recorded that way stays compared that way.
+    After the command, a path is compared the way it was before.
+    So a same-size rewrite in place, within the change time's resolution, is not seen.
   - A change inside a submodule's work tree.
     A submodule is seen once, when it leaves the commit recorded for it, and not again while it stays off it.
   - A commit on the default branch, if the command also writes `refs/remotes/origin/<default_branch>`.
@@ -209,7 +218,7 @@ The record (a fingerprint) holds:
   - A jj workspace whose path jj cannot give (made before jj 0.38, or, before jj 0.46, its directory gone).
   - A git worktree moved, renamed or re-created by a command that also broke git's own record of worktrees.
   - A worktree check or push check that was dodged. See below.
-- **Needs:** `git`, and `jj` where the project holds a `.jj` and has jj 0.38 or later.
+- **Needs:** `git`, and `jj` where the project holds a `.jj` (0.38 or later to list its workspaces).
   Without `jq`, the worktree and push checks pass with a notice.
 
 ### A check that fails is never read as a clean one
@@ -256,17 +265,20 @@ It looks for a worktree add and for a push.
   - a quoted word such as `work"tree"`;
   - a path through a symlink that it resolves by name.
 - Push checks are also dodged by a here-string or a pipe into a shell, `env -S`, and a wrapper or wrapper option
-  it does not know.
+  it does not know. Other `-c` keys are not read: `push.default=upstream`, `remote.<name>.mirror`,
+  `branch.<name>.pushRemote`.
 - The check afterwards still reports a worktree it missed, except from a background command.
 - It does not check the issue's claim. The edit guard does.
 - A call a working `jq` cannot read is refused. Under `guard: warn` it is a notice.
 
 How the push check reads a push:
 
-- It reads `HEAD` from the repository git would find, without running git, and the command's own `-c` settings.
-  It reads none of your git config.
+- It reads `HEAD` from the repository git would find, without running git.
+  From the command's own `-c` settings it reads only `remote.<name>.push`, `push.default=matching`
+  and `help.autocorrect`. It reads none of your git config.
 - It reads `HEAD` as it stands before the command runs. A command that moves it first is read by where it was.
-- A push with no refspec is read as the checked-out branch's, unless the command's `-c` settings say otherwise.
+- A push with no refspec is read as the checked-out branch's, unless a `-c remote.<name>.push` or
+  `push.default=matching` says otherwise.
 - It refuses a push to a branch of the default branch's name in any repository.
 - It sees no `jj git push` force, because jj has no force flag and always pushes with a lease.
 - jj coverage is partial. A bare `jj git push`, or one with `-r` alone, passes with a notice,
@@ -289,8 +301,9 @@ How the push check reads a push:
   - A command that writes the config when none existed (a pull of a shared `.coddy.yml` into a fresh clone).
   - A change to `.claude/coddy.yml` once `.coddy.yml` is live. It is ignored then.
     `/coddy:migrate` ends its move that way.
-- **Asks you first:** `/coddy:config`, `/coddy:migrate` and `/coddy:onboard` write the file with the Write tool.
+- **Asks you first:** `/coddy:config` and `/coddy:migrate` write the file with the Write tool.
   The edit guard asks you, whatever path the write reaches the file by.
+  `/coddy:onboard` writes it before any hook is live, so its own review-step yes is the ask.
 - **Always refuses:** every edit, shell command, commit and push, in either guard mode,
   when no config exists at either path while a claim lock under `.git/coddy`, or the `.git/hooks/coddy` directory,
   is still there. That means the config was removed, not never written.
@@ -411,7 +424,7 @@ So it is the one layer that holds for a cloud agent, or for any branch coddy did
   needs the CI variable `CODDY_TOKEN`.
   Use a token tied to this project alone, never a personal one, with `read_api`, masked and not protected.
   A protected variable does not reach a merge request pipeline from an unprotected branch.
-  Any branch's pipeline can read it.
+  Because it is not protected, any branch's pipeline can read it.
 - Editing a merge request's description starts no pipeline. Re-run the job after fixing one.
 - The merge request that adds the job is checked by it too.
   Give it `Closes #<n>` for an open, assigned issue, or merge it before Pipelines must succeed is on.
@@ -427,7 +440,8 @@ From your own terminal:
    When that is empty or missing, unset `core.hooksPath`. Never set it to an empty value.
 
 While a claim lock or the hooks directory is left, a missing config reads as removed.
-Then the hooks refuse everything, and every skill but `/coddy:onboard` refuses to run.
+Then the hooks refuse everything, `/coddy:onboard` included, and every other skill refuses to run.
+The only ways out are writing the config back, or finishing leaving from your own terminal.
 
 ## Sweep, drop and refresh
 

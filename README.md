@@ -13,6 +13,7 @@ lives in its own worktree and lands through a pull request. The tracker holds th
 - Hooks stop the common slips, and report many shell writes after they happen.
 - They are not a sandbox. Against an agent set on getting round them, the hard stops are
   [branch protection and the required PR check](#how-it-enforces), which you set by hand.
+- Install: `claude plugin marketplace add mnsami/coddy`, then `claude plugin install coddy@coddy` ([more](#install)).
 - The flow: `/coddy:onboard` → `/coddy:next` → `/coddy:start <issue>` → `/coddy:ship`.
 
 ```text
@@ -25,20 +26,11 @@ lives in its own worktree and lands through a pull request. The tracker holds th
 
 > /coddy:start 42
 
-⏺ #42 "Add a Develop section to the README": one section listing the three dev commands.
-⏺ Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" create 42 chore/42-readme-develop)
-  ⎿  created: .worktrees/42 on chore/42-readme-develop
-⏺ Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim 42)
-  ⎿  claimed: 42
 ⏺ #42 is In Progress in .worktrees/42. Run /coddy:ship when done.
-
-> now add it
-
-⏺ Update(.worktrees/42/README.md)
-  ⎿  Updated .worktrees/42/README.md with 7 additions
 ```
 
-The first edit is rejected. It goes through once `/coddy:start` has claimed the issue. A hook enforces that.
+The edit in the main checkout is rejected. The same edit under `.worktrees/42/` goes through once `/coddy:start`
+has claimed the issue. A hook enforces that.
 
 ## Install
 
@@ -55,11 +47,12 @@ curl -fsSL https://raw.githubusercontent.com/mnsami/coddy/main/get.sh | bash
 
 - It clones `main` into `~/.coddy` and links `coddy` into `~/.local/bin`. A rerun fast-forwards it,
   and stops on local changes to tracked files. Your agent reads the skills from `~/.coddy/skills/`,
-  starting with `onboard/SKILL.md`. The plugin does not use it.
+  starting with `onboard/SKILL.md`. The plugin keeps its own copy and does not use `~/.coddy`.
 - `coddy doctor` says which install runs. In a project it lists what is missing or off, with fixes. It changes nothing.
 
-coddy runs on macOS, Linux and WSL, in the Claude Code CLI. claude.ai and Cowork do not install a plugin with a
-top-level `bin/`. Native Windows is not supported: [disable the plugin there](docs/enforcement.md#native-windows).
+coddy runs on macOS, Linux and WSL. As a plugin, it needs the Claude Code CLI: claude.ai and Cowork do not
+install a plugin with a top-level `bin/`. Native Windows is not supported:
+[disable the plugin there](docs/enforcement.md#native-windows).
 
 You need:
 
@@ -69,7 +62,8 @@ You need:
   `/coddy:onboard` installs a missing `jq` or `jj` through a shell command you allow.
   Declining `jq` stops it. `jj` has no apt-get package, so there it names the install page.
 - For GitHub, GitLab or Jira: that tracker's plugin, enabled and signed in. Trackers are reached through
-  its MCP tools, so none needs a CLI. The GitHub PR check runs `gh` and the GitLab job `curl`, inside their CI.
+  its MCP tools, so none needs a CLI. The GitHub token must read and write issues and pull requests.
+  The GitHub PR check runs `gh` and the GitLab job `curl`, inside their CI.
 - GitLab: as shipped, the plugin reaches gitlab.com only. A self-managed instance needs an MCP server
   configured for that instance, whose tools the skills' `allowed-tools` do not pre-approve, so its calls prompt.
   The config names no host.
@@ -77,23 +71,24 @@ You need:
 ## Quick start
 
 Run these inside your project. Each skill also starts from plain language ("start issue 42", "ship it").
-
-1. `/coddy:onboard`: a seven-step wizard that writes `.coddy.yml`. Run it once per project.
-   It assumes one remote, `origin`, which you need write access to, and write or triage access to the tracker's
-   repository. Forks are not supported yet (#280). It saves your answers, so a run that stops resumes.
-   On your yes it writes the PR check workflow, a block in `AGENTS.md` and `.coddy.yml`.
+1. `/coddy:onboard`: a wizard that writes `.coddy.yml`. Run it once per project.
 2. `/coddy:next`: recommends an issue to work on.
 3. `/coddy:start <issue>`: claims the issue, gives it a worktree, then plans, implements and reviews it with you.
-4. `/coddy:ship`: runs `verify`, pushes and opens the PR. Merge it, and the next skill you run cleans up.
+4. `/coddy:ship`: runs `verify`, pushes and opens the PR. Merge it. The next `/coddy:next` or `/coddy:start` cleans up.
 
 ## Skills
 
+- `/coddy:onboard`: a seven-step wizard that saves your answers, so a run that stops resumes. It assumes one
+  remote, `origin`, which you can write to, and write or triage access to the tracker's repository.
+  Forks are not supported yet (#280). On your yes it writes the PR check workflow, an `AGENTS.md` block and the config.
 - `/coddy:config [key=value ...]` shows `.coddy.yml` or changes the keys you name.
   `/coddy:migrate` brings it up to the current `version`, and moves `.claude/coddy.yml` to `.coddy.yml`.
 - `/coddy:next`: recommends the next issue, skipping ones in progress, assigned to others or claimed here.
 - `/coddy:start <issue> [onto <base-issue>]`: claims the issue, moves it to In Progress and makes `.worktrees/<issue>`.
-  After one plan approval it implements, hardens twice and reviews. Rerun it to resume. `onto` stacks on that branch.
-- `/coddy:ship [issue]`: runs `verify`, commits, pushes and opens the PR. Under `onto` the PR targets that branch.
+  After one plan approval it implements, hardens twice and reviews. After `review_rounds` rounds it stops
+  and hands what is left to you. Rerun it to resume. `onto <base-issue>` starts from that issue's branch.
+- `/coddy:ship [issue]`: runs `verify`, commits tracked changes and only the untracked files you name,
+  pushes and opens the PR. Under `onto` the PR targets the base issue's branch.
 - `/coddy:drop <issue>`: gives a claimed issue up and keeps its branch.
 - `/coddy:refresh`: after a merge, brings the other claimed worktrees up to date with the default branch.
 - `/coddy:triage`: turns findings into issues, skipping ones already open.
@@ -120,12 +115,14 @@ The plan and questions `/coddy:start` posts on that issue are internal too. Its 
 [docs/enforcement.md](docs/enforcement.md) has one section per layer: what it stops, lets through and misses.
 
 - **Edit guard.** Rejects Claude's file edits outside `.worktrees/<issue>/`, and inside it before the issue is claimed.
-  A claim belongs to one session, but a shell command can still write to the lock.
-  The assigned-to-someone-else check is a step of `/coddy:start`. The lock never reads the tracker.
+  `.claude/` stays editable, except `.claude/worktrees/`.
+  A claim is a lock under `.git/coddy`, and a shell command can still rewrite it.
+  The assigned-to-someone-else check is a step of `/coddy:start`. `claim` never reads the tracker.
 - **Shell tripwire.** Compares the main checkout before and after each shell command and reports what changed.
   It also reads each command's text, and refuses a new worktree or a push to the default branch.
-  A `bash -c`, `eval`, a shell function, a git alias or `sudo` hides a command from that reading.
-  It reads a `jj git push` before it runs, and jj runs no git hooks, so jj coverage is partial.
+  A `bash -c`, `eval`, a shell function, a git alias, `sudo` or a `cd -` hides a command from that reading.
+  A bare `jj git push`, or one with `-r` alone, passes with a notice, and jj runs no git hooks,
+  so jj coverage is partial.
 - **Config lock.** Undoes a shell command that removes or rewrites `.coddy.yml`, the switch for all of this.
 - **Git hooks.** `/coddy:start` installs a `pre-commit` and a `pre-push` that refuse the default branch
   and any branch no claimed issue owns. `--no-verify` skips them.
@@ -163,9 +160,10 @@ review_rounds: 3             # optional; 1-5 (default 3)
 - `worktree` is `git` (`git worktree add`, the default) or `jj` (`jj workspace add`, colocating the repo on first use).
   Below version 2, an absent key means `jj`. `/coddy:config` refuses to switch it while an issue worktree exists.
 - `guard: warn` turns the edit guard's rejections into [notices](docs/enforcement.md#guard-warn).
+  So do the tripwire's worktree, push-to-default, force-push and branch-delete refusals.
   Set it with `/coddy:config guard=warn`.
-- A config at `.claude/coddy.yml`, or one without `version`, is still read. `/coddy:migrate` updates it.
-  Every other skill refuses to run without the file.
+- A config at `.claude/coddy.yml`, or one without `version`, is still read while `.coddy.yml` is absent.
+  `/coddy:migrate` updates it. Every skill but `/coddy:onboard` refuses to run without a config.
 - To leave the workflow, [follow these steps](docs/enforcement.md#leaving-the-workflow) from your own terminal.
 
 ## Related projects
@@ -176,7 +174,8 @@ coddy guards one issue at a time. It is not a board or a factory.
 - [Vibe Kanban](https://www.vibekanban.com/) and [CCPM](https://github.com/automazeio/ccpm) launch several agents.
   coddy launches none. It keeps what runs in parallel off another issue's worktree.
 - Cross-agent guardrail tools such as [chock](https://github.com/open-coder-ai/chock) block dangerous commands
-  and files across agents. coddy's rules are about the workflow (claim, worktree, PR), not about which commands are.
+  and files across agents. coddy's rules are about the workflow (claim, worktree, PR),
+  not about which commands are dangerous.
 
 ## Contributing
 
@@ -184,9 +183,9 @@ coddy guards one issue at a time. It is not a board or a factory.
   The config is personal: run `/coddy:onboard` in your clone first. Others open a PR by hand with `Closes #<n>`.
 - Commits are `type: summary` (`feat`, `fix`, `chore`). The PR must close its issue (`Closes #<n>`).
   Before opening it, the first three commands under [Develop](#develop) pass.
-- A release is a version bump of `.claude-plugin/plugin.json`, in a PR of its own. The marketplace installs from `main`.
+- A release is a version bump of `.claude-plugin/plugin.json`, in a PR of its own.
+  The marketplace installs from `main`, and an installed copy changes only after a bump.
 - PRs merge with a merge commit, never squash or rebase. Stacked PRs need their base's commits intact.
-- Brand assets are listed in [`assets/README.md`](assets/README.md).
 
 ## Develop
 
