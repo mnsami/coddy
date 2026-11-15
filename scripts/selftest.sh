@@ -2257,7 +2257,11 @@ else
   echo "skip the start in clock ticks: no /proc/$$/stat"
 fi
 t 0 "ticks: every alive call on an owner line passes its ticks" test "$(grep -c 'alive "$pid"' "$here/bin/coddy")" = "$(grep -c 'alive "$pid" "$start" "$tk"' "$here/bin/coddy")"
-t 0 "claim records the claiming process's start, local as 0.6.0 compares it, then UTC, then its ticks where /proc is" grep -qx "sess-a $$ $lstart $started$tks" .git/coddy/43/owner
+# With ticks, they are compared and the starts by their format alone: a clock
+# correction may have moved lstart between claim's read and the one above.
+sfmt='(Mon|Tue|Wed|Thu|Fri|Sat|Sun)_(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)_[0-9]{1,2}_[0-9]{2}:[0-9]{2}:[0-9]{2}_[0-9]{4}'
+if [ -n "$tks" ]; then oline="$sfmt ${sfmt}_UTC$tks"; else oline="$lstart $started"; fi
+t 0 "claim records the claiming process's start, local as 0.6.0 compares it, then UTC, then its ticks where /proc is" grep -qxE "sess-a $$ $oline" .git/coddy/43/owner
 rm -r .git/coddy/other; : > .git/coddy/other
 t 0 "issue.sh status owners: a marker from before locks is unknown" owns "other=unknown"
 rm .git/coddy/other
