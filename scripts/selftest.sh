@@ -328,11 +328,13 @@ leg() {
   # The other session's process is one of this test's own: $PPID may exit
   # under a launcher that backgrounds the test, and a dead pid is taken over.
   sleep 60 & live=$!
-  as sess-x $$ claim "$p" >"$tmp/race.x" 2>&1 & x=$!
-  as sess-y "$live" claim "$p" >"$tmp/race.y" 2>&1 & y=$!
+  # TEMPORARY (#445 debugging): trace both claims; drop before merge.
+  asx() { CLAUDE_CODE_SESSION_ID=$1 CLAUDE_PID=$2 CLAUDE_PROJECT_DIR="$repo" PS4='+ $BASHPID $(date +%s.%N) ${FUNCNAME[0]:-main}:$LINENO: ' bash -x "$here/scripts/issue.sh" "${@:3}"; }
+  asx sess-x $$ claim "$p" >"$tmp/race.x" 2>"$tmp/trace.x" & x=$!
+  asx sess-y "$live" claim "$p" >"$tmp/race.y" 2>"$tmp/trace.y" & y=$!
   wait "$x"; xr=$?; wait "$y"; yr=$?
   t 0 "$tool: of two claims at once exactly one wins" test "$xr$yr" = 01 -o "$xr$yr" = 10
-  [ "$xr$yr" = 01 ] || [ "$xr$yr" = 10 ] || { echo "     xr=$xr yr=$yr"; sed 's/^/     x: /' "$tmp/race.x"; sed 's/^/     y: /' "$tmp/race.y"; }
+  [ "$xr$yr" = 01 ] || [ "$xr$yr" = 10 ] || { echo "     xr=$xr yr=$yr pwd=$PWD repo=$repo"; sed 's/^/     x: /' "$tmp/race.x"; sed 's/^/     y: /' "$tmp/race.y"; ls -la ".git/coddy/$p" ".git/coddy" 2>&1 | sed 's/^/     ls: /'; for w in x y; do echo "     == trace $w"; grep -E 'mkdir|cd |root=|CODDY_ROOT=|lock=|rm |owner|claim\)|exit|die' "$tmp/trace.$w" | grep -v 'hooks: off' | head -60 | cut -c1-220 | sed "s/^/     $w> /"; done; }
   [ "$xr" = 0 ] && w="sess-x $$" || w="sess-y $live"
   t 0 "$tool: the lock names the winner" holds "$w" ".git/coddy/$p/owner"
   kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
