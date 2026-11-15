@@ -19,11 +19,13 @@ and to make its point in the plainest way.
 ## Non-goals
 
 - CLAUDE.md, ROADMAP.md (the ROADMAP half of #259 stays there), skills, scripts' behaviour.
+  Two CLAUDE.md fixes were folded in after review: the tripwire dodge list names a shell function,
+  and "both hold only when the lock and the caller name a session" now names the edit guard and `push`.
 - New features or new claims.
 
 ## Anti-goals
 
-- Shorter by dropping a ceiling. Every ceiling in today's README appears in README or `docs/enforcement.md`.
+- Shorter by dropping a ceiling. Every ceiling in today's README appears in README, `docs/enforcement.md` or `docs/enforcement-limits.md`.
 - A new page as dense as the old one.
 
 ## Approaches
@@ -54,10 +56,13 @@ docs/enforcement.md:
 1. What holds against what: hooks stop slips; hard stops are branch protection and the required PR check.
 2. When hooks fail or are off, and the three ways out.
 3. Platform: bash and `PATH`, native Windows, `bin/coddy` and the `CODDY_*` variables.
-4. One section per layer in shape B: Edit guard (with claims and `guard: warn`), Shell tripwire (with settings
-   files, worktree and push checks, dodge list), Config lock, Git hooks, Branch protection, PR check (GitHub and
+4. One section per layer in shape B: Edit guard (with claims and `guard: warn`), Shell tripwire (the everyday rows,
+   with a pointer to `docs/enforcement-limits.md`), Config lock, Git hooks, Branch protection, PR check (GitHub and
    the GitLab job with `CODDY_TOKEN`).
 5. Leaving the workflow.
+
+docs/enforcement-limits.md: the long tripwire lists (a check that fails, settings files, what the text check
+reads and the dodge list), linked from `docs/enforcement.md`.
 
 ## Writing rules
 
