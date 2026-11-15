@@ -705,13 +705,32 @@ t 0 "create is its alias" says 'exists: .worktrees/1' run create 1 feat/1-thing
 t 0 "root: from inside an issue worktree without CODDY_ROOT" rooted "$repo/.worktrees/1" -u CODDY_ROOT
 t 0 "root: from CODDY_ROOT naming a worktree" rooted / CODDY_ROOT="$repo/.worktrees/1"
 t 1 "ship refuses before the claim" run ship 1
+# A claim that makes the lock but cannot create its owner file (a umask that
+# leaves the lock read-only) leaves no lock, so the claim below is no retry
+# refused as one in flight.
+if [ "$(id -u)" != 0 ]; then # root writes anywhere
+  uclaim() { (umask 0277; run claim 1); }
+  t 1 "claim: one that cannot create its owner file fails" uclaim
+  t 0 "claim: saying it could not record the claim" says 'could not record the claim' uclaim
+  t 1 "claim: and leaves no lock" test -e .git/coddy/1
+fi
 t 0 "claim" run claim 1
 t 0 "the lock names CODDY_SESSION and CODDY_PID" holds "sess-a $$" .git/coddy/1/owner
 # Then the start: local, as 0.6.0's started prints it in C and compares it,
-# and UTC, the one this coddy compares.
+# UTC, the one this coddy compares, and, where /proc is (Linux), the start in
+# clock ticks since boot, compared instead.
 lstart=$(LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_")} 1')
 ustart=$(TZ=UTC0 LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}')
-t 0 "and the process's start, local as 0.6.0 compares it, then UTC" grep -qx "sess-a $$ $lstart $ustart" .git/coddy/1/owner
+tks=$(awk '{sub(/.*\) /, ""); print " t" $20}' /proc/$$/stat 2>/dev/null)
+# ownline <session pid> <file>: the owner line is that process's. Where it has
+# ticks, they are compared and the starts by their format alone: ps derives
+# lstart from the wall clock, which a clock correction moves by a second
+# between claim's read and the one above; the ticks it does not.
+ownline() {
+  local f='(Mon|Tue|Wed|Thu|Fri|Sat|Sun)_(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)_[0-9]{1,2}_[0-9]{2}:[0-9]{2}:[0-9]{2}_[0-9]{4}'
+  if [ -n "$tks" ]; then grep -qxE "$1 $f ${f}_UTC$tks" "$2"; else grep -qx "$1 $lstart $ustart" "$2"; fi
+}
+t 0 "and the process's start, local as 0.6.0 compares it, then UTC, then its ticks where /proc is" ownline "sess-a $$" .git/coddy/1/owner
 t 1 "another session's claim is refused" as sess-b 1 claim 1
 t 0 "that refusal names the owner" says "session sess-a" as sess-b 1 claim 1
 t 0 "the owner's process re-claims under another session id" as sess-b $$ claim 1
@@ -811,7 +830,7 @@ t 2 "guard: the owner's process under a new id is refused a link to the main che
 t 0 "guard: and the owner line is left as it was" cmp -s "$tmp/own" .git/coddy/1/owner
 t 0 "guard: an edit it is allowed" guard "$repo/.worktrees/1/a.txt"
 t 0 "guard: moves the owner line to it" holds "sess-a $$" .git/coddy/1/owner
-t 0 "guard: with both starts" grep -qx "sess-a $$ $lstart $ustart" .git/coddy/1/owner
+t 0 "guard: with both starts" ownline "sess-a $$" .git/coddy/1/owner
 t 2 "guard: blocks a relative path against a cwd named the owner's id and a newline" run guard < <(printf '{"session_id":"sess-a","cwd":"%s","tool_input":{"file_path":"x"}}' "$repo/.worktrees/1\\n")
 rm .worktrees/1/rd .worktrees/1/d .worktrees/1/dd .worktrees/1/L .worktrees/1/M .worktrees/1/nl; rmdir $'.worktrees/1\n'
 rm .worktrees/1/E .worktrees/1/E2 .worktrees/1/E7 .worktrees/1/lng .worktrees/1/la .worktrees/1/L2; rm -r .git/coddy/2; rmdir .worktrees/2 .worktrees/7
@@ -824,7 +843,7 @@ if [ -n "$de" ]; then
   fresh() { rm -r .git/coddy/1; LC_ALL=$de run claim 1 >/dev/null 2>&1; cp .git/coddy/1/owner "$tmp/own"; }
   newsid() { run guard < <(printf '{"session_id":"sess-c","tool_input":{"file_path":"%s"}}' "$repo/.worktrees/1/a.txt"); }
   fresh
-  t 0 "under $de: claim writes both starts in C" grep -qx "sess-a $$ $lstart $ustart" "$tmp/own"
+  t 0 "under $de: claim writes both starts in C" ownline "sess-a $$" "$tmp/own"
   LC_ALL=$de t 0 "under $de: guard allows the owner's edit" guard "$repo/.worktrees/1/a.txt"
   t 0 "under $de: and leaves the owner line as claim wrote it" cmp -s "$tmp/own" .git/coddy/1/owner
   LC_ALL=$de t 0 "under $de: status from another session shows the owner running" says '^owners: 1=sess-a (running)' as sess-b 1 status
@@ -834,7 +853,7 @@ if [ -n "$de" ]; then
   printf 'sess-a %s %s\n' $$ "$(LC_ALL=$de ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_")} 1')" > .git/coddy/1/owner
   LC_ALL=C t 0 "an owner line holding a start written under $de: status shows its live pid running" says '^owners: 1=sess-a (running)' as sess-b 1 status
   LC_ALL=C t 0 "and guard allows the owner's process under a new session id (/clear)" newsid
-  LC_ALL=C t 0 "and rewrites the owner line in the C format, local start then UTC" grep -qx "sess-c $$ $lstart $ustart" .git/coddy/1/owner
+  LC_ALL=C t 0 "and rewrites the owner line in the C format, local start then UTC" ownline "sess-c $$" .git/coddy/1/owner
   rm -r .git/coddy/1; run claim 1 >/dev/null 2>&1
 else
   echo "skip a claim under another locale: de_DE.UTF-8 not installed"
@@ -854,11 +873,11 @@ filled() { [ -s "$tmp/ownps/seen" ] && ! grep -qx empty "$tmp/ownps/seen"; }
 t 0 "re-claim: ps never runs while the owner file is empty" filled
 rm -r .git/coddy/1; : > "$tmp/ownps/seen"; PATH="$tmp/ownps:$PATH" run claim 1 >/dev/null 2>&1
 t 0 "claim: nor while the lock has no owner file" filled
-t 0 "claim: and the owner line is whole" grep -qx "sess-a $$ $lstart $ustart" .git/coddy/1/owner
+t 0 "claim: and the owner line is whole" ownline "sess-a $$" .git/coddy/1/owner
 printf 'sess-old %s\n' $$ > .git/coddy/1/owner; : > "$tmp/ownps/seen"
 PATH="$tmp/ownps:$PATH" t 0 "guard: the owner's process under a new id edits" guard "$repo/.worktrees/1/a.txt"
 t 0 "guard: and ps never runs while the owner file it moves is empty" filled
-t 0 "guard: and the moved owner line is whole" grep -qx "sess-a $$ $lstart $ustart" .git/coddy/1/owner
+t 0 "guard: and the moved owner line is whole" ownline "sess-a $$" .git/coddy/1/owner
 # A path or cwd over 4096 bytes is refused before any work on it, in both
 # modes: reading one takes time quadratic in its length, and a hook that
 # outlasts its timeout lets the edit through before Claude Code 2.1.295.
