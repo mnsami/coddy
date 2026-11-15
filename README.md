@@ -53,8 +53,9 @@ For another agent (Codex, Cursor, Copilot CLI, Gemini CLI or Antigravity CLI) or
 curl -fsSL https://raw.githubusercontent.com/mnsami/coddy/main/get.sh | bash
 ```
 
-- It clones `main` into `~/.coddy` (a rerun fast-forwards it) and links `coddy` into `~/.local/bin`.
-  Your agent reads the skills from `~/.coddy/skills/`, starting with `onboard/SKILL.md`. The plugin does not use it.
+- It clones `main` into `~/.coddy` and links `coddy` into `~/.local/bin`. A rerun fast-forwards it,
+  and stops on local changes to tracked files. Your agent reads the skills from `~/.coddy/skills/`,
+  starting with `onboard/SKILL.md`. The plugin does not use it.
 - `coddy doctor` says which install a `coddy` runs from. In a project it lists what is missing or off, with fixes.
   It exits 1 on any problem and changes nothing.
 
@@ -111,8 +112,7 @@ So `/coddy:start` first proposes a cover, written without the issue's words: the
 (used for every commit and as the PR title), one line of description and a list of what goes public.
 Nothing is created until you approve it, and `/coddy:ship` stops on such an issue that has none.
 A GitLab internal note or a Jira comment restricted to a group or role is never quoted in public text.
-The plan and questions `/coddy:start` posts on that issue are internal too.
-Its ceilings:
+The plan and questions `/coddy:start` posts on that issue are internal too. Its ceilings:
 
 - The diff itself is public once pushed: the cover hides the issue's words, not the change.
 - Ideas `/coddy:triage` files from that work are not covered: it files them as issues that are not confidential.
@@ -126,7 +126,7 @@ Its ceilings:
   The assigned-to-someone-else check is a step of `/coddy:start`. The lock never reads the tracker.
 - **Shell tripwire.** Compares the main checkout before and after each shell command and reports what changed.
   Its text check refuses a new worktree or a push to the default branch.
-  A `bash -c`, `eval`, a git alias or `sudo` hides a command from that check.
+  A `bash -c`, `eval`, a shell function, a git alias or `sudo` hides a command from that check.
   It reads a `jj git push` before it runs, and jj runs no git hooks, so jj coverage is partial.
 - **Config lock.** Undoes a shell command that removes or rewrites `.coddy.yml`, the switch for all of this.
 - **Git hooks.** `/coddy:start` installs a `pre-commit` and a `pre-push` that refuse the default branch
@@ -181,10 +181,10 @@ coddy guards one issue at a time. It is not a board or a factory.
 ## Contributing
 
 - Collaborators: pick an open [issue](https://github.com/mnsami/coddy/issues) and work it through coddy itself.
-  Outside contributors open a PR by hand with `Closes #<n>`.
+  The config is personal: run `/coddy:onboard` in your clone first. Others open a PR by hand with `Closes #<n>`.
 - Commits are `type: summary` (`feat`, `fix`, `chore`). The PR must close its issue (`Closes #<n>`).
   Before opening it, the first three commands under [Develop](#develop) pass.
-- A release is a version bump of `.claude-plugin/plugin.json` through a PR of its own, never a direct commit to `main`.
+- A release is a version bump of `.claude-plugin/plugin.json`, in a PR of its own. The marketplace installs from `main`.
 - PRs merge with a merge commit, never squash or rebase. Stacked PRs need their base's commits intact.
 - Brand assets are listed in [`assets/README.md`](assets/README.md).
 

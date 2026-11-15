@@ -2,6 +2,8 @@
 
 This page says what each layer stops, what it lets through and where it falls short.
 The [README](../README.md) has the short version.
+The last section, sweep, drop and refresh, is not a layer. It sits here because it ends or updates a claim,
+and its ceilings have no better page.
 
 Each layer has the same rows. A row is left out when it does not apply.
 
@@ -140,6 +142,8 @@ A `PreToolUse` hook on Edit, Write and NotebookEdit.
   It does not hold against a shell command that rewrites the lock.
 - The tripwire does not see shell writes inside any worktree, claimed or not.
   So only the edit guard and `push` are held to the owner.
+- Both hold only when the lock and the caller name a session.
+  A claim, a hook payload or a push without one, such as a script run by hand, is not held to the owner.
 
 ### `guard: warn`
 
@@ -167,29 +171,27 @@ The fingerprint holds:
 - **Stops:**
   - A change a command left in the main checkout, reported after it ran.
   - A new git worktree or jj workspace outside `.worktrees/<issue>/` and `.claude/worktrees/`, reported after it ran.
-    The report gives its path, says whether the command made it or moved, renamed or re-created it,
-    and says which tool removes it or puts it back.
-    The tool is `git worktree remove` or `jj workspace forget`, once you have checked what the directory holds,
-    and `git worktree move` or `jj workspace rename`.
-    The report gives no command to paste, since a command can arrange for one to remove something it did not make.
-    Every path and name in it is in single quotes, with backslashes and control characters escaped,
-    so none can pass for a second entry.
+    The report gives its path and says whether the command made it, or moved, renamed or re-created it.
+    It names the tool that removes it (`git worktree remove`, `jj workspace forget`, once you have checked
+    what the directory holds) or puts it back (`git worktree move`, `jj workspace rename`).
+    It gives no command to paste, since a command can arrange for one to remove something it did not make.
+    Paths and names are quoted and escaped, so none can pass for a second entry.
     A worktree moved out of `.worktrees/<issue>/` (by `mv` or `git worktree move`), or reached there through a link,
     counts as outside. The command that moves or deletes it is reported once.
   - A `git worktree add` or `jj workspace add` that would put a worktree anywhere else, refused before it runs.
     It names `/coddy:start <issue>`.
   - A `git push`, `git send-pack` or `jj git push` to the default branch, refused before it runs.
     It names `/coddy:ship`.
+  - Every force push and every remote branch delete, refused before it runs. Those are a person's to make.
+    That includes the issue's own branch.
+  - A change to a settings file, reported after it ran. Claude is told to have you check it.
+    coddy does not put the file back. See "Settings files" below.
   - A change to `core.hooksPath`, reported once. A hook manager's install does it.
     husky's `prepare` script does it on every `npm install` or `npm ci`, in a worktree too.
 - **Lets through:**
-  - Every force push and every remote branch delete. Those are yours to make.
   - A dry run, `--help`, and `jj git push -c`.
   - A command with a word it cannot work out. It passes with a notice, and the check after it still looks.
   - A command that goes over the 20-second budget. It runs, and Claude is told it went unchecked.
-- **Asks you first:** a change to a settings file.
-  Claude is told to have you check it. coddy does not put the file back.
-  See "Settings files" below.
 - **Always refuses:** every shell command, in either guard mode, when:
   - `HOME` or `XDG_CONFIG_HOME` lies at or under the project, since git and jj read `core.fsmonitor` from there;
   - no `git` is left on the hooks' `PATH`, or no `jj` where the project holds a `.jj`;
@@ -223,11 +225,11 @@ The fingerprint holds:
   The command is reported as unchecked, naming the call that failed.
 - A command that moves or removes the root's `.git` or `.jj/repo` is reported the same way,
   and so is every command after it while the `.git` stays away.
-- Every command runs unchecked while one keeps failing (a bad line in a staged nested repository's config,
-  a corrupt index). Nothing it changes is named.
-- Each command's check starts from a fingerprint taken just before it.
-  Once the call works again, whatever changed meanwhile (an edit in the main checkout, a worktree made
-  outside `.worktrees/`, a `core.hooksPath` change) is part of that fingerprint and is never named.
+- While one keeps failing (a bad line in a staged nested repository's config, a corrupt index),
+  every command runs unchecked and nothing it changes is named.
+  Each check starts from a fingerprint taken just before the command. Once the call works again,
+  whatever changed meanwhile (a main-checkout edit, a worktree outside `.worktrees/`, a `core.hooksPath` change)
+  is part of that fingerprint and is never named.
 - A main checkout too large to fingerprint in 20 seconds runs every command unchecked.
 - `/coddy:start` refuses, and `coddy doctor` reports it, when the listing it checks the coddy path against fails.
 
@@ -255,7 +257,8 @@ It looks for a worktree add and for a push.
 - It cannot work out a path or word that is `"$p"`, a backtick, a glob, a brace, `~` or a line break.
   The command passes with a notice.
 - Spellings that dodge it:
-  - a variable, `bash -c`, `eval`, a git alias, `sudo`;
+  - a variable, `bash -c`, `eval`, a shell function (`p() { git "$@"; }`), a git alias, `sudo`;
+    the check reads the command's name, not what a function or alias runs;
   - a `cd -`, or a `cd` in a pipeline;
   - a quoted word such as `work"tree"`;
   - a path through a symlink that it resolves by name.
@@ -278,8 +281,6 @@ How the push check reads a push:
 - A target it cannot work out passes with a notice.
   After that only the git hooks and branch protection stand in the way, and under jj only branch protection.
 - Nothing stands behind it once the command has run. Branch protection and, for git, the git hooks do.
-- Both checks hold only when the lock and the caller name a session.
-  A push from a script run by hand is not held to it.
 
 ## Config lock
 
