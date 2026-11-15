@@ -2240,7 +2240,9 @@ t 0 "issue.sh status owners: and so does a three-field line in UTC" owns "other=
 # ps derives lstart from the wall clock, which a clock correction moves by a
 # second; the ticks it does not.
 if [ -r /proc/$$/stat ]; then
-  off=$(TZ=UTC0 LC_ALL=C date -d "@$(($(TZ=UTC0 LC_ALL=C date -d "$(TZ=UTC0 LC_ALL=C ps -o lstart= -p $$)" +%s) + 1))" '+%a %b %e %T %Y' | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}')
+  # $started itself a second on, not a fresh ps, which the same correction
+  # could have moved back a second, onto $started
+  s=${started%_UTC}; off=$(TZ=UTC0 LC_ALL=C date -d "@$(($(TZ=UTC0 LC_ALL=C date -d "${s//_/ }" +%s) + 1))" '+%a %b %e %T %Y' | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}')
   t 0 "ticks: the shifted start is another start in the same format" sh -c 'case $1 in "$2"|"") exit 1 ;; *_UTC) ;; *) exit 1 ;; esac' _ "$off" "$started"
   echo "sess-e $$ $lstart $off$tks" > .git/coddy/other/owner
   t 0 "ticks: a running pid with its ticks and a UTC start a second off is running" owns "other=sess-e (running)" sess-z 1
