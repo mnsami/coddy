@@ -12,6 +12,7 @@
 #   coddy mark   <issue> [digest]   a fingerprint of the issue's worktree and its records under .git/coddy, its digest first; given one, exit 1 when it differs
 #   coddy sweep                     remove what issues with a merged PR left behind
 #   coddy drop   <issue> [--force]  end a claim here: its worktree, lock and records go, its branch stays; without --force, refused for uncommitted work or commits on no remote
+#   coddy refresh <issue>           bring the worktree up to date with default_branch on the remote (git: merge, jj: rebase) and verify it, in one line: current, refreshed, failed, conflict or skipped
 #   coddy status                    the root, the config path and the claimed worktrees, for the prompts
 #   coddy config | detect           the config, or NOT_ONBOARDED; facts about the project for onboarding
 #   coddy exclude answers | config  put the agent's coddy/ directory, or .coddy.yml, into git's info/exclude unless git ignores it already
@@ -2697,6 +2698,114 @@ $bad" ;;
       [ ! -e "$f" ] && [ ! -L "$f" ] || echo "left: $f (could not be removed: remove it by hand)"
     done ;;
 
+  refresh)
+    # One worktree brought up to date with origin/$base after a merge, then
+    # verified with its output dropped, in one line, exit 0. git merges, so
+    # nothing pushed is rewritten; jj rebases its branch. Skipped, as sweep
+    # keeps them: another running session's claim, uncommitted work, and a
+    # base issue's branch that still resolves; under git also a detached
+    # HEAD or a branch other than the recorded one; under jj also a branch
+    # others build on, which the rebase would move; and every one while the
+    # config names no verify, or one verify refuses. jj rebases the mutable part
+    # alone: a base pushed, merged and swept leaves its commits behind an
+    # untracked remote bookmark, immutable, and they drop off the branch. A
+    # conflict leaves the worktree at its tip (git: merge --abort; jj: each
+    # root rebased back onto its old parents, the same change ids and trees,
+    # never op restore or undo, which act on every workspace). It and every
+    # update flag needs_rebase=<origin/$base> in the state file for start,
+    # written here, since the state verb refuses a gone owner's lock: an
+    # update before verify runs, so a refresh cut off mid-verify stays
+    # flagged, the flag cleared once verify passes.
+    [ $# -le 2 ] || die "usage: $self refresh <issue>"
+    # Every write below goes under .git/coddy: a link there takes it elsewhere.
+    for l in .git/coddy ".git/coddy/$issue"; do
+      [ ! -L "$l" ] || die "$l is a link, so $wt was not brought up to date: what refresh writes under it would go where the link points. Put the directory it stands for back in its place by hand."
+    done
+    # A directory that is no worktree (no .git file, no .jj) is refused: git
+    # -C would find the main checkout above it and merge into that.
+    [ -d "$wt" ] && if [ "$tool" = jj ]; then [ -d "$wt/.jj" ]; else [ -f "$wt/.git" ]; fi || die "no worktree for $issue. Run /coddy:start $issue."
+    [ "$issue" != swept ] && [ -e ".git/coddy/$issue" ] || die "issue $issue is not In Progress. Run /coddy:start $issue."
+    # needs_rebase goes into the lock directory: a marker from before locks
+    # is refused before anything moves, as state refuses it.
+    [ -d ".git/coddy/$issue" ] || die "issue $issue's claim is from before locks. Run /coddy:start $issue to re-claim it."
+    me="${CODDY_SESSION-}"; owner "$issue"
+    if [ -n "$sid" ] && ! mine && alive "$pid" "$start"; then echo "skipped: $issue (session $sid holds it)"; exit 0; fi
+    # A git merge not yet concluded counts as uncommitted work, though status
+    # shows none once nothing is left to stage: the merge below would fail on
+    # it, and its abort would take it.
+    wtstate; [ -z "$dirty" ] && { [ "$tool" = jj ] || ! git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; } || { echo "skipped: $issue (uncommitted work)"; exit 0; }
+    # A detached HEAD would take the merge while its branch stays, so ship
+    # would push nothing of it; another branch would take it, and ship
+    # refuses a worktree off the recorded one.
+    if [ "$tool" != jj ]; then
+      h=$(git -C "$wt" symbolic-ref -q HEAD 2>/dev/null) || { echo "skipped: $issue (detached HEAD)"; exit 0; }
+      branch=$(cat "$rec" 2>/dev/null); [ "$h" = "refs/heads/$branch" ] || { echo "skipped: $issue (not on ${branch:-its recorded branch})"; exit 0; }
+    fi
+    stacked; [ -z "$from" ] || { echo "skipped: $issue (stacked on $from)"; exit 0; }
+    # With no verify, or one verify refuses (a block scalar, its pattern),
+    # verify would die after the update and flag it as failed.
+    v=$(cfg verify); [ -n "$v" ] || { echo "skipped: $issue (no verify command)"; exit 0; }
+    case $v in [\|\>]|[\|\>][-+1-9]|[\|\>][-+1-9][-+1-9]) echo "skipped: $issue (verify is a block scalar)"; exit 0 ;; esac
+    # A base that no longer resolves is gone from here: its record goes
+    # whatever follows, current or conflict included, or ship would open the
+    # PR against it. stacked reads a jj that fails as a base gone, so under jj
+    # the record goes only once jj is seen to run here.
+    [ "$tool" != jj ] || [ ! -e ".git/coddy/$issue.base" ] || e=$(jj log --no-graph -r 'root()' -T '""' 2>&1) || die "jj does not run in $root, so $wt was not brought up to date and its base record stays: $e"
+    rm -f ".git/coddy/$issue.base"
+    git fetch -q origin "$base" >/dev/null 2>&1
+    # by its full name: a local tag or branch named origin/$base comes first
+    d=$(git rev-parse -q --verify "refs/remotes/origin/$base^{commit}") || die "origin/$base is missing here, so $wt was not brought up to date: fetch origin, or set default_branch with /coddy:config"
+    f=".git/coddy/$issue/state"
+    # flag sets needs_rebase=$d, flag "" clears it; a new file (set -C), so a
+    # link planted at state.tmp is never written through
+    flag() { rm -f "$f.tmp" && (set -C; { grep -v '^needs_rebase=' "$f" 2>/dev/null; [ -z "$1" ] || echo "needs_rebase=$1"; } > "$f.tmp") && mv "$f.tmp" "$f" || die "could not write needs_rebase to $f"; }
+    # git's merge writes over an ignored file where it brings one (merge-ort
+    # keeps --no-overwrite-ignore to fast-forwards; a modify/delete conflict's
+    # abort then deletes it), and jj keeps it as a change, which push would
+    # commit: refused, by name, before anything moves. $1 is the worktree's
+    # commit; the files are those origin/$base changed since the fork, a
+    # delete aside, that it does not track: a new one, or one the branch
+    # stopped tracking and keeps ignored (a .env).
+    # ponytail: the path itself alone, so an ignored file where a new
+    # directory goes is not seen; walk each path's parents if that bites.
+    inway() {
+      local way
+      [ -n "$1" ] && way=$(set -o pipefail; git diff --name-only -z --no-renames --diff-filter=d "$1...$d" -- | while IFS= read -r -d '' p; do
+        if { [ -e "$wt/$p" ] || [ -L "$wt/$p" ]; } && ! git cat-file -e "$1:$p" 2>/dev/null; then q "$p"; fi
+      done) || die "could not tell which files origin/$base brings into $wt, so it was not brought up to date"
+      [ -z "$way" ] || die "origin/$base brings files where $wt holds ignored ones, so it was not brought up to date: ${way//$'\n'/ }. Move them out of the way by hand, then refresh again."
+    }
+    n=""
+    if [ "$tool" = jj ]; then
+      jhas() { [ -n "$(jjn log --no-graph -r "$1" -T '"x"' 2>/dev/null)" ]; }
+      ! jhas "$d & ::@" || { echo "current: $issue"; exit 0; }
+      rv="roots(($d..@) & mutable())"
+      ! jhas "$rv:: ~ ::@" || { echo "skipped: $issue (other commits build on its branch)"; exit 0; }
+      inway "$(jjn log --no-graph -r @ -T commit_id 2>/dev/null)"
+      rs=$(jjn log --no-graph -r "$rv" -T 'change_id ++ " " ++ parents.map(|p| p.commit_id()).join(" ") ++ "\n"' 2>/dev/null) && [ -n "$rs" ] || die "jj could not read the branch in $wt"
+      e=$(jjn rebase -s "$rv" -d "$d" 2>&1) || die "jj rebase failed in $wt: $e"
+      if jhas "conflicts() & ($d..@)"; then
+        n=$(jjn log --no-graph -r "conflicts() & ($d..@)" -T 'conflicted_files.map(|e| e.path() ++ "\0").join("")' 2>/dev/null | sort -zu | while IFS= read -r -d '' p; do q "$p"; done)
+        while read -r r p; do
+          a=(); for x in $p; do a+=(-d "$x"); done
+          e=$(jjn rebase -s "$r" "${a[@]}" 2>&1) || die "jj could not rebase $wt back after a conflict, so its branch is left on origin/$base with conflicts: $e"
+        done <<< "$rs"
+        n=${n:-unknown files}
+      fi
+    else
+      ! git -C "$wt" merge-base --is-ancestor "$d" HEAD 2>/dev/null || { echo "current: $issue"; exit 0; }
+      inway "$tip"
+      if ! e=$(git -C "$wt" merge --no-edit --no-overwrite-ignore -q -m "Merge remote-tracking branch 'origin/$base'" "$d" 2>&1); then
+        n=$(git -C "$wt" diff --name-only -z --diff-filter=U | while IFS= read -r -d '' p; do q "$p"; done)
+        ! git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null || git -C "$wt" merge --abort >/dev/null 2>&1
+        [ "$(git -C "$wt" rev-parse HEAD 2>/dev/null)" = "$tip" ] && [ -z "$(git -C "$wt" status --porcelain --untracked-files=normal)" ] || die "git merge failed in $wt and could not be undone, so it is left mid-merge: $e"
+        [ -n "$n" ] || die "git merge failed in $wt: $e"
+      fi
+    fi
+    flag "$d"
+    if [ -n "$n" ]; then echo "conflict: $issue (${n//$'\n'/ })"; exit 0; fi
+    if (verify) >/dev/null 2>&1; then flag ""; echo "refreshed: $issue"; else echo "failed: $issue"; fi ;;
+
   verify) verify; exit $? ;;
 
   diff|log)
@@ -2809,5 +2918,5 @@ $bad" ;;
         { grep -v "^$k=" "$f" 2>/dev/null; printf '%s=%s\n' "$k" "$v"; } > "$f.tmp" && mv "$f.tmp" "$f" || die "could not write $f"
       fi
     done ;;
-  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] [-- <path>...] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | mark <issue> [digest] | sweep | drop <issue> [--force] | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard | githook pre-commit|pre-push" ;;
+  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] [-- <path>...] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | mark <issue> [digest] | sweep | drop <issue> [--force] | refresh <issue> | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard | githook pre-commit|pre-push" ;;
 esac
