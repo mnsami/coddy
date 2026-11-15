@@ -2244,6 +2244,7 @@ if [ -r /proc/$$/stat ]; then
   t 0 "ticks: the shifted start is another start in the same format" sh -c 'case $1 in "$2"|"") exit 1 ;; *_UTC) ;; *) exit 1 ;; esac' _ "$off" "$started"
   echo "sess-e $$ $lstart $off$tks" > .git/coddy/other/owner
   t 0 "ticks: a running pid with its ticks and a UTC start a second off is running" owns "other=sess-e (running)" sess-z 1
+  t 0 "ticks: and that pid's own process under a new session id is me" owns "other=me" sess-z $$
   t 1 "ticks: and another session's claim is refused" as sess-z 1 claim other
   echo "sess-e $$ $lstart $started t$((${tks# t} + 1))" > .git/coddy/other/owner
   t 0 "ticks: a running pid with other ticks is gone, whatever its UTC start" owns "other=sess-e (gone)" sess-z 1
@@ -2253,6 +2254,7 @@ if [ -r /proc/$$/stat ]; then
 else
   echo "skip the start in clock ticks: no /proc/$$/stat"
 fi
+t 0 "ticks: every alive call on an owner line passes its ticks" test "$(grep -c 'alive "$pid"' "$here/bin/coddy")" = "$(grep -c 'alive "$pid" "$start" "$tk"' "$here/bin/coddy")"
 t 0 "claim records the claiming process's start, local as 0.6.0 compares it, then UTC, then its ticks where /proc is" grep -qx "sess-a $$ $lstart $started$tks" .git/coddy/43/owner
 rm -r .git/coddy/other; : > .git/coddy/other
 t 0 "issue.sh status owners: a marker from before locks is unknown" owns "other=unknown"
