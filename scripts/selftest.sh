@@ -2621,9 +2621,9 @@ t 1 "onboard leaves add_commit to the host's prompt" sh -c "sed -n 's/^allowed-t
 t 0 "onboard keeps the add_commit step" grep -qF '`add_commit` with `branch: coddy/mr-check`' "$here/skills/onboard/SKILL.md"
 t 1 "onboard no longer lists CODDY_TOKEN as a standing step" grep -qF 'when the job token cannot read (the job says so)' "$here/skills/onboard/SKILL.md"
 t 0 "onboard names CODDY_TOKEN only for a job that reports it cannot read" grep -qF 'only a job that reports it cannot read needs the CI variable `CODDY_TOKEN`' "$here/skills/onboard/SKILL.md"
-t 0 "README names CODDY_TOKEN only for a job that reports it cannot read" grep -qF 'Only a job that reports it cannot read' "$here/README.md"
+t 0 "enforcement.md names CODDY_TOKEN only for a job that reports it cannot read" grep -qF 'Only a job that reports it cannot read' "$here/docs/enforcement.md"
 t 1 "README: closes_issues is gone with the job" grep -qE 'closes_issues|related_issues' "$here/README.md"
-for f in skills/onboard/SKILL.md README.md templates/coddy.gitlab-ci.yml; do
+for f in skills/onboard/SKILL.md docs/enforcement.md templates/coddy.gitlab-ci.yml; do
   t 0 "$f: CODDY_TOKEN is tied to this project alone" grep -qF 'tied to this project alone, never a personal one' "$here/$f"
   t 0 "$f: and any branch's pipeline can read it" grep -qiF "any branch's pipeline can read it" "$here/$f"
 done
