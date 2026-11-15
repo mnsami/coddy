@@ -705,6 +705,15 @@ t 0 "create is its alias" says 'exists: .worktrees/1' run create 1 feat/1-thing
 t 0 "root: from inside an issue worktree without CODDY_ROOT" rooted "$repo/.worktrees/1" -u CODDY_ROOT
 t 0 "root: from CODDY_ROOT naming a worktree" rooted / CODDY_ROOT="$repo/.worktrees/1"
 t 1 "ship refuses before the claim" run ship 1
+# A claim that makes the lock but cannot create its owner file (a umask that
+# leaves the lock read-only) leaves no lock, so the claim below is no retry
+# refused as one in flight.
+if [ "$(id -u)" != 0 ]; then # root writes anywhere
+  uclaim() { (umask 0277; run claim 1); }
+  t 1 "claim: one that cannot create its owner file fails" uclaim
+  t 0 "claim: saying it could not record the claim" says 'could not record the claim' uclaim
+  t 1 "claim: and leaves no lock" test -e .git/coddy/1
+fi
 t 0 "claim" run claim 1
 t 0 "the lock names CODDY_SESSION and CODDY_PID" holds "sess-a $$" .git/coddy/1/owner
 # Then the start: local, as 0.6.0's started prints it in C and compares it,

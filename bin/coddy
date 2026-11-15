@@ -38,7 +38,8 @@
 # CODDY_SESSION in the last 60 s.
 # The config is .coddy.yml at the root, or .claude/coddy.yml from before.
 # An issue counts as In Progress once the lock .git/coddy/<issue>/ exists.
-# Only claim makes it (mkdir, so of two sessions claiming at once one wins;
+# Only claim makes it (mkdir -p for the directory alone; of two sessions
+# claiming at once the one that creates owner under set -C wins;
 # a plain-file marker from before locks still counts until the next claim
 # replaces it with a lock); its owner file holds "<session> <pid> <local start> <start> [t<ticks>]", and
 # another session's claim is refused unless --take is passed or the owner's
@@ -2514,11 +2515,15 @@ case "$cmd" in
     # default, lets two racing mkdirs both succeed). A lock there before is
     # never won, so one with no owner file stays a claim in flight. Status
     # 3: the create won and the write failed, so the lock goes.
-    r=1
-    [ -e "$lock" ] || ! mkdir -p "$lock" 2>/dev/null || { (set -C; { printf '%s\n' "$ml" >&3 || exit 3; } 3>"$lock/owner") 2>/dev/null; r=$?; }
+    r=1 made=""
+    [ -e "$lock" ] || ! mkdir -p "$lock" 2>/dev/null || { made=1; (set -C; { printf '%s\n' "$ml" >&3 || exit 3; } 3>"$lock/owner") 2>/dev/null; r=$?; }
     [ "$r" != 3 ] || { rm -rf "$lock"; die "could not record the claim"; }
     if [ "$r" != 0 ]; then
       for i in 1 2 3 4 5; do [ -s "$lock/owner" ] && break; sleep 0.1; done # the winner writes owner in the redirection that creates it
+      # This claim made the lock and no owner is there: its create failed on
+      # its own (EACCES, ENOSPC), not to a racer's, so the empty lock goes;
+      # rmdir leaves one a racer has written owner into since.
+      [ -z "$made" ] || [ -e "$lock/owner" ] || [ -L "$lock/owner" ] || { rmdir "$lock" 2>/dev/null; die "could not record the claim"; }
       owner "$issue"
       if [ ! -s "$lock/owner" ]; then
         # A claim in flight, or one that died between its mkdir and its owner line.
