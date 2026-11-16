@@ -2597,7 +2597,7 @@ for f in README.md CLAUDE.md skills/onboard/SKILL.md; do
   t 0 "$f: the GitLab plugin as shipped reaches gitlab.com only" grep -qF 'reaches gitlab.com only' "$here/$f"
   t 0 "$f: a self-managed instance's MCP server is not pre-approved" grep -qF 'do not pre-approve, so its calls prompt' "$here/$f"
 done
-t 1 "README promises no instance the plugin does not reach" grep -qF 'on any instance' "$here/README.md"
+t 1 "README and enforcement.md promise no instance the plugin does not reach" grep -qF 'on any instance' "$here/README.md" "$here/docs/enforcement.md" "$here/docs/enforcement-limits.md"
 # What a live gitlab.com project showed: what the MCP tools return, and what a job token reads.
 for n in next start ship; do t 0 "skill $n: every GitLab MCP call but get_user takes project_id" grep -qF 'every GitLab MCP call but `get_user` takes `project_id`' "$here/skills/$n/SKILL.md"; done
 t 1 "start names no list_branches, which detects no fork" grep -qF 'list_branches' "$here/skills/start/SKILL.md"
@@ -2621,9 +2621,9 @@ t 1 "onboard leaves add_commit to the host's prompt" sh -c "sed -n 's/^allowed-t
 t 0 "onboard keeps the add_commit step" grep -qF '`add_commit` with `branch: coddy/mr-check`' "$here/skills/onboard/SKILL.md"
 t 1 "onboard no longer lists CODDY_TOKEN as a standing step" grep -qF 'when the job token cannot read (the job says so)' "$here/skills/onboard/SKILL.md"
 t 0 "onboard names CODDY_TOKEN only for a job that reports it cannot read" grep -qF 'only a job that reports it cannot read needs the CI variable `CODDY_TOKEN`' "$here/skills/onboard/SKILL.md"
-t 0 "README names CODDY_TOKEN only for a job that reports it cannot read" grep -qF 'Only a job that reports it cannot read' "$here/README.md"
-t 1 "README: closes_issues is gone with the job" grep -qE 'closes_issues|related_issues' "$here/README.md"
-for f in skills/onboard/SKILL.md README.md templates/coddy.gitlab-ci.yml; do
+t 0 "enforcement.md names CODDY_TOKEN only for a job that reports it cannot read" grep -qF 'Only a job that reports it cannot read' "$here/docs/enforcement.md"
+t 1 "README and enforcement.md: closes_issues is gone with the job" grep -qE 'closes_issues|related_issues' "$here/README.md" "$here/docs/enforcement.md" "$here/docs/enforcement-limits.md"
+for f in skills/onboard/SKILL.md docs/enforcement.md templates/coddy.gitlab-ci.yml; do
   t 0 "$f: CODDY_TOKEN is tied to this project alone" grep -qF 'tied to this project alone, never a personal one' "$here/$f"
   t 0 "$f: and any branch's pipeline can read it" grep -qiF "any branch's pipeline can read it" "$here/$f"
 done
