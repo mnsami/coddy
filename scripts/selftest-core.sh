@@ -820,10 +820,6 @@ cp .coddy.yml "$tmp/conf.yml"; { grep -v '^guard:' "$tmp/conf.yml"; echo "guard:
 ln -s C2 .worktrees/1/cfg; ln -s ../../.coddy.yml .worktrees/1/C2
 PATH="$rl0:$PATH" t 2 "guard: warn, a readlink that always fails: refuses a link chain to a .coddy.yml not made yet" guard "$repo/.worktrees/1/cfg"
 rm .worktrees/1/cfg .worktrees/1/C2 .claude/coddy.yml; mv "$tmp/conf.yml" .coddy.yml
-# snap reads one path per line: one whose directory ends in a newline is
-# marked unresolved, not split into two.
-t 0 "snap: a worktree add through a link to a name ending in a newline passes, unresolved" says 'could not tell where' run snap < <(jq -cn --arg d "$repo" '{tool_use_id: "nl", cwd: $d, tool_input: {command: "git worktree add .worktrees/1/nl/x"}}')
-rm -f "${snapfile%w}nl" "${snapfile%w}nl".*
 # The owner's edit moves the owner line only once all three readings allow it.
 printf 'sess-old %s\n' $$ > "$tmp/own"; cp "$tmp/own" .git/coddy/1/owner
 t 2 "guard: the owner's process under a new id is refused a link to the main checkout" guard "$repo/.worktrees/1/rd"
@@ -991,6 +987,13 @@ d=$(git rev-parse HEAD); git checkout -q main
 t 0 "githook: a commit on a claimed issue's branch passes, in its worktree" git -C .worktrees/1 commit -q --allow-empty -m x
 t 1 "githook: a push to the default branch is refused" git push -q origin "$d:refs/heads/main"
 t 0 "githook: naming push --no-verify" says 'push with --no-verify' git push -q origin "$d:refs/heads/main"
+# From a claimed issue's worktree too. Every worktree shares main, moved for
+# the push to $d, which the remote lacks: an up-to-date ref sends the hook
+# no line to refuse.
+m=$(git rev-parse main); git update-ref refs/heads/main "$d"
+t 1 "githook: git push origin main from a claimed issue's worktree is refused" git -C .worktrees/1 push -q origin main
+t 0 "githook: naming the default branch" says 'push to main, the default branch' git -C .worktrees/1 push -q origin main
+git update-ref refs/heads/main "$m"
 t 1 "githook: a push to an unclaimed branch is refused" git push -q origin loose
 t 0 "githook: a push of a claimed issue's branch passes" git -C .worktrees/1 push -q origin HEAD
 git push -q --no-verify origin loose

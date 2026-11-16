@@ -143,15 +143,15 @@ gets only the git hooks, branch protection and the PR check.
   ([only Claude Code's prompt holds them](docs/enforcement-limits.md#settings-files)), except `.claude/worktrees/`.
   Files outside the project pass. A claim is a lock under `.git/coddy`, and a shell command can rewrite it.
   The assignee check is a `/coddy:start` step. `claim` never reads the tracker.
-- **Shell tripwire.** Compares the main checkout before and after each shell command and reports what changed. It also
-  reads each command's text. It refuses a new worktree outside `.worktrees/` and `.claude/worktrees/`, and a push to
-  the default branch. Spellings such as `bash -c`, `eval`, a shell function, a git alias or `sudo` hide a command from
-  it, [among others](docs/enforcement-limits.md#what-the-text-check-reads). A bare `jj git push`, or one with `-r`
-  alone, passes with a notice. jj runs no git hooks, so jj coverage is partial.
+- **Shell tripwire.** Compares the main checkout before and after each shell command and reports what changed.
+  A new worktree outside `.worktrees/` and `.claude/worktrees/` is reported after it is made.
+  It does not read the command, so it refuses no push.
 - **Config lock.** Undoes a shell command that removes or rewrites `.coddy.yml`, the switch for all of this.
 - **Git hooks.** `/coddy:start` installs a `pre-commit` and a `pre-push` that refuse the default branch
-  and any branch no claimed issue owns. `--no-verify` skips them.
+  and any branch no claimed issue owns. `--no-verify` skips them, and jj runs none.
+  A force push of a claimed branch passes. Its delete is not refused yet (#269).
 - **Branch protection.** You set it. It holds when a command edits, commits and pushes in one go.
+  With the `pre-push` hook it holds a push to the default branch. Under jj it holds it alone.
 - **PR check.** A GitHub Action, or a GitLab job, that fails a PR unless it closes an open, assigned issue.
   You require it. It holds for a cloud agent, or a branch coddy did not name. Jira has none.
 
@@ -190,8 +190,8 @@ review_rounds: 3             # optional; 1-5 (default 3)
 
 - `worktree` is `git` (`git worktree add`, the default) or `jj` (`jj workspace add`, colocating the repo on first use).
   Below version 2, an absent key means `jj`. `/coddy:config` refuses to switch it while an issue worktree exists.
-- `guard: warn` turns the edit guard's rejections, and the tripwire's worktree, push-to-default, force-push and
-  branch-delete refusals, into [notices](docs/enforcement.md#guard-warn). Set it with `/coddy:config guard=warn`.
+- `guard: warn` turns the edit guard's rejections into [notices](docs/enforcement.md#guard-warn).
+  Set it with `/coddy:config guard=warn`.
 - A config without `version` is read as version 0. One at `.claude/coddy.yml` is read while `.coddy.yml` is absent.
   `/coddy:migrate` updates either. Every skill but `/coddy:onboard` refuses to run without one.
 - To leave the workflow, [follow these steps](docs/enforcement.md#leaving-the-workflow) from your own terminal.
