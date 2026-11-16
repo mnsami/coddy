@@ -52,7 +52,7 @@ Extract a `coddy` CLI core with no Claude Code dependencies; Claude Code becomes
 ### M3 · The floor
 Enforcement every agent gets.
 - #29 Install git hooks that refuse commits outside a claimed issue branch
-- #141 Refuse a push to the default branch, a force push or a remote branch's delete before it runs, `jj git push` included: the local half of the floor
+- #141 Refuse a push to the default branch, a force push or a remote branch's delete before it runs, `jj git push` included: the local half of the floor (done, then removed by #261: #285 D1)
 - #14 Make git the default worktree tool, keep jj opt-in
 
 ### M4 · Agent adapters
