@@ -19,10 +19,9 @@ Each layer has the same rows. A row is left out when it does not apply.
 - The hooks stop the common slips, such as editing in the main checkout or pushing to the default branch.
 - The hooks also report many shell writes after they happen.
 - They are not a sandbox. An agent that is set on getting round them can.
-- Two layers you set by hand make every change to the default branch go through a PR
+- On GitHub and GitLab, two layers you set by hand make every change to the default branch go through a PR
   that closes an open, assigned issue: branch protection and the required PR check.
-- A person stays in the merge only if the rule also requires an approving review from another account.
-- A PR can edit the check's own workflow. A code-owner (CODEOWNERS) review on the CI files is what holds that.
+  They hold only with the settings in "What the hard layers need" below.
 - On Jira there is no PR check, so branch protection is the only hard layer.
 - Claims are cooperative. A shell command that writes to `.git/coddy` defeats
   "only the claiming session may edit or push".
@@ -52,13 +51,17 @@ Each layer has the same rows. A row is left out when it does not apply.
 
 ### Hooks off
 
+- Claude Code before 2.1.139 runs none of the hooks. Nothing is guarded.
+- Where `/usr/bin/env` or `/bin/sh` is missing, the hooks cannot start, on any OS.
+  From Claude Code 2.1.295 that refuses every edit and shell command, so disable the plugin there.
 - Claude Code runs no plugin hook when `disableAllHooks` is set, in any settings file or by `--settings`.
 - It runs none under managed settings that set `allowManagedHooksOnly`.
   An admin who wants managed hooks alone keeps coddy's by force-enabling `coddy@coddy` in the managed `enabledPlugins`.
 - With the hooks off, the edit guard, the tripwire and the config lock are off.
   Only the git hooks, branch protection and the PR check hold.
-- Those three are Claude Code hooks. Another agent that runs the skills from `~/.coddy` (Codex, Cursor, Copilot CLI,
-  Gemini CLI, Antigravity CLI) never has them. It gets only the git hooks, branch protection and the PR check.
+- The edit guard, the tripwire and the config lock are Claude Code hooks.
+  Another agent that runs the skills from `~/.coddy` (Codex, Cursor, Copilot CLI, Gemini CLI, Antigravity CLI)
+  never has them. It gets only the git hooks, branch protection and the PR check.
 - Each shell hook leaves a mark for its session. `/coddy:start` looks for it before it creates or claims the worktree.
   With none, it prints `hooks: off` and the causes, and asks you before it claims the issue.
 - That check reads the session's own mark. A session with its hooks off is caught only when it runs `/coddy:start`
@@ -89,7 +92,6 @@ Each layer has the same rows. A row is left out when it does not apply.
 - Git Bash, MSYS2 and Cygwin are not supported. Use WSL.
 - The hooks cannot start there. From Claude Code 2.1.295, that refuses every edit and shell command.
   Disable the plugin there. Before 2.1.295 nothing is guarded.
-- The hooks also need Claude Code 2.1.139 or later, `/usr/bin/env` and `/bin/sh`.
 - Where bash itself runs on native Windows, the edit guard refuses every edit.
 - `/coddy:onboard` stops. `coddy doctor` exits 1.
 
@@ -109,10 +111,11 @@ Each layer has the same rows. A row is left out when it does not apply.
 
 A `PreToolUse` hook on Edit, Write and NotebookEdit.
 
-- **Stops:** an edit outside `.worktrees/<issue>/`.
+- **Stops:** an edit in the project outside `.worktrees/<issue>/`.
   Inside, an edit before `/coddy:start` has claimed the issue, or when another session holds the claim.
 - **Lets through:** `.claude/`, except Claude Code's own worktrees under `.claude/worktrees/`.
   Those are held to the lock too.
+  Files outside the project. They are refused too once the config was removed (see Config lock).
 - **Asks you first:** any edit of `.coddy.yml`, by whatever path it reaches the file.
   A symlink or hard link from a worktree counts.
   In headless `-p` under `--permission-mode bypassPermissions` the ask is still not bypassed:
@@ -300,8 +303,8 @@ It writes a `pre-commit` and a `pre-push` there.
   - A hook added to the old directory after `/coddy:start` ran runs from the next `/coddy:start`.
   - An install outside Claude Code's plugin cache (`claude --plugin-dir`, a coddy from `get.sh`)
     has the hooks run coddy by the path `/coddy:start` ran it from.
-  - `/resume` inside a session that still runs an install an update replaced points the hooks back to it
-    until the next session starts.
+  - After a plugin update, `/resume` in a session started before it points the hooks at the old install
+    until a new session starts.
 - **When it blocks you:**
   - The hooks run coddy through a link in the plugin's data directory.
     Each Claude Code session points it at the current install, so an update leaves the hooks as they are.
@@ -324,6 +327,31 @@ It writes a `pre-commit` and a `pre-push` there.
 - **Needs:** a `bash`, `git` and `sed` on the hooks' `PATH`, found past every entry that is relative
   or inside the repository. The old hook gets `PATH` as git gave it.
 
+## What the hard layers need
+
+Branch protection and the PR check hold only when all of these are true.
+
+- **The agent's token cannot change repository settings.**
+  Otherwise it can remove the rule, push, and put the rule back.
+  - GitHub: a token without Administration write, such as a fine-grained one. "Applies to administrators"
+    stops an administrator bypassing the rule. It does not stop one editing it.
+  - GitLab: a role below Maintainer. A Maintainer or Owner can unprotect the branch or turn off Pipelines must succeed.
+- **A person stays in the merge.** The rule must require an approving review from another account.
+- **Stale approvals are dismissed.** Otherwise the agent can push after the approval, a workflow edit included.
+  - GitHub: "Dismiss stale pull request approvals when new commits are pushed"
+    (or "Require approval of the most recent reviewable push").
+  - GitLab: remove all approvals when commits are added.
+- **A code-owner review covers every CI file.** A PR can edit the check's own workflow.
+  - GitHub: `.github/workflows/`, since any workflow can add a job named `closes a claimed issue`.
+  - GitLab: `.gitlab/`, `.gitlab-ci.yml` and every local file it includes.
+    A merge request pipeline reads them all, and a global `variables:` in one can change what the job reads.
+  - GitLab requires Premium for required code-owner approval. On Free, only a reviewer who reads CI changes holds it.
+- **Your plan offers these.**
+  - A private GitHub repository needs GitHub Pro, Team or Enterprise for protected branches, rulesets
+    and required code-owner reviews. On Free they cover public repositories only.
+  - GitLab required approvals and Code Owners need Premium.
+  - Without them, only the local layers hold.
+
 ## Branch protection
 
 The only layer that holds when a command edits, commits and pushes to the default branch in one go.
@@ -334,6 +362,7 @@ The only layer that holds when a command edits, commits and pushes to the defaul
   - GitHub: a rule on the default branch that requires a pull request and applies to administrators,
     plus the required check `closes a claimed issue`.
   - GitLab: the default branch protected with nobody allowed to push, and Pipelines must succeed.
+  - Both: [what the hard layers need](#what-the-hard-layers-need).
 
 ## PR check
 
@@ -346,7 +375,8 @@ So it is the one layer that holds for a cloud agent, or for any branch coddy did
 - **Stops:** a PR that closes no issue, or that closes one that is closed or has no assignee.
 - **Doesn't catch:**
   - A PR that edits the check's own workflow or CI file. GitHub runs the check from the PR itself, and GitLab from
-    the source branch. Require a code-owner review on `.github/workflows/` (GitLab: `.gitlab/` and `.gitlab-ci.yml`).
+    the source branch. A required code-owner review on every CI file holds it, see
+    [what the hard layers need](#what-the-hard-layers-need).
   - A PR on a project that never requires the check. It blocks a merge only once
     `closes a claimed issue` is a required check on the default branch (GitHub), or Pipelines must succeed is on
     with the default branch protected (GitLab). You set both by hand.

@@ -19,8 +19,9 @@ and to make its point in the plainest way.
 ## Non-goals
 
 - CLAUDE.md, ROADMAP.md (the ROADMAP half of #259 stays there), skills, scripts' behaviour.
-  Two CLAUDE.md fixes were folded in after review: the tripwire dodge list names a shell function,
-  and "both hold only when the lock and the caller name a session" now names the edit guard and `push`.
+  Three CLAUDE.md fixes were folded in after review: the tripwire dodge list names a shell function,
+  "both hold only when the lock and the caller name a session" now names the edit guard and `push`,
+  and the PR check's own-workflow ceiling is added.
 - New features or new claims.
 
 ## Anti-goals
