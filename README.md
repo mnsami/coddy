@@ -30,6 +30,8 @@ lives in its own worktree and lands through a pull request. The tracker holds th
 ⏺ #42 is In Progress in .worktrees/42. Run /coddy:ship when done.
 ```
 
+The edit in the main checkout is rejected. After `/coddy:start`, the same edit under `.worktrees/42/` goes through.
+
 ## Install
 
 ```bash
@@ -90,8 +92,7 @@ Run these inside your project. Each skill also starts from plain language ("star
 - `/coddy:refresh`: after a merge, updates the other claimed worktrees from the default branch.
 - `/coddy:triage`: turns findings into issues, skipping ones already open.
 
-In Progress is the `in progress` label on GitHub and GitLab, and the workflow status on Jira.
-It ends when `/coddy:ship` has the PR open: the label comes off, and Jira moves to In Review.
+In Progress is the `in progress` label (Jira: the workflow status). Opening the PR ends it (Jira: In Review).
 After a merge, the next `/coddy:next` or `/coddy:start` removes the issue's worktree, claim and local branch
 ([what each keeps, skips or moves](docs/enforcement.md#sweep-drop-and-refresh)).
 
@@ -172,7 +173,6 @@ review_rounds: 3             # optional; 1-5 (default 3)
 
 ## Related projects
 
-coddy guards one issue at a time. It is not a board or a factory.
 - [super-board](https://github.com/EricTechPro/super-board) drains a Projects board; a lane can run `/coddy:start`.
 - [Vibe Kanban](https://www.vibekanban.com/) and [CCPM](https://github.com/automazeio/ccpm) launch several agents.
   coddy launches none. It keeps Claude's Edit and Write tools and `/coddy:ship`'s push off another session's claimed
