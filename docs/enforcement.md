@@ -2,6 +2,26 @@
 
 This page says what each layer stops, what it lets through and where it falls short.
 The [README](../README.md) has the short version.
+
+```mermaid
+flowchart LR
+  subgraph L["On your machine: Claude Code hooks"]
+    e["Claude edits a file"] -->|edit guard| e2["only inside a claimed<br/>.worktrees/42/"]
+    s["Claude runs a shell command"]
+    s2["refuses a worktree elsewhere,<br/>a push to main, a force push"]
+    s -->|reads it first| s2
+    s -->|checks after| s3["reports changes to the main checkout,<br/>puts .coddy.yml back"]
+  end
+  subgraph G["In git: any agent, not jj"]
+    c["git commit, git push"] -->|git hooks| c2["refuse main and branches<br/>no claimed issue owns"]
+  end
+  subgraph R["On GitHub or GitLab: you set these"]
+    p["pull request"] -->|PR check| p2["must close an open,<br/>assigned issue"]
+    p2 -->|branch protection| m[("main")]
+  end
+```
+
+The diagram is the short form. Each layer's section has what it lets through and where it falls short.
 The last section, sweep, drop and refresh, is not a layer. It sits here because its ceilings have no better page.
 
 Each layer has the same rows. A row is left out when it does not apply.

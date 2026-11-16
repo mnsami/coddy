@@ -74,23 +74,46 @@ Run these inside your project. Each skill also starts from plain language ("star
 3. `/coddy:start <issue>`: claims the issue, gives it a worktree, then plans, implements and reviews it with you.
 4. `/coddy:ship`: runs `verify`, pushes and opens the PR. Merge it. The next `/coddy:next` or `/coddy:start` cleans up.
 
+```mermaid
+flowchart LR
+  A["/coddy:onboard<br/>writes .coddy.yml"] --> B["/coddy:next<br/>picks an issue"]
+  B --> S
+  subgraph S["/coddy:start 42, in .worktrees/42"]
+    direction LR
+    s1["claim it"] --> s2["plan:<br/>you approve"]
+    s2 --> s3["implement,<br/>harden twice"] --> s4["code and<br/>security review"]
+  end
+  S --> D["/coddy:ship<br/>verify, push"]
+  D --> E["PR that<br/>closes issue 42"]
+  E --> F(["you merge"])
+  F --> G[("main")]
+  g1{{"edit guard · tripwire · config lock"}} -. "Claude Code hooks:<br/>stop the common slips" .-> S
+  g2{{"git hooks · push check"}} -. "refuse main and<br/>unclaimed branches" .-> D
+  g3{{"PR check"}} -. "must close an open,<br/>assigned issue" .-> E
+  g4{{"branch protection"}} -. "main only<br/>through a PR" .-> F
+```
+
 ## Skills
-- `/coddy:onboard`: a seven-step wizard that saves your answers, so a run that stops resumes. It assumes one
-  remote, `origin`, which you can write to, and write or triage access to the tracker's repository.
-  Forks are not supported yet (#280). On your yes it writes the config and an `AGENTS.md` block.
-  On GitHub it also writes the PR check workflow. On GitLab it opens a merge request for it. Jira gets none.
-- `/coddy:config [key=value ...]` shows `.coddy.yml` or changes the keys you name.
-  `/coddy:migrate` brings it up to the current `version`, and moves `.claude/coddy.yml` to `.coddy.yml`.
-- `/coddy:next`: recommends the next issue, skipping ones in progress, assigned to others or claimed here.
-- `/coddy:start <issue> [onto <base-issue>]`: claims the issue, moves it to In Progress and makes `.worktrees/<issue>`.
-  After one plan approval it implements, hardens twice and reviews, until nothing at `review_block` or above
-  is left or `review_rounds` rounds have run. Then it hands what is left to you.
-  Rerun it to resume. `onto <base-issue>` starts from that issue's branch.
-- `/coddy:ship [issue]`: runs `verify`, commits tracked changes and only the untracked files you name,
-  pushes and opens the PR. Any other untracked file stops it. Under `onto` the PR targets the base issue's branch.
-- `/coddy:drop <issue>`: gives a claimed issue up and keeps its branch.
-- `/coddy:refresh`: after a merge, updates the other claimed worktrees from the default branch.
-- `/coddy:triage`: turns findings into issues, skipping ones already open.
+
+| Skill | What it does |
+|---|---|
+| `/coddy:onboard` | Wizard that writes `.coddy.yml`, the PR check and an `AGENTS.md` block. Run once. |
+| `/coddy:next` | Recommends the next issue, skipping ones in progress, assigned to others or claimed here. |
+| `/coddy:start <issue>` | Claims it, makes `.worktrees/<issue>`, plans with you, then implements and reviews. |
+| `/coddy:ship [issue]` | Runs `verify`, commits, pushes and opens the PR that closes the issue. |
+| `/coddy:drop <issue>` | Gives a claimed issue up and keeps its branch. |
+| `/coddy:refresh` | After a merge, updates the other claimed worktrees from the default branch. |
+| `/coddy:triage` | Turns findings into issues, skipping ones already open. |
+| `/coddy:config [key=value]` | Shows `.coddy.yml` or changes the keys you name. |
+| `/coddy:migrate` | Brings the config to the current `version`, moving `.claude/coddy.yml` to `.coddy.yml`. |
+
+- `/coddy:onboard` is a seven-step wizard that saves your answers, so a run that stops resumes. It assumes one
+  remote, `origin`, that you can write to, and write or triage access to the tracker's repository.
+  Forks are not supported yet (#280). On GitLab it opens a merge request for the check. Jira gets none.
+- `/coddy:start` reviews until nothing at `review_block` or above is left or `review_rounds` rounds have run,
+  then hands the rest to you. Rerun it to resume. `onto <base-issue>` starts from that issue's branch.
+- `/coddy:ship` commits tracked changes and only the untracked files you name. Any other untracked file stops it.
+  Under `onto` the PR targets the base issue's branch.
 
 In Progress is the `in progress` label (Jira: the workflow status). Opening the PR ends it (Jira: In Review).
 After a merge, the next `/coddy:next` or `/coddy:start` removes the issue's worktree, claim and local branch
