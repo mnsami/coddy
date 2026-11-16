@@ -300,6 +300,8 @@ They never run a `hermy` on `PATH`.
 In a project onboarded before the rename, `core.hooksPath` names `.git/hooks/coddy`.
 The next `/hermy:start` moves it to `.git/hooks/hermy/` and keeps the hook `coddy.previousHooksPath` recorded.
 It never runs the old hooks.
+Before the move it stops, writing nothing, on any file in `.git/hooks/coddy` the old hooks did not write,
+or a symlink in that directory's place, as it does for its own directory.
 
 - **Stops:** a commit on the default branch, or a push to it.
   A commit or push on a branch no claimed issue owns.

@@ -1440,6 +1440,18 @@ mkdir "$tmp/lgprev"; printf '#!/bin/sh\necho prev >> "%s"\n' "$tmp/lg.log" > "$t
   for h in pre-commit pre-push; do printf '#!/bin/sh\n# Written by coddy start: the hook from before the rename.\necho old >> "%s"; exit 1\n' "$tmp/lg.log" > .git/hooks/coddy/$h; chmod +x .git/hooks/coddy/$h; done &&
   git config core.hooksPath "$lg/.git/hooks/coddy" && git config coddy.previousHooksPath "$tmp/lgprev")
 lgr() { HERMY_ROOT="$lg" run "$@"; }
+# Moving core.hooksPath off .git/hooks/coddy holds that directory to the rule
+# hermy's own is held to, before anything is written: a hook another tool
+# installed among the old ones (git lfs install's post-merge), or a link in
+# its place, stops start.
+printf '#!/bin/sh\nexit 0\n' > "$lg/.git/hooks/coddy/post-merge"; chmod +x "$lg/.git/hooks/coddy/post-merge"
+t 1 "old name: start stops on a file in .git/hooks/coddy it did not write" lgr start 5 feat/5-old
+t 0 "old name: naming it and where it belongs" says "$lg/.git/hooks/coddy/post-merge is not a hook hermy start wrote before the rename.*Move it to $tmp/lgprev," lgr start 5 feat/5-old
+t 0 "old name: having written no hook and no config" sh -c '! test -e "$1/.git/hooks/hermy" && test "$(git -C "$1" config core.hooksPath)" = "$1/.git/hooks/coddy" && ! git -C "$1" config --local hermy.previousHooksPath' - "$lg"
+rm "$lg/.git/hooks/coddy/post-merge"; mv "$lg/.git/hooks/coddy" "$tmp/lgold"; ln -s "$tmp/lgold" "$lg/.git/hooks/coddy"
+t 1 "old name: start stops when .git/hooks/coddy is a symlink" lgr start 5 feat/5-old
+t 0 "old name: having written no hook" test ! -e "$lg/.git/hooks/hermy"
+rm "$lg/.git/hooks/coddy"; mv "$tmp/lgold" "$lg/.git/hooks/coddy"
 lgr start 5 feat/5-old >/dev/null 2>&1; lgr claim 5 >/dev/null 2>&1
 t 0 "old name: start points core.hooksPath at hermy's directory" test "$(git -C "$lg" config core.hooksPath)" = "$lg/.git/hooks/hermy"
 t 0 "old name: recording the hook before the old ones as hermy's" test "$(git -C "$lg" config --local hermy.previousHooksPath)" = "$tmp/lgprev"

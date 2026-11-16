@@ -1810,6 +1810,20 @@ verify() {
 hooks() {
   local q="'\''" c d e f g h k n p o m s new=""
   { [ -L .git/hooks ] || [ -L .git/hooks/hermy ]; } && die ".git/hooks or .git/hooks/hermy is a symlink: hermy writes its git hooks into .git/hooks/hermy, which a sandbox keeps out of an agent's reach. Replace the link with a directory (to keep hooks in the directory it links to, point core.hooksPath there instead), then run /hermy:start $issue again."
+  p=$(git config --local hermy.previousHooksPath) || p=$(git config --local coddy.previousHooksPath)
+  # Moving core.hooksPath off .git/hooks/coddy, hermy's from before the rename
+  # and git's hooks path until now, holds it to the rule its own directory is
+  # held to below, before anything is written: a tool that installs into git's
+  # hooks path may have put a hook there.
+  o=$(git config --type=path core.hooksPath)
+  case "$o" in */.git/hooks/coddy|*/.git/hooks/coddy/) ;; *) { [ -n "$o" ] && [ "$o" -ef .git/hooks/coddy ]; } || o= ;; esac
+  if [ -n "$o" ]; then
+    [ -L .git/hooks/coddy ] && die ".git/hooks/coddy, where core.hooksPath points, is a symlink: hermy moves its git hooks from there, its directory from before the rename, into .git/hooks/hermy only when it is a directory. Replace the link with a directory (to keep hooks in the directory it links to, point core.hooksPath there instead), then run /hermy:start $issue again."
+    for f in .git/hooks/coddy/*; do
+      { [ -e "$f" ] || [ -L "$f" ]; } || continue
+      { [ -f "$f" ] && [ ! -L "$f" ] && grep -q '^# Written by coddy start: ' "$f"; } || die "$PWD/$f is not a hook hermy start wrote before the rename: a tool that installs into git's hooks path put it there. Move it to ${p:-$PWD/.git/hooks}, where hermy runs it after its check, then run /hermy:start $issue again."
+    done
+  fi
   # the root by its physical path, the same for every run of start, sandboxed or not
   c=$exe k=$(pwd -P) || die "cannot find $root"
   [ -d .git/hooks/hermy ] || { e=$(mkdir -p .git/hooks/hermy 2>&1) || nowrite "could not make .git/hooks/hermy" "$e"; }
@@ -1824,7 +1838,6 @@ hooks() {
   # This directory by any spelling of the root, and absolute: git resolves a
   # relative core.hooksPath per worktree.
   ours() { case "$1" in /*) [ "$1" -ef "$d" ] ;; *) return 1 ;; esac; }
-  p=$(git config --local hermy.previousHooksPath) || p=$(git config --local coddy.previousHooksPath)
   if ! ours "$(git config core.hooksPath)"; then
     new=1 o=$(git config --type=path core.hooksPath)
     # this directory by another spelling is not a hook to hand off to, and

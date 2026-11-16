@@ -163,29 +163,38 @@ for f in "$here"/skills/*/SKILL.md; do t 0 "skill $(basename "$(dirname "$f")") 
 t 1 "no skill carries the injection syntax inside a line, which Claude Code would run" grep -qE '.!`' "$here"/skills/*/SKILL.md
 t 0 "onboard names the AGENTS.md begin marker" grep -qF '<!-- hermy:begin -->' "$here/skills/onboard/SKILL.md"
 t 0 "onboard names the AGENTS.md end marker" grep -qF '<!-- hermy:end -->' "$here/skills/onboard/SKILL.md"
-# The name from before the rename (#463): no path in the tree holds it, nor any
-# line once the spellings hermy still reads for a project onboarded before it,
-# and the names outside this repository it keeps, are removed: the design
-# doc's list (docs/superpowers/specs/2026-11-16-hermy-rename-design.md),
-# matched in any case. Binary files are skipped. The pattern is written as a
-# class, so no line here holds the name.
+# The name from before the rename (#463): no tracked path holds it, nor any
+# line of a tracked file once the spellings hermy still reads for a project
+# onboarded before it, and the names outside this repository it keeps, are
+# removed: the design doc's list
+# (docs/superpowers/specs/2026-11-16-hermy-rename-design.md), matched in any
+# case. Tracked files alone, git's in a checkout with a .git, jj's in a jj
+# workspace, so no untracked or ignored file, nor another worktree under
+# .worktrees/, is read; a listing that fails or is empty fails the check.
+# Binary files are skipped. The pattern is written as a class, so no line
+# here holds the name.
 oldok='.coddy.yml|.claude/coddy.yml|.git/coddy|.git/hooks/coddy|coddy.previousHooksPath|Written by coddy start|coddy:plan|coddy:questions|coddy:begin|coddy:end|workflows/coddy.yml|mnsami/coddy|coddy-spike|coddy-probe|formerly coddy|Coddy Agent|Coddy, Inc.'
 oldname() (
   cd "$1" || exit 2 # paths below it alone: the checkout's own may hold the name
-  find . \( -name .git -o -name .jj \) -prune -o -print | grep -i 'c[o]ddy' && exit 0
-  find . \( -name .git -o -name .jj \) -prune -o -type f -print0 | xargs -0 grep -IiH 'c[o]ddy' 2>/dev/null | awk -v ok="$oldok" '
+  if [ -e .git ]; then git ls-files -z; elif [ -d .jj ]; then jj file list -T 'path ++ "\0"'; else exit 2; fi > "$tmp/tracked" && [ -s "$tmp/tracked" ] || exit 2
+  tr '\0' '\n' < "$tmp/tracked" | grep -i 'c[o]ddy' && exit 0
+  xargs -0 grep -IiH 'c[o]ddy' < "$tmp/tracked" 2>/dev/null | awk -v ok="$oldok" '
     { l = tolower($0); sub(/^[^:]*:/, "", l); n = split(tolower(ok), a, "|")
       for (i = 1; i <= n; i++) while ((p = index(l, a[i])) > 0) l = substr(l, 1, p - 1) substr(l, p + length(a[i]))
       if (index(l, "c" "oddy")) { print; f = 1 } } END { exit !f }'
 )
 t 1 "no path or line in the tree holds the name from before the rename" oldname "$here"
-mkdir "$tmp/old"; printf 'see .coddy.yml and mnsami/coddy\n' > "$tmp/old/ok.md"
+git init -q "$tmp/old"; printf 'see .coddy.yml and mnsami/coddy\n' > "$tmp/old/ok.md"; git -C "$tmp/old" add ok.md
 t 1 "the old-name check passes the spellings it allows" oldname "$tmp/old"
+mkdir "$tmp/old/.worktrees"; printf 'run %s\n' "$(printf 'c%sddy' o)" > "$tmp/old/.worktrees/$(printf 'c%sddy' o).md"
+t 1 "and reads no untracked file, by path or by line" oldname "$tmp/old"
 printf 'run %s\n' "$(printf 'c%sddy' o)" >> "$tmp/old/ok.md"
-t 0 "and finds a line with any other" oldname "$tmp/old"
-rm "$tmp/old/ok.md"; : > "$tmp/old/$(printf 'C%sDDY' O).txt"
-t 0 "and a path holding it in any case" oldname "$tmp/old"
-rm -r "$tmp/old"
+t 0 "and finds a line with any other in a tracked file" oldname "$tmp/old"
+git -C "$tmp/old" rm -qf ok.md; : > "$tmp/old/$(printf 'C%sDDY' O).txt"; git -C "$tmp/old" add "$(printf 'C%sDDY' O).txt"
+t 0 "and a tracked path holding it in any case" oldname "$tmp/old"
+git -C "$tmp/old" rm -qf "$(printf 'C%sDDY' O).txt"
+t 2 "and fails where nothing is tracked" oldname "$tmp/old"
+rm -rf "$tmp/old"
 # onboard is a resumable wizard: the agenda in order, answers saved under the
 # agent dir, a stop on native Windows and on an existing config that names
 # /hermy:config, and no install command for gh (the PR check runs it inside
