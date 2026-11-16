@@ -31,11 +31,11 @@ wire() { printf '{"tool_use_id":"%s"}' "$2" | run "$1"; }
 # tripped <expected exit> <name> <shell snippet run in the main checkout>
 tripped() { wire snap w; (cd "$repo" && eval "$3") >/dev/null 2>&1; t "$1" "$2" wire trip w; }
 # shell <command> [dir]: snap before a Bash command run in dir (the main
-# checkout unless named), as Claude Code calls it; noted <text> <command>:
-# snap lets it through and hands Claude a message holding that text
+# checkout unless named), as Claude Code calls it; silent <command> [dir]:
+# snap lets it through, saying nothing
 payload() { jq -cn --arg c "$1" --arg d "${2-$repo}" '{tool_use_id: "sh", cwd: $d, tool_input: {command: $c}}'; }
 shell() { payload "$@" | run snap; }
-noted() { out=$(shell "$2") && printf %s "$out" | jq -e --arg s "$1" '.hookSpecificOutput | .hookEventName == "PreToolUse" and (.additionalContext | contains($s))'; }
+silent() { out=$(shell "$@") && [ -z "$out" ]; }
 # cmdline: trip's last message holds a removal command to paste
 cmdline() { grep -qE "git worktree remove '|jj workspace forget -- '" "$tmp/trip.err"; }
 
@@ -182,8 +182,6 @@ for v in 'exclude answers' 'exclude config' 'forget answers'; do t 0 "onboard pr
 for p in brew apt-get dnf winget; do t 0 "onboard names a jq install command for $p" grep -qE "$p"' install (-y )?(jq|jqlang\.jq)( |$|`)' "$here/skills/onboard/SKILL.md"; done
 t 0 "guard allows everything before onboarding" guard "$repo/README.md"
 t 0 "sweep is a quiet no-op before onboarding" run sweep
-t 0 "snap lets a git worktree add outside through before onboarding" shell 'git worktree add ../x'
-t 0 "snap lets a push to the default branch through before onboarding" shell 'git push --force origin main'
 
 leg() {
   tool=$1 n=$2
@@ -975,7 +973,8 @@ for b in "" "$tmp/sysbash:"; do
   for e in SHELLOPTS=noexec BASHOPTS=failglob FUNCNEST=1 POSIXLY_CORRECT=1 POSIX_PEDANTIC=1 GREP_OPTIONS=-V TMOUT=0.000001 "BASH_ENV=$tmp/exit0" 'BASH_FUNC_jq%%=() { printf /tmp/elsewhere; }'; do
     w="$e${b:+ under /bin/bash}"
     t 2 "hooks: $w leaves guard on" hook guard "{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/README.md\"}}" "$e" PATH="$b$PATH"
-    t 2 "hooks: $w leaves snap on" hook snap "$(payload 'git worktree add ../x')" "$e" PATH="$b$PATH"
+    # snap refuses every command while HOME lies in the project (home: below).
+    t 2 "hooks: $w leaves snap on" hook snap "$(payload true)" "$e" HOME="$repo" PATH="$b$PATH"
     # trip exits 2 under an imported jq with -p or without: the snapshot id
     # it reads changes, so it reports the snapshot lost.
     case $e in BASH_FUNC_*) continue ;; esac
@@ -1166,10 +1165,6 @@ t 0 "warn: guard says nothing about .claude/" test -z "$(guard "$repo/.claude/co
 tripped 2 "warn: the tripwire still trips" 'echo x > stray.txt'; rm -f stray.txt
 tripped 2 "warn: the config lock still holds" 'rm .claude/coddy.yml'
 t 0 "warn: the config came back as it was" grep -qx 'guard: warn' .claude/coddy.yml
-t 0 "warn: a git worktree add outside .worktrees/ is let through with the message" noted '/coddy:start <issue>' 'git worktree add ../x'
-t 0 "warn: a push to the default branch is let through with the message" noted 'the default branch' 'git push origin main'
-t 0 "warn: a force push is let through with the message" noted 'force-push' 'git push -f origin feat'
-t 0 "warn: a branch delete is let through with the message" noted 'delete a remote branch' 'git push origin :feat'
 # A jq that fails, or a payload naming no path, leaves the path unread:
 # blocked, in warn mode too. raw <payload>: the edit hook with it as it is;
 # saying <text> <command...>: the command's exit when its output holds the
@@ -1483,242 +1478,19 @@ tripped 0 "tripwire: quiet on the switch back to a default branch with local com
 git branch -q -D side
 tripped 2 "tripwire: local commit that was pushed to another branch" 'git commit -q --no-verify --allow-empty -m oops2 && git push -q --no-verify origin HEAD:refs/heads/elsewhere'
 
-# A git worktree add or jj workspace add that would make a worktree outside
-# .worktrees/<id>/ and .claude/worktrees/<name>/ is refused before it runs,
-# read from the command's text, however it is written.
-for g in 'git worktree add' 'jj workspace add'; do
-  t 2 "$g: outside the project is refused" shell "$g ../x"
-  t 0 "$g: that refusal names /coddy:start" says '/coddy:start <issue>' shell "$g ../x"
-  t 2 "$g: in the main checkout is refused" shell "$g x"
-  t 0 "$g: inside .worktrees/<id>/ passes" shell "$g .worktrees/77"
-  t 0 "$g: inside .claude/worktrees/<name>/ passes" shell "$g .claude/worktrees/x"
-  t 2 "$g: resolved against the command's directory" shell "$g x" "$tmp"
-  t 0 "$g: from a subdirectory, into .worktrees/, passes" shell "$g ../.worktrees/77" "$repo/.claude"
-  t 2 "$g: after a cd is refused" shell "cd .worktrees && $g ../../x"
-  t 0 "$g: after a cd into .worktrees/ passes" shell "cd .worktrees && $g 77"
-  t 2 "$g: in any segment of a compound command is refused" shell "echo a | grep a; true && $g /tmp/x"
-  t 2 "$g: behind env prefixes is refused" shell "A=1 env B=2 command $g ../x"
-  t 0 "$g: quoted as text passes" shell "echo '$g ../x'"
-  t 0 "$g: in a heredoc body passes" shell $'cat <<EOF >/dev/null\n'"$g"$' ../x\nEOF'
-done
-t 2 "git worktree add: an option's value is not the path" shell 'git worktree add -b .worktrees/77 ../x'
-t 0 "git worktree add: the path after the option's value is read" shell 'git worktree add -fb ../x .worktrees/77 main 2>/dev/null'
-t 2 "git worktree add: after -- is refused" shell 'git worktree add --lock --reason "r s" -- ../x'
-t 2 "git -C: the path resolves against its directory" shell 'git -c a=b -C .worktrees worktree add ../../x'
-t 0 "git -C: into .claude/worktrees/ passes" shell 'git -C .claude worktree add worktrees/x'
-t 2 "jj -R, --name and -r: refused outside" shell 'jj -R . workspace add --name x -r @ ../x'
-t 0 "jj --name and -r: inside passes" shell 'jj workspace add --name x -r@- .worktrees/77'
-t 0 "a cd in a subshell ends at its parenthesis" shell '(cd /tmp && true); git worktree add .worktrees/77'
-t 2 "git --attr-source: its value is not the subcommand" shell 'git --attr-source HEAD worktree add ../x'
-t 2 "a git worktree add in a quoted \$( is refused" shell 'echo "a $(git worktree add ../x) b"'
-# An unquoted $( or backtick command word may expand to nothing, which bash
-# drops: the word after it is read as the command too.
-for c in '$(true) git worktree add ../x' 'env $(true) git worktree add ../x' '$(cd /tmp) git worktree add ../x' '`true` $(true) git worktree add ../x'; do
-  t 2 "refused after a command word that may expand to nothing: $c" shell "$c"
-done
-t 0 "after one, a command word it cannot read passes with a message" noted 'could not tell where' '$(true) $g worktree add ../x'
-# So may the unquoted substitutions a command name starts with: the name is
-# read past them, and one it cannot read after them passes with a message.
-for c in '$(true)git worktree add ../x' '$(true)$(true)git worktree add ../x' '`true`git worktree add ../x' '$(true)env git worktree add ../x'; do
-  t 2 "refused, a command name after substitutions it starts with: $c" shell "$c"
-done
-t 0 "after them, a name it cannot read passes with a message" noted 'could not tell where' '$(true)${g}git worktree add ../x'
-# A cd past one, or past the substitutions a name starts with, may be an
-# argument of the command they print: the directory is unknown after it.
-for c in '`echo true` cd .worktrees/43; git worktree add ../x' '`echo :`cd .worktrees/43; git worktree add ../x'; do
-  t 0 "after a cd past a substitution, passes with a message: $c" noted 'could not tell where' "$c"
-done
-# case is read as any other word, its ( and ) as anywhere else, so the
-# worktree add in or after each is read.
-for c in 'echo "$(( 1 && case + in ))"; git worktree add ../x; echo ""' '[[ x && case == in ]]; (cd .worktrees/43); git worktree add ../x' \
-  'echo "$(case esac in (esac) git worktree add ../x;; esac)"'; do
-  t 2 "refused, around a case: $c" shell "$c"
-done
-# A backtick substitution ends at the first backtick no backslash escapes,
-# whatever quotes it crosses; one in single quotes is text.
-for c in 'git worktree add ../x `true "`' "git worktree add ../x \`true '\`"; do t 2 "refused, before a backtick holding an odd quote: $c" shell "$c"; done
-t 0 "a backtick in single quotes is text" shell "echo '\`git worktree add ../x\`'"
-# A substitution still open at the end of the text is read with the words
-# around it.
-for c in 'git worktree add ../x $(true' 'git worktree add ../x "$(true' 'git worktree add ../x $(echo $(true'; do t 2 "refused, before a substitution left open: $c" shell "$c"; done
-# A commit message from a heredoc in a quoted $( is text, odd quotes and all.
-t 0 "a heredoc in a quoted \$( is not read as commands" shell "git commit -m \"\$(cat <<'EOF'
-an odd \"quote
-git worktree add ../x
-EOF
-)\""
-t 0 "after a popd the directory is unknown: passes with a message" noted 'could not tell where' 'pushd /tmp && popd && git worktree add .worktrees/77'
-t 0 "coddy's own start passes" shell "bash '$here/scripts/issue.sh' create 77 feat/77-worktree"
-# A path the text cannot fix, or no jq, passes and says so.
-for c in 'p=../x; git worktree add "$p"' 'git worktree add `echo ../x`' 'git worktree add ../x*' 'cd "$d" && jj workspace add x'; do
-  t 0 "unresolved, passes with a message: $c" noted 'could not tell where' "$c"
-done
-t 0 "a path that spans lines passes with a message, no line of it read as a push's" noted 'could not tell where' $'git worktree add ".worktrees/77/a\n:to /../../../x"'
-# A command that ends in a two-character redirection is read and let through
-# at once. prompt <command...>: it ends within five seconds; one that does
-# not is killed, with every process it started.
-prompt() { ( set -m; "$@" >/dev/null 2>&1 & p=$!; for _ in $(seq 50); do kill -0 "$p" 2>/dev/null || exit 0; sleep 0.1; done; kill -9 -- -"$p"; exit 1 ); }
-for c in 'echo x >>' 'cat <<' 'ls 2>&' 'ls &>'; do t 0 "a command ending in its redirection is read promptly: $c" prompt shell "$c" "$repo/.worktrees/43"; done
-# Reading time is linear in the text. timed <command...>: its own exit,
-# when it ends within five seconds; 124 when it is killed.
-timed() { ( set -m; "$@" >/dev/null 2>&1 & p=$!; for _ in $(seq 50); do kill -0 "$p" 2>/dev/null || { wait "$p"; exit; }; sleep 0.1; done; kill -9 -- -"$p"; exit 124 ); }
-big=$(awk 'BEGIN { for (i = 0; i < 8000; i++) printf "$(a) "; printf "; git worktree add ../x" }')
-t 2 "a 40 KB command of substitutions is read in time, the worktree add after it refused" timed shell "$big"
-big=$(awk 'BEGIN { for (i = 0; i < 1600; i++) print "bash <<E" i; for (i = 1599; i >= 0; i--) print "E" i; printf "git worktree add ../x" }')
-t 2 "1600 heredocs fed to shells one inside another are read in time, the worktree add after them refused" timed shell "$big"
-big=$(awk 'BEGIN { for (i = 0; i < 6000; i++) print "bash <<E"; printf "git worktree add ../x" }')
-t 2 "6000 of them, one word for all, are read in time, the worktree add in the innermost refused" timed shell "$big"
-nojq() { payload "$1" | PATH="$tmp/nojq" run snap; }
-t 0 "without jq: a git worktree add passes" nojq 'git worktree add ../x'
-t 0 "without jq: and says so" says 'jq is missing' nojq 'git worktree add ../x'
-# A push to the default branch, a force push or a remote branch's delete is
-# refused before it runs, read from the command's text as the worktree add
-# is; the main checkout is on main, .worktrees/43 on feat/43-thing.
-silent() { out=$(shell "$@") && [ -z "$out" ]; } # snap lets it through, saying nothing
-w43="$repo/.worktrees/43"
-for c in 'git push origin main' 'git push upstream main' 'git push origin +main' 'git push origin HEAD:main' 'git push origin feat:refs/heads/main' 'git push origin feat:heads/main' \
-  'git push' 'git push origin' 'git push origin HEAD' 'git push origin @' 'git push --all origin' 'git push --mirror origin' 'git push --branches origin' \
-  'git push origin :' 'git push --repo=origin upstream' 'git -C .worktrees/43 push origin main' 'A=1 env git push origin main' 'echo a && git push -q --verbose origin main'; do
-  t 2 "push: refused, the default branch: $c" shell "$c"
-done
-for c in "cd '$repo' && git push origin main" "cd '$repo' && git push" "git -C '$repo' push origin HEAD"; do t 2 "push: refused from elsewhere: $c" shell "$c" "$tmp"; done
-t 0 "push: that refusal names /coddy:ship" says '/coddy:ship' shell 'git push origin main'
-for c in 'git push -f origin feat/43-thing' 'git push -uf origin feat/43-thing' 'git push --force origin feat/43-thing' 'git push --force-with-lease origin feat/43-thing' \
-  'git push --force-with-lease=feat/43-thing:abc origin feat/43-thing' 'git push origin +feat/43-thing' 'git push origin --force' 'git push --force-w origin x'; do
-  t 2 "push: refused on the issue's own branch, a force push: $c" shell "$c" "$w43"
-done
-t 0 "push: that refusal says it rewrites the remote's history" says 'force-push' shell 'git push -f origin feat/43-thing' "$w43"
-for c in 'git push -d origin feat' 'git push origin --delete feat' 'git push --de origin feat' 'git push origin :feat' 'git push --prune origin'; do t 2 "push: refused, a branch delete: $c" shell "$c" "$w43"; done
-t 0 "push: that refusal says it deletes a remote branch" says 'delete a remote branch' shell 'git push origin :feat' "$w43"
-for c in 'jj git push -b main' 'jj git push --bookmark=main' 'jj git push -b exact:main' 'jj git push --named main=@' 'jj git push --named=main=@' \
-  'jj git push -b=main' 'jj git push -bmain' 'jj git push --all' 'jj git push --tracked' 'jj git push --deleted' 'jj --no-pager git push --remote origin -b feat/x -b main'; do
-  t 2 "push: refused, jj: $c" shell "$c"
-done
-for c in 'git push -u origin feat' 'git push origin main:feat' 'git push origin --tags' 'git push -o ci.skip origin feat' 'git push origin -o main feat' \
-  'git push origin refs/tags/main' 'echo "git push --force origin main"' \
-  "bash '$here/scripts/issue.sh' push 77" 'jj git push -c @' 'jj git push -b feat/x' 'jj git push --remote main -b feat/x' 'git pushx origin main'; do
-  t 0 "push: passes, saying nothing: $c" silent "$c"
-done
-t 0 "push: in a heredoc body passes, saying nothing" silent $'cat <<EOF >/dev/null\ngit push --force origin main\nEOF'
-for c in 'git push' 'git push origin HEAD' 'git push --repo=origin feat' 'git push --repo origin feat'; do t 0 "push: passes on the issue's branch, saying nothing: $c" silent "$c" "$w43"; done
-t 0 "push: a bare push outside any repository passes, saying nothing" silent 'git push' "$tmp"
-for c in 'git push origin "$b"' 'cd "$d" && git push' 'git push origin HEAD:`b`' 'jj git push' 'jj git push -r @' 'jj git push -b "glob:ma*"' 'jj git push -b substring:ma'; do
-  t 0 "push: unresolved, passes with a message: $c" noted 'could not tell which branch' "$c"
-done
-for c in "git push origin 'refs/heads/*'" "git push origin 'refs/*:refs/*'" "git push origin '*:*'" 'GIT push origin main' 'JJ git push -b main'; do t 2 "push: refused, the default branch: $c" shell "$c"; done
-t 0 "push: a pattern that cannot reach the default branch passes, saying nothing" silent "git push origin 'refs/heads/feat/*'"
-t 0 "push: after a cd into no directory, which leaves the shell where it was, passes with a message" noted 'could not tell which branch' "cd '$w43/nope'; git push"
-# HEAD is read as git reads it, from the repository git finds: a .git that is
-# neither a gitdir: file nor a repository is walked past.
-hd="$tmp/heads"; mkdir -p "$hd/.git/objects" "$hd/.git/refs" "$hd/empty/.git" "$hd/fifo" "$hd/file"
-mkfifo "$hd/fifo/.git"; printf 'gitdir: %s\r\n' "$hd/.git" > "$hd/file/.git"
-for h in 'ref:refs/heads/main\n' 'ref: \t refs/heads/main \t\r\n'; do
-  printf "$h" > "$hd/.git/HEAD"
-  for d in "" /empty /fifo /file; do t 2 "push: refused, HEAD $h read from ${d:-its checkout}" shell 'git push' "$hd$d"; done
-done
-printf 'ref: refs/heads/.invalid\n' > "$hd/.git/HEAD"
-t 0 "push: a reftable repository's HEAD stub passes with a message" noted 'could not tell which branch' "cd '$hd' && git push"
-rm "$hd/.git/HEAD"; ln -s refs/heads/main "$hd/.git/HEAD"
-t 2 "push: refused, a HEAD that is a link to refs/heads/main" shell 'git push' "$hd/empty"
-# A directory reached through a link to a name ending in a newline keeps it,
-# so the sibling without it is never read: unresolved, never another's HEAD.
-nw="$tmp/nlw"; for b in main feat; do r="$nw/r"; [ $b = feat ] || r="$r"$'\n'; mkdir -p "$r/objects" "$r/refs"; echo "ref: refs/heads/$b" > "$r/HEAD"; done; ln -s r$'\n' "$nw/l"
-for c in "cd '$nw/l' && git push origin HEAD" "git --git-dir='$nw/l' push origin HEAD"; do t 0 "push: through a link to a repository named with a trailing newline, passes with a message: $c" noted 'could not tell which branch' "$c"; done
-t 0 "without jq: a push passes" nojq 'git push origin main'
-t 0 "without jq: and says so" says 'jq is missing' nojq 'git push origin main'
-badjq() { payload "$1" | PATH="$tmp/badjq:$PATH" run snap; }
-t 0 "with a jq that fails: a push passes" badjq 'git push origin main'
-t 0 "with a jq that fails: and says so" says 'jq is missing or failed' badjq 'git push origin main'
-# A jq that runs but cannot read the payload is no missing jq: the agent
-# writes the payload, and a lone surrogate in any field (jq rejects one)
-# would let every push through. Refused, and warned of in warn mode.
-unread() { printf '{"tool_use_id":"sh","cwd":"%s","tool_input":{"command":"git push origin main","description":"x\\ud800"}}' "$repo" | run snap; }
-unwarned() { out=$(unread) && printf %s "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and (.additionalContext | contains("could not read the hook payload with jq"))'; }
-cp .claude/coddy.yml "$tmp/conf.yml"
-printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml
-t 2 "a payload jq cannot read: a push to the default branch is refused" saying 'could not read the hook payload with jq' unread
+# snap reads no command's text: a push to the default branch passes it,
+# saying nothing, for the pre-push hook and branch protection to refuse.
+t 0 "push: git push origin main passes snap, saying nothing" silent 'git push origin main'
 # jq loads ~/.jq into every program; the hooks run it with HOME=/dev/null,
-# so a broken one leaves both hooks reading the payload as before.
+# so a broken one leaves the guard reading the payload as before.
 mkdir "$tmp/badhome"; printf 'def x: ;\n' > "$tmp/badhome/.jq"
-badhome() { payload "$1" | HOME="$tmp/badhome" run snap; }
-t 2 "a broken ~/.jq: a push to the default branch is still refused" saying '/coddy:ship' badhome 'git push origin main'
 HOME="$tmp/badhome" t 2 "a broken ~/.jq: guard still refuses the main checkout" saying 'not the main checkout' guard "$repo/README.md"
-printf 'tracker: github\ndefault_branch: main\nguard: warn\n' > .claude/coddy.yml
-t 0 "warn: a payload jq cannot read: a push is let through with the message" unwarned
-cp "$tmp/conf.yml" .claude/coddy.yml
-# A push that pushes nothing (help, a dry run) passes, force and all; tag
-# names a tag.
-for c in 'git push --help' 'git push -h' 'git --help push' 'git --version push origin main' 'git -v push origin main' 'git -C . --version push' \
-  'git push --dry-run origin main' 'git push -n --force origin main' 'git push --dr -f --all' 'jj git push --dry-run -b main' 'git push origin tag main'; do
-  t 0 "push: pushes nothing to the default branch, saying nothing: $c" silent "$c"
-done
-t 2 "push: refused, the default branch after a tag: git push origin tag v1 main" shell 'git push origin tag v1 main'
-# A later --no- form undoes an option, as git reads them in order.
-for c in 'git push --dry-run --no-dry-run origin feat:main' 'git push -n --no-dr origin main' 'git push --tags --no-tags origin' \
-  'git send-pack --dry-run --no-dry-run ../origin.git feat:main'; do t 2 "push: refused, a dry run or --tags undone: $c" shell "$c"; done
-for c in 'git push --force-with-lease --no-force origin feat/43-thing' 'git push -f --no-force-with-lease origin feat/43-thing'; do t 2 "push: refused, a force the other --no- form leaves: $c" shell "$c" "$w43"; done
-t 0 "push: a lease --no-force-with-lease cancels passes, saying nothing" silent 'git push --force-with-lease --no-force-with-lease origin feat/43-thing' "$w43"
-# A $( or backtick substitution is one word its text cannot fix, its own
-# commands read too, and the words after it stay in the command.
-t 2 "push: refused, the default branch after a substitution" shell 'git push "$(git remote)" main' "$w43"
-t 0 "push: a branch after a substitution passes, saying nothing" silent 'git push "$(git remote)" feat'
-for c in 'git -C "$(git rev-parse --show-toplevel)" push --force origin feat' 'x=`git push --force origin feat`'; do t 2 "push: refused, a force push: $c" shell "$c"; done
-t 2 "push: refused, in a backtick" shell 'echo `git push origin main`'
-for c in 'git push $ARGS' 'echo main | xargs git push origin'; do t 0 "push: unresolved, passes with a message: $c" noted 'could not tell which branch' "$c"; done
-t 2 "push: refused, a force push after a command word that may expand to nothing" shell '$(true) git push --force origin main'
-t 0 "push: after one, a command word it cannot read passes with a message" noted 'could not tell which branch' '$(true) $g push --force origin main'
-t 2 "push: refused, a force push by a name after a substitution it starts with" shell '$(true)git push --force origin main'
-t 2 "push: refused, after a case in a [[ in a substitution" shell 'echo "$([[ (case == in) ]])"; git push origin main; echo ""'
-t 0 "push: after a cd past a substitution, passes with a message" noted 'could not tell which branch' '`echo true` cd .worktrees/43 && git push'
-t 2 "push: refused, before a backtick holding an odd quote" shell 'git push origin main `true "`'
-t 2 "push: refused, before a substitution left open" shell 'git push origin main $(true'
-big=$(awk 'BEGIN { for (i = 0; i < 1600; i++) print "bash <<E" i; print "git push origin main"; for (i = 1599; i >= 0; i--) print "E" i }')
-t 2 "push: refused in time, in the innermost of 1600 heredocs fed to shells" timed shell "$big"
-# Wrappers, git options that take a value, a dashed builtin by path, a
-# heredoc fed to a shell: the push in each is read.
-for c in 'git --shallow-file x push origin main' 'timeout 120 git push origin main' 'nice git push origin main' 'nice -n 5 git push origin main' \
-  'xargs git push origin main' 'env -u X git push origin main' 'exec -a NAME git push origin main' 'exec -cla NAME git push origin main' \
-  '/usr/libexec/git-core/git-push origin main' '"$(git --exec-path)"/git-push origin main' \
-  $'bash <<EOF\ngit push origin main\nEOF' $'sh <<\'EOF\'\ngit push origin main\nEOF' $'zsh -s <<EOF\ngit push origin main\nEOF' \
-  $'dash <<-EOF\n\tgit push origin main\n\tEOF' $'ksh -e <<EOF\ngit push origin main\nEOF'; do
-  t 2 "push: refused, the default branch: $c" shell "$c"
-done
-for c in 'git-lfs fetch --all' 'git-filter-repo --force --path src'; do t 0 "push: another dashed git tool passes, saying nothing: $c" silent "$c" "$w43"; done
-for c in 'git-crypt unlock' 'git-cliff -o CHANGELOG.md && git push origin feat'; do t 0 "push: another dashed git tool passes, saying nothing: $c" silent "$c"; done
-t 2 "push: refused, a force push behind timeout's options" shell 'timeout -s KILL 5m git push -f origin feat'
-t 2 "push: refused, env -C into the main checkout" shell "env -C '$repo' git push" "$w43"
-t 2 "push: refused, a heredoc fed to a shell after a cd" shell "$(printf "cd '%s' && bash <<EOF\ngit push\nEOF" "$repo")" "$w43"
-t 0 "push: a cd in a heredoc fed to a shell stays there" silent "$(printf "bash <<EOF\ncd '%s'\nEOF\ngit push" "$repo")" "$w43"
-t 0 "push: a heredoc fed to bash -c is text" silent $'bash -c true <<EOF\ngit push origin main\nEOF'
-# The command's own -c config: help.autocorrect runs a typo, a bare push
-# follows remote.<name>.push and push.default=matching.
-t 2 "push: refused, a typo of push under help.autocorrect" shell 'git -c help.autocorrect=immediate psuh origin main'
-t 0 "push: a typo without it passes, saying nothing" silent 'git psuh origin main'
-for c in 'git -c remote.origin.push=HEAD:main push' 'git -c remote.origin.push=HEAD:main push origin' 'git -c push.default=matching push'; do t 2 "push: refused on the issue's branch, by its -c: $c" shell "$c" "$w43"; done
-t 0 "push: another remote's push refspec does not count" silent 'git -c remote.up.push=HEAD:main push origin' "$w43"
-# A git dir named by --git-dir or GIT_DIR is read for HEAD, not the
-# command's directory; one that is no repository passes with a message.
-for c in "git --git-dir='$repo/.git' push" "git --git-dir '$repo/.git' push" "GIT_DIR='$repo/.git' git push" "env GIT_DIR='$repo/.git' git push"; do t 2 "push: refused, HEAD read from the git dir named: $c" shell "$c" "$w43"; done
-t 0 "push: a git dir that is no repository passes with a message" noted 'could not tell which branch' "git --git-dir='$tmp/nope' push"
-# git's discovery: a bare repository with no .git above it, and a .git
-# whose objects and refs come through its commondir.
-bare="$tmp/bare"; mkdir -p "$bare/objects" "$bare/refs"; printf 'ref: refs/heads/main\n' > "$bare/HEAD"
-t 2 "push: refused, HEAD read from a bare repository" shell "git -C '$bare' push origin HEAD" "$tmp"
-# a HEAD git accepts with whitespace after ref: is read whole, not cut at 255 characters
-for n in 237 240 246; do printf 'ref:%*srefs/heads/main\n' "$n" '' > "$bare/HEAD"; t 2 "push: refused, HEAD padded with $n blanks" shell "git -C '$bare' push origin HEAD" "$tmp"; t 2 "push: and by --git-dir, $n blanks" shell "git --git-dir='$bare' push origin HEAD" "$tmp"; done
-printf 'ref: refs/heads/main\n' > "$bare/HEAD"
-cm="$tmp/cm"; mkdir -p "$cm/.git/objects" "$cm/.git/refs" "$cm/sub/.git"; printf 'ref: refs/heads/feat\n' > "$cm/.git/HEAD"
-printf 'ref: refs/heads/main\n' > "$cm/sub/.git/HEAD"; printf '../../.git\r\n' > "$cm/sub/.git/commondir"
-t 0 "push: the enclosing repository's branch passes, saying nothing" silent 'git push origin HEAD' "$cm"
-t 2 "push: refused, HEAD read from a .git whose commondir names the repository" shell 'cd sub && git push origin HEAD' "$cm"
-mkfifo "$cm/sub/.git/fifo"; rm "$cm/sub/.git/commondir"; ln -s fifo "$cm/sub/.git/commondir"
-t 0 "push: a commondir that is a FIFO is never read" prompt shell 'cd sub && git push origin HEAD' "$cm"
-# git send-pack pushes, past the pre-push hook: matching with no refspec.
-for c in 'git send-pack ../origin.git feat:main' 'git send-pack ../origin.git' 'git send-pack --all ../origin.git' 'git-send-pack ../origin.git feat:main'; do t 2 "push: refused, send-pack to the default branch: $c" shell "$c"; done
-t 2 "push: refused, send-pack --force" shell 'git send-pack --force ../origin.git feat'
-t 2 "push: refused, send-pack --mirror" shell 'git send-pack --mirror ../origin.git'
-t 0 "push: send-pack of a branch passes, saying nothing" silent 'git send-pack ../origin.git feat'
-t 0 "push: send-pack --stdin passes with a message" noted 'could not tell which branch' 'git send-pack --stdin ../origin.git feat'
+# prompt <command...>: it ends within five seconds; one that does not is
+# killed, with every process it started.
+prompt() { ( set -m; "$@" >/dev/null 2>&1 & p=$!; for _ in $(seq 50); do kill -0 "$p" 2>/dev/null || exit 0; sleep 0.1; done; kill -9 -- -"$p"; exit 1 ); }
+# timed <command...>: its own exit, when it ends within five seconds; 124
+# when it is killed.
+timed() { ( set -m; "$@" >/dev/null 2>&1 & p=$!; for _ in $(seq 50); do kill -0 "$p" 2>/dev/null || { wait "$p"; exit; }; sleep 0.1; done; kill -9 -- -"$p"; exit 124 ); }
 # After the command: a worktree outside coddy's, made by any spelling, trips;
 # one inside, or one that was there before, does not.
 wo=$(cd "$tmp" && pwd -P)/out
@@ -1735,10 +1507,12 @@ wire snap w; cp -R "$(git -C "$wo" rev-parse --absolute-git-dir)" .git/worktrees
 t 0 "tripwire: a copied admin dir makes git list a worktree twice" test "$(git worktree list --porcelain | grep -cxF "worktree $wo")" = 2
 t 0 "tripwire: and that worktree, from before the command, is quiet" wire trip w
 rm -rf .git/worktrees/aacopy
-t 0 "dodged: a git worktree add from a variable passes snap" noted 'could not tell where' 'p=../dodge; git worktree add -q --detach "$p"'
-(cd "$repo" && p=../dodge; git worktree add -q --detach "$p") >/dev/null 2>&1
-t 2 "dodged: and trips once it has run" wire trip sh
-git worktree remove --force "$wo"; git worktree remove --force "$tmp/dodge"; git worktree remove --force .worktrees/88; git worktree remove --force .claude/worktrees/y
+# snap reads no command's text: a git worktree add outside passes it,
+# saying nothing, and trips once it has run.
+t 0 "tripwire: a git worktree add outside passes snap, saying nothing" silent 'git worktree add ../x'
+(cd "$repo" && git worktree add ../x) >/dev/null 2>&1
+t 2 "tripwire: and trips once it has run" wire trip sh
+git worktree remove --force "$wo"; git worktree remove --force "$tmp/x"; git branch -q -D x; git worktree remove --force .worktrees/88; git worktree remove --force .claude/worktrees/y
 # A path built to read as a second entry with its own remedy is printed as
 # one, quoted.
 sp="$wo/z (remove it: rm -rf $tmp/none); $wo/w"
