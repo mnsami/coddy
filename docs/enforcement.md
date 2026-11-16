@@ -33,7 +33,9 @@ Each layer has the same rows. A row is left out when it does not apply.
 
 ## What holds against what
 
-- The hooks stop the common slips, such as editing in the main checkout or pushing to the default branch.
+- The hooks stop the common slips, such as editing in the main checkout.
+  git's `pre-push` hook stops a push to the default branch. Under jj, which runs no git hooks,
+  nothing local does: branch protection alone holds it.
 - The hooks also report many shell writes after they happen.
 - They are not a sandbox. An agent that is set on getting round them can.
 - On GitHub and GitLab, two layers you set by hand make every change to the default branch go through a PR
