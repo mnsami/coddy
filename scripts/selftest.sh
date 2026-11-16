@@ -1511,7 +1511,7 @@ rm -rf .git/worktrees/aacopy
 # saying nothing, and trips once it has run.
 t 0 "tripwire: a git worktree add outside passes snap, saying nothing" silent 'git worktree add ../x'
 (cd "$repo" && git worktree add ../x) >/dev/null 2>&1
-t 2 "tripwire: and trips once it has run" wire trip sh
+t 2 "tripwire: and trips once it has run, naming it made" saying "git worktree at '${wo%/*}/x', made" wire trip sh
 git worktree remove --force "$wo"; git worktree remove --force "$tmp/x"; git branch -q -D x; git worktree remove --force .worktrees/88; git worktree remove --force .claude/worktrees/y
 # A path built to read as a second entry with its own remedy is printed as
 # one, quoted.
