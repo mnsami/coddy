@@ -75,7 +75,7 @@ Run these inside your project. Each skill also starts from plain language ("star
 4. `/coddy:ship`: runs `verify`, pushes and opens the PR. Merge it. The next `/coddy:next` or `/coddy:start` cleans up.
 
 ```mermaid
-flowchart LR
+flowchart TB
   A["/coddy:onboard<br/>writes .coddy.yml"] --> B["/coddy:next<br/>picks an issue"]
   B --> S
   subgraph S["/coddy:start 42, in .worktrees/42"]
@@ -88,9 +88,9 @@ flowchart LR
   E --> F(["you merge"])
   F --> G[("main")]
   g1{{"edit guard · tripwire · config lock"}} -. "Claude Code hooks:<br/>stop the common slips" .-> S
-  g2{{"git hooks · push check"}} -. "refuse main and<br/>unclaimed branches" .-> D
-  g3{{"PR check"}} -. "must close an open,<br/>assigned issue" .-> E
-  g4{{"branch protection"}} -. "main only<br/>through a PR" .-> F
+  g2{{"git hooks"}} -. "refuse main and<br/>unclaimed branches" .-> D
+  g3{{"PR check (you require it)"}} -. "must close an open,<br/>assigned issue" .-> E
+  g4{{"branch protection (you set it)"}} -. "main only<br/>through a PR" .-> F
 ```
 
 ## Skills
@@ -99,8 +99,8 @@ flowchart LR
 |---|---|
 | `/coddy:onboard` | Wizard that writes `.coddy.yml`, the PR check and an `AGENTS.md` block. Run once. |
 | `/coddy:next` | Recommends the next issue, skipping ones in progress, assigned to others or claimed here. |
-| `/coddy:start <issue>` | Claims it, makes `.worktrees/<issue>`, plans with you, then implements and reviews. |
-| `/coddy:ship [issue]` | Runs `verify`, commits, pushes and opens the PR that closes the issue. |
+| `/coddy:start <issue>` | Claims it (In Progress), makes `.worktrees/<issue>`, plans with you, implements, reviews. |
+| `/coddy:ship [issue]` | Runs `verify`, commits, pushes and opens the issue's PR. |
 | `/coddy:drop <issue>` | Gives a claimed issue up and keeps its branch. |
 | `/coddy:refresh` | After a merge, updates the other claimed worktrees from the default branch. |
 | `/coddy:triage` | Turns findings into issues, skipping ones already open. |

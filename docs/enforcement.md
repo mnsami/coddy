@@ -6,7 +6,7 @@ The [README](../README.md) has the short version.
 ```mermaid
 flowchart LR
   subgraph L["On your machine: Claude Code hooks"]
-    e["Claude edits a file"] -->|edit guard| e2["only inside a claimed<br/>.worktrees/42/"]
+    e["Claude edits a file"] -->|edit guard| e2["in the project, only inside<br/>a claimed .worktrees/42/"]
     s["Claude runs a shell command"]
     s2["refuses a worktree elsewhere,<br/>a push to main, a force push"]
     s -->|reads it first| s2
