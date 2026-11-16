@@ -11,10 +11,9 @@ coddy is an issue-driven workflow for Claude Code. Every change Claude makes is 
 lives in its own worktree and lands through a pull request. The tracker holds the state. The plugin holds the habits.
 
 - Hooks stop the common slips, and report many shell writes after they happen.
-- They are not a sandbox. On GitHub and GitLab, two layers you set by hand
-  ([branch protection and the required PR check](#how-it-enforces)) send every change to the default branch
-  through a PR that closes an open, assigned issue, if [their settings](#how-it-enforces) are right.
-  Jira has branch protection alone.
+- They are not a sandbox. On GitHub and GitLab, two layers you set by hand ([branch protection and the required PR
+  check](#how-it-enforces)) send every change to the default branch through a PR that closes an open, assigned issue,
+  if [their settings](#how-it-enforces) are right. Jira has branch protection alone.
 - Install: `claude plugin marketplace add mnsami/coddy`, then `claude plugin install coddy@coddy` ([more](#install)).
 - The flow: `/coddy:onboard` → `/coddy:next` → `/coddy:start <issue>` → `/coddy:ship`.
 
@@ -31,8 +30,6 @@ lives in its own worktree and lands through a pull request. The tracker holds th
 ⏺ #42 is In Progress in .worktrees/42. Run /coddy:ship when done.
 ```
 
-The edit in the main checkout is rejected. Under `.worktrees/42/` it goes through once the issue is claimed.
-
 ## Install
 
 ```bash
@@ -48,6 +45,7 @@ curl -fsSL https://raw.githubusercontent.com/mnsami/coddy/main/get.sh | bash
 
 - It clones `main` into `~/.coddy` and links `coddy` into `~/.local/bin`. A rerun fast-forwards it,
   and stops on local changes to tracked files. Your agent reads `~/.coddy/skills/`, starting with `onboard/SKILL.md`.
+  The plugin keeps its own copy.
 - `coddy doctor` says which install runs. In a project it lists what is missing or off. It changes nothing.
 
 coddy runs on macOS, Linux and WSL. As a plugin it needs the Claude Code CLI: claude.ai and Cowork do not
@@ -64,6 +62,7 @@ You need:
   The PR check runs `gh` (GitHub) or `curl` (GitLab) inside CI.
 - GitLab: as shipped, the plugin reaches gitlab.com only. A self-managed instance needs an MCP server
   configured for that instance, whose tools the skills' `allowed-tools` do not pre-approve, so its calls prompt.
+  The config names no host.
 
 ## Quick start
 
@@ -114,30 +113,30 @@ The plan and questions `/coddy:start` posts on that issue are internal too. Ceil
 The edit guard, tripwire and config lock are Claude Code hooks. Another agent running the skills from `~/.coddy`
 gets only the git hooks, branch protection and the PR check.
 - **Edit guard.** Rejects Claude's file edits in the project outside `.worktrees/<issue>/`, and inside it before
-  the issue is claimed. `.claude/` stays editable, except `.claude/worktrees/`. Files outside the project pass.
-  A claim is a lock under `.git/coddy`, and a shell command can still rewrite it.
-- **Shell tripwire.** Compares the main checkout before and after each shell command and reports what changed.
-  It also reads each command's text, and refuses a new worktree outside `.worktrees/` or a push to the default branch.
-  Spellings such as `bash -c`, `eval`, a shell function, a git alias or `sudo` hide a command from it,
-  [among others](docs/enforcement-limits.md#what-the-text-check-reads).
-  A bare `jj git push`, or one with `-r` alone, passes with a notice. jj runs no git hooks, so jj coverage is partial.
+  the issue is claimed. `.claude/` stays editable, settings files too
+  ([only Claude Code's prompt holds them](docs/enforcement-limits.md#settings-files)), except `.claude/worktrees/`.
+  Files outside the project pass. A claim is a lock under `.git/coddy`, and a shell command can rewrite it.
+  The assignee check is a `/coddy:start` step. `claim` never reads the tracker.
+- **Shell tripwire.** Compares the main checkout before and after each shell command and reports what changed. It also
+  reads each command's text. It refuses a new worktree outside `.worktrees/` and `.claude/worktrees/`, and a push to
+  the default branch. Spellings such as `bash -c`, `eval`, a shell function, a git alias or `sudo` hide a command from
+  it, [among others](docs/enforcement-limits.md#what-the-text-check-reads). A bare `jj git push`, or one with `-r`
+  alone, passes with a notice. jj runs no git hooks, so jj coverage is partial.
 - **Config lock.** Undoes a shell command that removes or rewrites `.coddy.yml`, the switch for all of this.
 - **Git hooks.** `/coddy:start` installs a `pre-commit` and a `pre-push` that refuse the default branch
   and any branch no claimed issue owns. `--no-verify` skips them.
 - **Branch protection.** You set it. It holds when a command edits, commits and pushes in one go.
 - **PR check.** A GitHub Action, or a GitLab job, that fails a PR unless it closes an open, assigned issue.
-  You require it. It holds for a cloud agent, or for a branch coddy did not name.
-  Jira has none, so there branch protection is the only hard layer.
+  You require it. It holds for a cloud agent, or a branch coddy did not name. Jira has none.
 
-They hold only with these ([details](docs/enforcement.md#what-the-hard-layers-need)):
-- A token that cannot change repository settings. GitHub: no Administration write. GitLab: a role below Maintainer.
-- A required approving review, with stale approvals dismissed on a new push. It keeps a person in the merge.
+Branch protection and the PR check hold only with these ([details](docs/enforcement.md#what-the-hard-layers-need)):
+- No token the agent can use may change repository settings. GitHub: no Administration write. GitLab: below Maintainer.
+- A required approving review, with stale approvals dismissed on a new push. onboard asks for neither.
 - A required code-owner review on every CI file, since a PR can edit the check's own workflow: `.github/workflows/`
-  (GitLab: `.gitlab/`, `.gitlab-ci.yml` and every local file it includes). GitLab needs Premium for it.
+  (GitLab: `.gitlab/`, `.gitlab-ci.yml` and every file it includes). GitLab needs Premium for it.
 - A plan that offers them: a private GitHub repository needs Pro, Team or Enterprise. Without one, only hooks hold.
 
-If the hooks keep refusing, there are [three ways out](docs/enforcement.md#three-ways-out): your own terminal,
-`claude plugin disable coddy@coddy`, or `claude --settings '{"disableAllHooks": true}'`.
+If the hooks keep refusing, see the [three ways out](docs/enforcement.md#three-ways-out).
 
 ## Config
 
@@ -176,7 +175,8 @@ review_rounds: 3             # optional; 1-5 (default 3)
 coddy guards one issue at a time. It is not a board or a factory.
 - [super-board](https://github.com/EricTechPro/super-board) drains a Projects board; a lane can run `/coddy:start`.
 - [Vibe Kanban](https://www.vibekanban.com/) and [CCPM](https://github.com/automazeio/ccpm) launch several agents.
-  coddy launches none. It keeps Claude's file edits and `push` in one session off another session's claimed worktree.
+  coddy launches none. It keeps Claude's Edit and Write tools and `/coddy:ship`'s push off another session's claimed
+  worktree. Shell commands are not held.
 - [chock](https://github.com/open-coder-ai/chock) blocks dangerous commands. coddy covers the workflow.
 
 ## Contributing

@@ -51,7 +51,7 @@ Each layer has the same rows. A row is left out when it does not apply.
 
 ### Hooks off
 
-- Claude Code before 2.1.139 runs none of the hooks. Nothing is guarded.
+- Claude Code before 2.1.139 runs none of the hooks. Only the git hooks, branch protection and the PR check hold.
 - Where `/usr/bin/env` or `/bin/sh` is missing, the hooks cannot start, on any OS.
   From Claude Code 2.1.295 that refuses every edit and shell command, so disable the plugin there.
 - Claude Code runs no plugin hook when `disableAllHooks` is set, in any settings file or by `--settings`.
@@ -113,9 +113,12 @@ A `PreToolUse` hook on Edit, Write and NotebookEdit.
 
 - **Stops:** an edit in the project outside `.worktrees/<issue>/`.
   Inside, an edit before `/coddy:start` has claimed the issue, or when another session holds the claim.
-- **Lets through:** `.claude/`, except Claude Code's own worktrees under `.claude/worktrees/`.
-  Those are held to the lock too.
-  Files outside the project. They are refused too once the config was removed (see Config lock).
+- **Lets through:**
+  - `.claude/`, except Claude Code's own worktrees under `.claude/worktrees/`, which are held to the lock.
+    That includes `.claude/settings.json` and `settings.local.json`, where an edit can set `disableAllHooks`.
+    Only Claude Code's protected-path prompt holds them, and `bypassPermissions` and auto mode skip it
+    ([details](enforcement-limits.md#settings-files)).
+  - Files outside the project. They are refused once the config was removed (see Config lock).
 - **Asks you first:** any edit of `.coddy.yml`, by whatever path it reaches the file.
   A symlink or hard link from a worktree counts.
   In headless `-p` under `--permission-mode bypassPermissions` the ask is still not bypassed:
@@ -277,6 +280,9 @@ The long lists are on [Enforcement limits](enforcement-limits.md):
 
 `/coddy:start` points git's `core.hooksPath` at `.git/hooks/coddy/`.
 It writes a `pre-commit` and a `pre-push` there.
+The hooks run coddy through a link in the plugin's data directory.
+Each Claude Code session points it at the current install, so an update leaves the hooks as they are.
+They never run a `coddy` on `PATH`.
 
 - **Stops:** a commit on the default branch, or a push to it.
   A commit or push on a branch no claimed issue owns.
@@ -306,11 +312,9 @@ It writes a `pre-commit` and a `pre-push` there.
   - After a plugin update, `/resume` in a session started before it points the hooks at the old install
     until a new session starts.
 - **When it blocks you:**
-  - The hooks run coddy through a link in the plugin's data directory.
-    Each Claude Code session points it at the current install, so an update leaves the hooks as they are.
-    They never run a `coddy` on `PATH`.
-  - A hook whose coddy is gone refuses and says in words what puts it back.
-    It also says that `--no-verify` skips the hook, and how to turn the hooks off.
+  - A hook whose coddy is gone refuses. A new Claude Code session points the launcher at the current install again.
+    Or run `/coddy:start` once from your own terminal.
+    The message also says that `--no-verify` skips the hook, and how to turn the hooks off.
   - `/coddy:start` stops when a `core.hooksPath` set where it overrides `.git/config` would keep them off.
     That is the worktree's own config, an include, an `includeIf` on the issue's branch or `GIT_CONFIG_*`,
     at the root or in the issue's worktree.
@@ -331,11 +335,14 @@ It writes a `pre-commit` and a `pre-push` there.
 
 Branch protection and the PR check hold only when all of these are true.
 
-- **The agent's token cannot change repository settings.**
+- **No credential the agent can reach can change repository settings.**
+  That covers the plugin's token, a `gh` or `glab` login, git's credential helper and `GH_TOKEN` or `GITHUB_TOKEN`.
   Otherwise it can remove the rule, push, and put the rule back.
-  - GitHub: a token without Administration write, such as a fine-grained one. "Applies to administrators"
-    stops an administrator bypassing the rule. It does not stop one editing it.
-  - GitLab: a role below Maintainer. A Maintainer or Owner can unprotect the branch or turn off Pipelines must succeed.
+  - GitHub: no Administration write. A fine-grained token can be granted none.
+    An admin's classic `repo` token can change them.
+    "Applies to administrators" stops an administrator bypassing the rule. It does not stop one editing it.
+  - GitLab: an account below Maintainer.
+    A Maintainer or Owner can unprotect the branch or turn off Pipelines must succeed.
 - **A person stays in the merge.** The rule must require an approving review from another account.
 - **Stale approvals are dismissed.** Otherwise the agent can push after the approval, a workflow edit included.
   - GitHub: "Dismiss stale pull request approvals when new commits are pushed"
@@ -343,14 +350,18 @@ Branch protection and the PR check hold only when all of these are true.
   - GitLab: remove all approvals when commits are added.
 - **A code-owner review covers every CI file.** A PR can edit the check's own workflow.
   - GitHub: `.github/workflows/`, since any workflow can add a job named `closes a claimed issue`.
-  - GitLab: `.gitlab/`, `.gitlab-ci.yml` and every local file it includes.
+  - GitLab: `.gitlab/`, `.gitlab-ci.yml` and every file it includes.
+    An include from another project or a URL is outside this project's code-owner rule.
+    Pin it to a commit SHA, or hold its source as tightly.
     A merge request pipeline reads them all, and a global `variables:` in one can change what the job reads.
   - GitLab requires Premium for required code-owner approval. On Free, only a reviewer who reads CI changes holds it.
 - **Your plan offers these.**
   - A private GitHub repository needs GitHub Pro, Team or Enterprise for protected branches, rulesets
     and required code-owner reviews. On Free they cover public repositories only.
   - GitLab required approvals and Code Owners need Premium.
-  - Without them, only the local layers hold.
+  - Without them on a private GitHub repository on Free, only the local layers hold.
+  - On GitLab Free there are no required approvals or code owners, so a merge request can dodge the check
+    by editing CI.
 
 ## Branch protection
 
@@ -362,7 +373,8 @@ The only layer that holds when a command edits, commits and pushes to the defaul
   - GitHub: a rule on the default branch that requires a pull request and applies to administrators,
     plus the required check `closes a claimed issue`.
   - GitLab: the default branch protected with nobody allowed to push, and Pipelines must succeed.
-  - Both: [what the hard layers need](#what-the-hard-layers-need).
+  - onboard names only those. The approving review, stale-approval dismissal and code-owner review in
+    [what the hard layers need](#what-the-hard-layers-need) go beyond what it asks.
 
 ## PR check
 
@@ -380,7 +392,7 @@ So it is the one layer that holds for a cloud agent, or for any branch coddy did
   - A PR on a project that never requires the check. It blocks a merge only once
     `closes a claimed issue` is a required check on the default branch (GitHub), or Pipelines must succeed is on
     with the default branch protected (GitLab). You set both by hand.
-  - GitHub or GitLab only. A Jira project gets the local guardrails alone.
+  - GitHub or GitLab only. A Jira project gets the local guardrails and branch protection alone.
     `/coddy:onboard` does not write the check, and a copied one fails every Jira PR, which carries no closing reference.
 - **Needs:** GitHub: the workflow file, committed by you. GitLab: the merge request onboard opens, merged by you.
 
