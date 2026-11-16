@@ -449,7 +449,7 @@ So it is the one layer that holds for a cloud agent, or for any branch hermy did
 
 From your own terminal:
 
-1. Delete `.hermy.yml`.
+1. Delete `.hermy.yml` (and `.coddy.yml` and `.claude/coddy.yml`, from before the rename: one left behind is read as the config).
 2. Delete the claim locks under `.git/hermy` (and `.git/coddy`, from before the rename).
 3. Delete the `.git/hooks/hermy` directory (and `.git/hooks/coddy`).
 4. Set `core.hooksPath` back to the `hermy.previousHooksPath` that `.git/config` records

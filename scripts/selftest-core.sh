@@ -439,7 +439,8 @@ t 0 "config: and trip lets it go" wire trip w
 rm .claude/coddy.yml
 # .coddy.yml, from before the rename, sits between the two: restored while it
 # is live, a .hermy.yml made above it removed, a .coddy.yml made above the
-# live legacy file removed, and let go below a live .hermy.yml.
+# live legacy file removed, and let go below a live .hermy.yml, as the legacy
+# file is below a live .coddy.yml.
 mv .hermy.yml .coddy.yml
 tripped 2 "config: deleting a live .coddy.yml trips" 'rm .coddy.yml'
 t 0 "config: and it is restored" same .coddy.yml
@@ -449,7 +450,13 @@ t 0 "config: the .coddy.yml stands" same .coddy.yml
 mv .coddy.yml .claude/coddy.yml
 tripped 2 "config: a .coddy.yml created next to the live legacy file trips" 'cp .claude/coddy.yml .coddy.yml'
 t 1 "config: and is removed" test -e .coddy.yml
-mv .claude/coddy.yml .hermy.yml; cp .hermy.yml .coddy.yml
+cp .claude/coddy.yml .coddy.yml
+HERMY_AGENT_DIR=.claude tripped 0 "config: changing the legacy file next to a live .coddy.yml is quiet" 'echo "verify: true" >> .claude/coddy.yml'
+t 0 "config: and the change stands" grep -q '^verify: true$' .claude/coddy.yml
+HERMY_AGENT_DIR=.claude tripped 0 "config: deleting the legacy file next to a live .coddy.yml is quiet" 'rm .claude/coddy.yml'
+t 1 "config: and it is not restored" test -e .claude/coddy.yml
+t 0 "config: the live .coddy.yml stands" same .coddy.yml
+mv .coddy.yml .hermy.yml; cp .hermy.yml .coddy.yml
 tripped 0 "config: changing .coddy.yml next to a live .hermy.yml is quiet" 'echo "verify: true" >> .coddy.yml'
 t 0 "config: and the change stands" grep -q '^verify: true$' .coddy.yml
 tripped 0 "config: deleting .coddy.yml next to a live .hermy.yml is quiet" 'rm .coddy.yml'
