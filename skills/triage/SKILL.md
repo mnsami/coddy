@@ -25,7 +25,7 @@ Findings come from this conversation, or from `$ARGUMENTS` when given (a file pa
 
 ## Steps
 
-1. List the findings, one issue per finding. Merge duplicates.
+1. List the findings, one issue per finding. Merge duplicates. A finding that is another case of a limit the project's docs already record (a known ceiling, a limits page) → no issue; say where it is recorded.
 2. Search for each finding, never one list of all open issues (it stops at a page and misses the rest): 2-4 distinctive words from the finding, then github `search_issues` with `owner` and `repo` from `repo`, `query: "is:open in:title <words>"` and `fields: [number, title, labels]`; jira `searchJiraIssuesUsingJql` with JQL `project = <project> AND statusCategory != Done AND summary ~ "<words>"`; gitlab `list_work_items` with `state: opened`, `first: 100` and `search: "<words>"`. No hit → once more with other words. A finding a hit already covers is skipped and cited.
 3. Show a table: title, label, covered-by. Ask once to confirm.
 4. Create each issue (github `issue_write` `create` with `title`, `body` and `labels`; jira `createJiraIssue`; gitlab `save_work_item` with `title`, `type_name: Issue`, `description` and `labels`) with this body:
