@@ -259,28 +259,31 @@ The long lists are on [Enforcement limits](enforcement-limits.md):
 `.hermy.yml` is the off switch for every layer above, so the tripwire guards it.
 
 - **Stops:** a shell command that removes or rewrites `.hermy.yml`. It is put back.
-  So is one that creates `.hermy.yml` next to a config still at `.claude/coddy.yml`, which it would shadow.
+  So is one that creates `.hermy.yml` next to a config still at `.coddy.yml` or `.claude/coddy.yml`, or `.coddy.yml`
+  next to `.claude/coddy.yml`, which it would shadow.
   A change that came through git is undone too, a pull of a shared config or a checkout.
   Nothing on disk tells it from one a command forged.
   The message sends Claude to `/hermy:config`, which shows you the diff against `HEAD` and writes it only on your yes.
 - **Lets through:**
   - A project with no config and nothing a started issue leaves behind. It is inert.
   - A command that writes the config when none existed (a pull of a shared `.hermy.yml` into a fresh clone).
-  - A change to `.claude/coddy.yml` once `.hermy.yml` is live. It is ignored then.
+  - A change to `.coddy.yml` or `.claude/coddy.yml` once a config above it is live (`.hermy.yml` above both).
+    It is ignored then.
     `/hermy:migrate` ends its move that way.
 - **Asks you first:** `/hermy:config` and `/hermy:migrate` write the file with the Write tool.
   The edit guard asks you, whatever path the write reaches the file by.
   `/hermy:onboard` writes it before any hook is live, so its own review-step yes is the ask.
 - **Always refuses:** every edit, shell command, commit and push, in either guard mode,
-  when no config exists at either path while a claim lock under `.git/hermy`, or the `.git/hooks/hermy` directory,
-  is still there. That means the config was removed, not never written.
+  when no config exists at any of its paths while a claim lock under `.git/hermy`, or the `.git/hooks/hermy` directory,
+  is still there, or `.git/coddy` and `.git/hooks/coddy` from before the rename.
+  That means the config was removed, not never written.
   The one exception is a Write of the config, which asks you first.
   The message names what is missing, what was left, and the two ways out.
   Also every shell command while `.hermy.yml` is over 64 KiB, which is more than hermy keeps a copy of.
   `/hermy:config` brings it under.
 - **Doesn't catch:**
   - A background command's changes. The config is compared around each command alone,
-    so a rewrite between two calls goes unseen (a `guard: warn` added, a weaker `.claude/coddy.yml` left
+    so a rewrite between two calls goes unseen (a `guard: warn` added, a weaker `.coddy.yml` or `.claude/coddy.yml` left
     after `.hermy.yml` is removed).
   - With the sandbox off, one command can remove the config and every leftover.
     Nothing then tells it from a project never onboarded.
@@ -294,6 +297,9 @@ It writes a `pre-commit` and a `pre-push` there.
 The hooks run hermy through a link in the plugin's data directory.
 Each Claude Code session points it at the current install, so an update leaves the hooks as they are.
 They never run a `hermy` on `PATH`.
+In a project onboarded before the rename, `core.hooksPath` names `.git/hooks/coddy`.
+The next `/hermy:start` moves it to `.git/hooks/hermy/` and keeps the hook `coddy.previousHooksPath` recorded.
+It never runs the old hooks.
 
 - **Stops:** a commit on the default branch, or a push to it.
   A commit or push on a branch no claimed issue owns.
@@ -444,9 +450,10 @@ So it is the one layer that holds for a cloud agent, or for any branch hermy did
 From your own terminal:
 
 1. Delete `.hermy.yml`.
-2. Delete the claim locks under `.git/hermy`.
-3. Delete the `.git/hooks/hermy` directory.
-4. Set `core.hooksPath` back to the `hermy.previousHooksPath` that `.git/config` records.
+2. Delete the claim locks under `.git/hermy` (and `.git/coddy`, from before the rename).
+3. Delete the `.git/hooks/hermy` directory (and `.git/hooks/coddy`).
+4. Set `core.hooksPath` back to the `hermy.previousHooksPath` that `.git/config` records
+   (`coddy.previousHooksPath` when that is missing).
    When that is empty or missing, unset `core.hooksPath`. Never set it to an empty value.
 
 While a claim lock or the hooks directory is left, a missing config reads as removed.

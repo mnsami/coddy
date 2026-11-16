@@ -1,7 +1,7 @@
 ---
 name: migrate
-description: Bring the project's hermy config up to the current schema version, moving .claude/coddy.yml to .hermy.yml on the way
-when_to_use: Use when the user asks to migrate, upgrade or update the hermy config to the current version, or to move the old .claude/coddy.yml to .hermy.yml, or when onboard or config says to run /hermy:migrate.
+description: Bring the project's hermy config up to the current schema version, moving .coddy.yml or .claude/coddy.yml to .hermy.yml on the way
+when_to_use: Use when the user asks to migrate, upgrade or update the hermy config to the current version, or to move the old .coddy.yml or .claude/coddy.yml to .hermy.yml, or when onboard or config says to run /hermy:migrate.
 allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh"), Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" status), Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" migrate), Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" exclude answers), Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" exclude config), Bash(date +%Y%m%d-%H%M%S)
 ---
 
@@ -23,15 +23,15 @@ A `git_dir:` line in place of that → stop and show that line as it is.
 ## Steps
 
 1. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" migrate`. Non-zero → say what it printed (a newer version means updating the plugin) and stop.
-2. No `changed:` line → say the config is current at `to:` and stop. `legacy: dir` or `legacy: other` → say `.claude/coddy.yml` is not a file, to remove it by hand and run `/hermy:migrate` again, and stop.
+2. No `changed:` line → say the config is current at `to:` and stop. A `legacy: dir <path>` or `legacy: other <path>` line → say that path is not a file, to remove it by hand and run `/hermy:migrate` again, and stop.
 3. Show `from:` → `to:` and each `changed:` line, then ask once: migrate now? No → stop, nothing written.
 4. On yes, in this order:
    - `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" exclude answers`, so the backup stays out of git status.
-   - `tracked: no` (the legacy file was personal, not in git) → `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" exclude config`, so `.hermy.yml` stays personal too.
+   - `tracked: no` (the config moved was personal, not in git) → `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" exclude config`, so `.hermy.yml` stays personal too.
    - `date +%Y%m%d-%H%M%S` once, as `<ts>`.
-   - Back up each file this run writes over or removes: Read it, then Write its content as it is to `<root>/.claude/hermy/backup/<ts>/<its path>` (the source, and `.claude/coddy.yml` on `legacy: file`; never Read a `legacy: link`).
+   - Back up each file this run writes over or removes: Read it, then Write its content as it is to `<root>/.claude/hermy/backup/<ts>/<its path>` (the source, and the path of each `legacy: file <path>` line; never Read a `legacy: link`).
    - A `---` block printed → Write everything after the first `---` line to `<root>/.hermy.yml` (Read it first when it exists); the guard asks the user to allow it. Refused → stop and say the backup is at `<root>/.claude/hermy/backup/<ts>/`.
-   - `changed: move` or `changed: remove` → run `rm -- "<root>/.claude/coddy.yml"` in Bash (a link goes unread), only after `.hermy.yml` exists: the config lock lets the legacy file go then. Refused or failed → say `.hermy.yml` is live, the legacy file is left and `/hermy:migrate` again removes it.
+   - Each `changed: move <path> -> .hermy.yml` and `changed: remove <path>` → run `rm -- "<root>/<path>"` in Bash, one per path (a link goes unread), only after `.hermy.yml` exists: the config lock lets every path below the live one go then. Refused or failed → say `.hermy.yml` is live, that file is left and `/hermy:migrate` again removes it.
 5. Print `version: <from> → <to>`, each change as old → new, the backup path, then name `/hermy:next`.
 
-This skill changes nothing but `.hermy.yml`, `.claude/coddy.yml`, its backup under `.claude/hermy/backup/` and the lines `exclude` adds to `.git/info/exclude`; it never edits a key's value.
+This skill changes nothing but `.hermy.yml`, `.coddy.yml`, `.claude/coddy.yml`, its backup under `.claude/hermy/backup/` and the lines `exclude` adds to `.git/info/exclude`; it never edits a key's value.

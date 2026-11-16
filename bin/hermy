@@ -36,7 +36,8 @@
 # shell command (any other value is none): start and claim then print
 # hooks: off, with Claude Code's causes, when snap left no mark for
 # HERMY_SESSION in the last 60 s.
-# The config is .hermy.yml at the root, or .claude/coddy.yml from before.
+# The config is .hermy.yml at the root, or, from before, .coddy.yml or
+# .claude/coddy.yml: the first present.
 # An issue counts as In Progress once the lock .git/hermy/<issue>/ exists.
 # Only claim makes it (mkdir -p for the directory alone; of two sessions
 # claiming at once the one that creates owner under set -C wins;
@@ -255,11 +256,16 @@ walk() {
     case "$g" in */*) g=${g%/*} ;; *) g="" ;; esac
   done
 }
+# The config paths, highest first: .hermy.yml, then .coddy.yml and the legacy
+# .claude/coddy.yml, where earlier versions wrote it. The first present is live.
 legacy=".claude/coddy.yml"
+cfgs=(.hermy.yml .coddy.yml "$legacy")
+# Whether directory $1 holds a config at any of them.
+hascfg() { local c; for c in "${cfgs[@]}"; do [ -f "$1/$c" ] && return 0; done; return 1; }
 # root: the nearest repository at or above $1 (physical) that holds a config.
 upcfg() {
   local g=$1
-  while [ -n "$g" ] && ! { [ -d "$g/.git" ] && { [ -f "$g/.hermy.yml" ] || [ -f "$g/$legacy" ]; }; }; do case "$g" in */*) g=${g%/*} ;; *) g="" ;; esac; done
+  while [ -n "$g" ] && ! { [ -d "$g/.git" ] && hascfg "$g"; }; do case "$g" in */*) g=${g%/*} ;; *) g="" ;; esac; done
   [ -z "$g" ] || root=$g
 }
 # Root resolution's git. The hooks run it outside the sandbox before homes
@@ -285,17 +291,17 @@ if common=$(rgit -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd 
   # when git walked past the link (a root strictly above, not the odd
   # directory git took itself), else at the nearest repository above that
   # holds one.
-  if [ -n "$odd" ] && [ ! -f "$root/.hermy.yml" ] && [ ! -f "$root/$legacy" ]; then
+  if [ -n "$odd" ] && ! hascfg "$root"; then
     pb=$(cd "$back" && pwd -P)
     case "$pb/" in "$(cd "$groot" && pwd -P)"/?*) root=$groot ;; *) upcfg "$pb" ;; esac
-    [ -f "$root/.hermy.yml" ] || [ -f "$root/$legacy" ] || { [ ! -f "$groot/.hermy.yml" ] && [ ! -f "$groot/$legacy" ]; } || root=$groot
+    hascfg "$root" || { ! hascfg "$groot"; } || root=$groot
   fi
   rel="${rel#"$root"/}"
   case "$dir" in */"$rel") root="${dir%/"$rel"}" ;; esac
 else
   root="$dir"; g=$(cd "$dir" 2>/dev/null && pwd) || g=$dir; top=""
   case "$g" in */.worktrees/*) top="${g%%/.worktrees/*}"; root=$top ;; esac
-  [ -n "$top" ] || ! { [ -f "$g/.hermy.yml" ] || [ -f "$g/$legacy" ]; } || top=$g
+  [ -n "$top" ] || ! hascfg "$g" || top=$g
   walk
   # Never above the project a .worktrees/ path names: a repository up there
   # (the project nested in another) is no root of ours.
@@ -313,12 +319,12 @@ fi
 # found: git failing in a worktree whose .git is garbage lands on the second
 # branch, with the root's .git untouched. No .git there is a plain jj root.
 [ -n "$odd" ] || if [ -e "$root/.git" ] || [ -L "$root/.git" ] || [ -n "$proj" ]; then
-  if [ ! -e "$root/.git" ] && [ ! -L "$root/.git" ] && [ -n "$proj" ] && [ ! -f "$root/.hermy.yml" ] && [ ! -f "$root/$legacy" ] && { [ -z "$back" ] || { [ ! -e "$back/.git" ] && [ ! -L "$back/.git" ]; }; }; then
+  if [ ! -e "$root/.git" ] && [ ! -L "$root/.git" ] && [ -n "$proj" ] && ! hascfg "$root" && { [ -z "$back" ] || { [ ! -e "$back/.git" ] && [ ! -L "$back/.git" ]; }; }; then
     # a bare repository in no project (git's root, its parent, has no .git and nothing above holds one)
     proj=""
   elif [ -L "$root/.git" ] || [ ! -d "$root/.git" ]; then
     odd="$root/.git"
-    [ -f "$root/.hermy.yml" ] || [ -f "$root/$legacy" ] || [ -z "$back" ] || { [ ! -f "$back/.hermy.yml" ] && [ ! -f "$back/$legacy" ]; } || { [ -d "$back/.git" ] && [ ! -L "$back/.git" ]; } || root=$back
+    hascfg "$root" || [ -z "$back" ] || { ! hascfg "$back"; } || { [ -d "$back/.git" ] && [ ! -L "$back/.git" ]; } || root=$back
     [ -e "$odd" ] || [ -L "$odd" ] || odd="$root/.git"
   elif [ -e "$root/.git/commondir" ] || [ -L "$root/.git/commondir" ]; then odd="$root/.git/commondir"
   fi
@@ -329,7 +335,7 @@ fi
 # starts at the project, as the strip does, never at the link inside it.
 if [ -z "$odd" ] || [ -n "$proj" ]; then :; else
   if [ -n "$top" ]; then root=$top
-  elif [ ! -f "$root/.hermy.yml" ] && [ ! -f "$root/$legacy" ]; then upcfg "$(cd "$root" 2>/dev/null && pwd -P || echo "$root")"; fi
+  elif ! hascfg "$root"; then upcfg "$(cd "$root" 2>/dev/null && pwd -P || echo "$root")"; fi
 fi
 # A .git ($1, else odd) that is a gitdir: file (a submodule's, a bare repository's worktree's).
 gitlink() { local f=${1-$odd} l=""; case "$f" in */commondir) return 1 ;; esac; [ -L "$f" ] || [ ! -f "$f" ] || { IFS= read -r -d '' -n 1024 l < "$f"; } 2>/dev/null; [[ $l == gitdir:* ]]; }
@@ -350,28 +356,30 @@ gdmsg() {
   elif [ ! -e "$odd" ] && [ ! -L "$odd" ]; then echo "git_dir: $(bare | tr -d '[:cntrl:]') is a bare repository nested in the project, so the session started inside it (fix: open the session in the main checkout)"
   else echo "git_dir: $(printf %s "$odd" | tr -d '[:cntrl:]') is not the main checkout's own git dir (fix: remove it$([ -L "$odd" ] || echo ", or put the .git directory back,") by hand)"; fi
 }
-# .hermy.yml when it exists, else the legacy file; trip asks again after it
-# has put the config back.
-confpath() { if [ -f "$root/.hermy.yml" ]; then conf="$root/.hermy.yml"; else conf="$root/$legacy"; fi; cname="${conf#"$root"/}"; }
+# The first config path holding a file, else .hermy.yml; trip asks again
+# after it has put the config back.
+confpath() { local c; conf="$root/.hermy.yml"; for c in "${cfgs[@]}"; do [ -f "$root/$c" ] && { conf="$root/$c"; break; }; done; cname="${conf#"$root"/}"; }
 confpath
 # What a started issue leaves: start's git hooks, .git/hooks/hermy (written
 # outside the sandbox), checked first, or a claim under .git/hermy (a lock,
 # or a marker from before locks; the .branch and .base records, dot names
-# and swept/ are none). With neither config beside it the config was
+# and swept/ are none), and the same under the old name (.git/hooks/coddy,
+# .git/coddy), which a project onboarded before the rename keeps. With no
+# config beside it the config was
 # removed, not never written, so guard, snap and githook refuse rather than
 # go inert, naming the leftover in $tm. Existence tests alone: no git call,
 # and no config opened, so a FIFO at .hermy.yml hangs nothing.
 left() {
-  local r l=.git/hooks/hermy
-  if [ ! -e "$root/$l" ] && [ ! -L "$root/$l" ]; then
-    l=""
-    for r in "$root"/.git/hermy/*; do
+  local r d l=""
+  for d in .git/hooks/hermy .git/hooks/coddy; do [ -e "$root/$d" ] || [ -L "$root/$d" ] && { l=$d; break; }; done
+  [ -n "$l" ] || for d in .git/hermy .git/coddy; do
+    for r in "$root/$d"/*; do
       case "${r##*/}" in swept|*[!A-Za-z0-9_-]*) continue ;; esac
-      { [ -e "$r" ] || [ -L "$r" ]; } && { l=${r#"$root"/}; break; }
+      { [ -e "$r" ] || [ -L "$r" ]; } && { l=${r#"$root"/}; break 2; }
     done
-    [ -n "$l" ] || return 1
-  fi
-  tm="no config file is at .hermy.yml or $legacy, yet $l is there, which only a project in the workflow leaves, so the config was removed, not never written, and hermy refuses every edit, shell command, commit and push until either the config is back (write .hermy.yml with the Write tool, which asks you first, or, when git tracks it, restore it from HEAD with git in your own terminal) or you finish leaving the workflow from your own terminal: remove the claim locks under .git/hermy and the .git/hooks/hermy directory, and set core.hooksPath back to the hermy.previousHooksPath that .git/config records, or, when that is empty or missing, unset core.hooksPath, never set it to an empty value."
+  done
+  [ -n "$l" ] || return 1
+  tm="no config file is at .hermy.yml, .coddy.yml or $legacy, yet $l is there, which only a project in the workflow leaves, so the config was removed, not never written, and hermy refuses every edit, shell command, commit and push until either the config is back (write .hermy.yml with the Write tool, which asks you first, or, when git tracks it, restore it from HEAD with git in your own terminal) or you finish leaving the workflow from your own terminal: remove the claim locks under .git/hermy and .git/coddy and the .git/hooks/hermy and .git/hooks/coddy directories, and set core.hooksPath back to the hermy.previousHooksPath that .git/config records (coddy.previousHooksPath when that is missing), or, when that is empty or missing, unset core.hooksPath, never set it to an empty value."
 }
 self="${0##*/}" # how the caller names this command: hermy, or a shim's name
 code=1
@@ -396,8 +404,7 @@ kind() { if [ -f "$1" ]; then echo file; elif [ -d "$1" ]; then echo dir; elif [
 if [ "${1-}" = detect ]; then
   cd "$root" || exit 0
   echo "root: $root"
-  echo "config: $([ -f "$conf" ] && echo present || echo none)"
-  echo "legacy_config: $([ -f "$legacy" ] && echo present || echo none)"
+  echo "config: $([ -f "$conf" ] && echo "$cname" || echo none)"
   # The first line alone, without control characters or userinfo: a token in
   # the URL, or a line made to read as another fact, would reach the prompt.
   r=$(git remote get-url origin 2>/dev/null | head -n 1 | tr -d '[:cntrl:]' | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#')
@@ -749,15 +756,17 @@ if [ "${1-}" = guard ]; then
   # Removed (tamp), /hermy:config stops on NOT_ONBOARDED, so the ask names none.
   ask() { local m="Editing $1 changes the hermy guardrails. Allow it only if you asked for this change (/hermy:config)."; [ -z "$tamp" ] || m="Writing $1 puts back the hermy config that was removed, and with it the hermy guardrails. Allow it only if you asked for this change."; jqh -cn --arg m "$m" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'; exit 0; }
   lc=$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')
-  if [ "$nm" -ef "$root/.hermy.yml" ] || { [ "${at%/*}" -ef "$pr" ] && [ "$lc" = .hermy.yml ]; }; then ask .hermy.yml; fi
-  # Removed (tamp): putting a config back is the one edit allowed, the
-  # legacy one too, asked as .hermy.yml is (the agent dir it lies in is
+  # .coddy.yml, from before the rename, the same way: live while .hermy.yml is
+  # absent.
+  for x in .hermy.yml .coddy.yml; do
+    if [ "$nm" -ef "$root/$x" ] || { [ "${at%/*}" -ef "$pr" ] && [ "$lc" = "$x" ]; }; then ask "$x"; fi
+  done
+  # The legacy one too, asked as .hermy.yml is (the agent dir it lies in is
   # free otherwise), its directory by identity or, not made yet, by name.
-  if [ -n "$tamp" ]; then
-    lp="$pr/${legacy%/*}"
-    { [ "$nm" -ef "$root/$legacy" ] || { { [ "${at%/*}" -ef "$lp" ] || [ "${at%/*}" = "$lp" ]; } && [ "$lc" = "${legacy##*/}" ]; }; } && ask "$legacy"
-    die "the edit guard refuses $f: $tm"
-  fi
+  lp="$pr/${legacy%/*}"
+  { [ "$nm" -ef "$root/$legacy" ] || { { [ "${at%/*}" -ef "$lp" ] || [ "${at%/*}" = "$lp" ]; } && [ "$lc" = "${legacy##*/}" ]; }; } && ask "$legacy"
+  # Removed (tamp): putting a config back is the one edit allowed.
+  [ -z "$tamp" ] || die "the edit guard refuses $f: $tm"
   # $1 with its deepest ancestor that is the root directory itself (-ef)
   # spelled $pr: the root has names no link shows (the firmlink above, a
   # bind mount), which no match on $pr's spelling would read as the project.
@@ -1121,7 +1130,7 @@ snap() {
     for p; do
       # The config paths are the lock's: a restored one differs from a pulled
       # HEAD, and that is not the command's change to undo.
-      case "$p" in .hermy.yml|"$legacy") continue ;; esac
+      case "$p" in .hermy.yml|.coddy.yml|"$legacy") continue ;; esac
       [ -z "${HERMY_AGENT_DIR-}" ] || case "$p" in "$HERMY_AGENT_DIR"/*) continue ;; esac
       dp=$((dp+1))
       if [ ! -f "$p" ]; then clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"
@@ -1297,14 +1306,14 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   seen="" nowt="" vf=/dev/null gd="" pd=""
   case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
   file="${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
-  # Both config paths are kept, present or not: a .hermy.yml the command
-  # makes next to a live .claude/coddy.yml would shadow it. Each path's
-  # kind is recorded, with a copy of a file and the target of a link, so a
-  # record the command removed is told from a path that was absent. A
-  # config the user keeps as a link is kept as its content and its target.
-  # The legacy file next to a live .hermy.yml is ignored, and let go: its
-  # kind alone. A copy holds no more than 64 KiB and a byte, so a huge or
-  # sparse one stalls no hook there. A live config over 64 KiB could not be
+  # Every config path is kept (cfgs), present or not: a .hermy.yml or
+  # .coddy.yml the command makes above a live lower one would shadow it.
+  # Each path's kind is recorded, with a copy of a file and the target of a
+  # link, so a record the command removed is told from a path that was
+  # absent. A config the user keeps as a link is kept as its content and its
+  # target. A path below the live one is ignored, and let go: its kind
+  # alone. A copy holds no more than 64 KiB and a byte, so a huge or sparse
+  # one stalls no hook there. A live config over 64 KiB could not be
   # put back, so snap refuses every command while it is (in either guard
   # mode, the Edit tool, which guard holds, left to bring it under); one cut
   # short all the same grew past that between snap's check and its copy,
@@ -1347,11 +1356,13 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     admin || { code=2; die "$st"; }
     b=$(cfg default_branch); b="${b:-main}" ok=1
     wtool
-    for c in .hermy.yml "$legacy"; do
+    lo=""
+    for c in "${cfgs[@]}"; do
       p="$root/$c" s="$file.${c//\//_}"
       kind "$p" > "$s.kind" || ok=""
-      { [ "$c" = "$legacy" ] && [ -f "$root/.hermy.yml" ]; } && continue
+      [ -z "$lo" ] || continue
       { [ ! -f "$p" ] || head -c 65537 -- "$p" > "$s"; } && { [ ! -L "$p" ] || readlink "$p" > "$s.link"; } || ok=""
+      [ ! -f "$p" ] || lo=1
     done
     # Over its budget the fingerprint is an unchecked record: the command
     # runs, and the agent is told it goes unchecked (un),
@@ -1387,14 +1398,13 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # rejected too, the config left as the command left it. The records are
   # globbed by name, opened by none, and found whatever nullglob says. The
   # live config as snap saw it is the first path recorded as a file, and
-  # only it has a copy: the legacy file next to a live .hermy.yml has its
-  # kind alone.
+  # only it has a copy: a path below it has its kind alone.
   lost="that command left no snapshot of the main checkout at $file, so what it changed cannot be checked: a command may not touch the snapshot. Undo what it did."
   [ -f "$file" ] || die "$lost"
   grep -qx NOT_ONBOARDED "$file" && { for r in "$file".*; do { [ -e "$r" ] || [ -L "$r" ]; } && die "$lost"; done; rm -f "$file" "$file".*; exit 0; }
   common
   pre=""
-  for c in .hermy.yml "$legacy"; do
+  for c in "${cfgs[@]}"; do
     s="$file.${c//\//_}"; k=""; [ ! -f "$s.kind" ] || k=$(cat "$s.kind")
     case "$k" in file) [ -n "$pre" ] || { [ -f "$s" ] && pre=$s; } ;; absent|dir|fifo|other) ;; *) false ;; esac || die "$lost"
   done
@@ -1410,9 +1420,9 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # lock does not watch; a link the user keeps there, as it was, is not.
   # What is put back is a plain file. TMPDIR is the command's to write too,
   # so nothing there is opened unless it is a plain file: a FIFO planted at
-  # a snapshot name would hang trip. The legacy file is let go once
-  # .hermy.yml is live, when the command began or now (settled first,
-  # above): it is ignored then and cannot change the effective config. The
+  # a snapshot name would hang trip. A path is let go once a higher one is
+  # live, when the command began or now (settled first, above): it is
+  # ignored then and cannot change the effective config. The
   # default branch and the worktree tool are read from the snapshot's copy
   # of the config, as snap read it, not from what the command left. A copy
   # past 64 KiB is cut short (snap refuses a config past it, so this one grew between snap's
@@ -1420,9 +1430,12 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # it is.
   b=$(cfg default_branch "$pre" 2>/dev/null); b="${b:-main}" cap=""
   wtool "$pre" 2>/dev/null
-  for c in .hermy.yml "$legacy"; do
+  p="" s=""
+  for c in "${cfgs[@]}"; do
+    # Every path below the one live when the command began (pre), or a file
+    # once settled, is let go.
+    if [ -n "$p" ] && { [ "$s" = "$pre" ] || [ -f "$p" ]; }; then break; fi
     p="$root/$c" s="$file.${c//\//_}"
-    { [ "$c" = "$legacy" ] && { [ -f "$root/.hermy.yml" ] || [ "$pre" != "$s" ]; }; } && continue
     # Unchanged: the same link target (none for a plain file), the same kind
     # and, for a file, the same content.
     was=""; [ ! -f "$s.link" ] || was=$(cat "$s.link")
@@ -1540,11 +1553,13 @@ if [ "${1-}" = githook ]; then
   fi
   # The previous hook from .git/config alone, where start recorded it: like
   # .git/hooks, a sandbox keeps it out of an agent's reach, since git runs
-  # hooks outside the sandbox. .git/hermy is only data here.
-  p=$(git config --file "$root/.git/config" hermy.previousHooksPath); p="${p:-$root/.git/hooks}/$h"
-  # Never a hook hermy start wrote: a copy of hermy's own in .git/hooks, or another
-  # repository's .git/hooks/hermy as the previous path, would exec itself forever.
-  { [ -f "$p" ] && [ -x "$p" ] && ! head -c 4096 "$p" | grep -q '^# Written by hermy start: '; } || exit 0
+  # hooks outside the sandbox. .git/hermy is only data here. The record
+  # from before the rename, coddy.previousHooksPath, while hermy's is missing.
+  p=$(git config --file "$root/.git/config" hermy.previousHooksPath) || p=$(git config --file "$root/.git/config" coddy.previousHooksPath); p="${p:-$root/.git/hooks}/$h"
+  # Never a hook hermy start wrote, under either name: a copy of hermy's own in
+  # .git/hooks, or another repository's .git/hooks/hermy as the previous path,
+  # would exec itself forever.
+  { [ -f "$p" ] && [ -x "$p" ] && ! head -c 4096 "$p" | grep -qe '^# Written by hermy start: ' -e '^# Written by coddy start: '; } || exit 0
   # It is the project's own, and gets PATH as git gave the hook (HERMY_PATH),
   # in-repository entries and all, which hermy's own lookups went without.
   [ -z "${HERMY_PATH+x}" ] || { PATH=$HERMY_PATH; unset HERMY_PATH; }
@@ -1578,7 +1593,7 @@ if [ "${1-}" = forget ]; then
 fi
 # The config brought up to the current schema version: from:, to:, one
 # changed: line per change (tracked: after a move, legacy: file|link|dir|other
-# after a remove), then --- and the migrated file, every line and
+# and the path after a remove), then --- and the migrated file, every line and
 # comment kept; no --- block when the file itself needs no change. Read-only:
 # a shell write to the config is undone by trip, so /hermy:migrate writes it
 # with the Write tool. No version is 0, the layout from before .hermy.yml.
@@ -1596,7 +1611,7 @@ d2="add version: 2, and worktree: jj when no worktree key is set"
 if [ "${1-}" = migrate ]; then
   # The skill Reads and Writes these paths, which follow a link: only plain files.
   { [ -L .hermy.yml ] || { [ -e .hermy.yml ] && [ ! -f .hermy.yml ]; }; } && die ".hermy.yml is a link or not a plain file: replace it with the config itself by hand"
-  [ "$cname" != "$legacy" ] || [ ! -L "$legacy" ] || die "$legacy is a link: replace it with the config itself by hand"
+  [ "$cname" = .hermy.yml ] || [ ! -L "$cname" ] || die "$cname is a link: replace it with the config itself by hand"
   cur=2 v=$(cfg version | tr -d '[:space:]'); v=${v#"${v%%[!0]*}"}; v="${v:-0}"
   case "$v" in *[!0-9]*) die "version in $cname is not a whole number: $v" ;; esac
   # by length first, so a number too long for bash is refused without its error
@@ -1605,15 +1620,22 @@ if [ "${1-}" = migrate ]; then
   # the x keeps the file's trailing blank lines through each $(...)
   out=$(cat "$conf"; echo x) n=$v; out=${out%x}
   while [ "$n" -lt "$cur" ]; do n=$((n + 1)); out=$(printf '%s' "$out" | "m$n"; echo x); out=${out%x}; d="d$n"; echo "changed: ${!d}"; done
-  # tracked: whether git tracks the legacy file, so the skill keeps a personal
-  # config personal without a git rule of its own in allowed-tools.
-  if [ "$cname" = "$legacy" ]; then echo "changed: move $legacy -> .hermy.yml"
-    if git ls-files --error-unmatch -- "$legacy" >/dev/null 2>&1; then echo "tracked: yes"; else echo "tracked: no"; fi
-  elif [ -e "$legacy" ] || [ -L "$legacy" ]; then echo "changed: remove $legacy"
-    # legacy: its kind, so the skill backs up a file, removes a link unread and leaves the rest to the user
-    if [ -L "$legacy" ]; then echo "legacy: link"; elif [ -f "$legacy" ]; then echo "legacy: file"; elif [ -d "$legacy" ]; then echo "legacy: dir"; else echo "legacy: other"; fi
+  # tracked: whether git tracks the config moved from before the rename (the
+  # legacy file or .coddy.yml), so the skill keeps a personal config personal
+  # without a git rule of its own in allowed-tools.
+  if [ "$cname" != .hermy.yml ]; then echo "changed: move $cname -> .hermy.yml"
+    if git ls-files --error-unmatch -- "$cname" >/dev/null 2>&1; then echo "tracked: yes"; else echo "tracked: no"; fi
   fi
-  { [ "$v" -lt "$cur" ] || [ "$cname" = "$legacy" ]; } || exit 0
+  # Any other path from before the rename that holds anything is left over.
+  # legacy: its kind and path, so the skill backs up a file, removes a link
+  # unread and leaves the rest to the user.
+  for c in .coddy.yml "$legacy"; do
+    [ "$c" != "$cname" ] && { [ -e "$c" ] || [ -L "$c" ]; } || continue
+    echo "changed: remove $c"
+    if [ -L "$c" ]; then k=link; elif [ -f "$c" ]; then k=file; elif [ -d "$c" ]; then k=dir; else k=other; fi
+    echo "legacy: $k $c"
+  done
+  { [ "$v" -lt "$cur" ] || [ "$cname" != .hermy.yml ]; } || exit 0
   echo "---"; printf '%s' "$out"; exit 0
 fi
 cmd="${1-}" issue="${2-}"
@@ -1668,7 +1690,12 @@ if [ "$cmd" = doctor ]; then
     *) w="" ;;
   esac
   if [ -n "$w" ]; then
-    if [ -L "${w%%/*}" ] || [ -L "${w%/*}" ] || [ -L "$w" ] || [ ! -f "$w" ]; then say pr_check "$w is missing or not a plain file (fix: copy $tpl to $w)"
+    # The workflow from before the rename stands while hermy's is absent, when
+    # it is that template byte for byte: its blob id, which no install keeps.
+    ow=.github/workflows/coddy.yml
+    if [ "$w" = .github/workflows/hermy.yml ] && [ ! -e "$w" ] && [ ! -L "$w" ] && [ ! -L .github ] && [ ! -L .github/workflows ] && [ -f "$ow" ] && [ ! -L "$ow" ] &&
+      [ "$(git hash-object --no-filters -- "$ow" 2>/dev/null)" = 0c511fc1c01987a6677fc77e304f5476e113e541 ]; then say pr_check "ok ($ow, from before the rename)"
+    elif [ -L "${w%%/*}" ] || [ -L "${w%/*}" ] || [ -L "$w" ] || [ ! -f "$w" ]; then say pr_check "$w is missing or not a plain file (fix: copy $tpl to $w)"
     elif [ ! -f "$tpl" ]; then say pr_check "the install has no $tpl to compare $w with (fix: reinstall hermy)"
     elif ! cmp -s "$w" "$tpl"; then say pr_check "$w differs from $tpl (fix: copy it over $w)"
     elif [ "$w" != .gitlab/hermy.yml ]; then say pr_check ok
@@ -1678,9 +1705,11 @@ if [ "$cmd" = doctor ]; then
     elif awk '{ sub(/\r$/, ""); sub(/(^|[[:space:]])#.*/, "") } /^[^[:space:]-]/ { b = /^include:/ } b && /(^|[ \t"\047{[])\/?\.gitlab\/hermy\.yml([] \t"\047,}]|$)/ { f = 1 } END { exit !f }' <(head -c 1048576 .gitlab-ci.yml); then say pr_check ok
     else say pr_check ".gitlab-ci.yml does not include $w (fix: add an entry local: $w under its include:)"; fi
   fi
+  # one begin marker before one end, both hermy's or both from before the rename
+  mk() { awk -v b="<!-- $1 -->" -v e="<!-- $2 -->" 'index($0, b) { n++; if (!bl) bl = NR } index($0, e) { m++; if (!el) el = NR } END { exit !(n == 1 && m == 1 && bl < el) }' <(head -c 1048576 AGENTS.md); }
   if [ ! -f AGENTS.md ]; then say agents_md "AGENTS.md is missing or not a plain file (fix: add the block in step 6 of $inst/skills/onboard/SKILL.md)"
   elif [ "$(wc -c < AGENTS.md)" -gt 1048576 ]; then say agents_md "AGENTS.md is over 1 MiB, not read (fix: check the hermy block by hand)"
-  elif awk '/<!-- hermy:begin -->/ { b++; if (!bl) bl = NR } /<!-- hermy:end -->/ { e++; if (!el) el = NR } END { exit !(b == 1 && e == 1 && bl < el) }' <(head -c 1048576 AGENTS.md); then say agents_md ok
+  elif mk hermy:begin hermy:end || mk coddy:begin coddy:end; then say agents_md ok
   else say agents_md "AGENTS.md needs exactly one hermy:begin marker before one hermy:end (fix: replace the block with the one in step 6 of $inst/skills/onboard/SKILL.md)"; fi
   exit "$bad"
 fi
@@ -1769,7 +1798,9 @@ verify() {
 # (git resolves a relative one per worktree); the one it named before, none
 # included, is recorded in .git/config as hermy.previousHooksPath whenever it
 # was not this one, nor a .git/hooks/hermy by another path (a moved
-# checkout's), so a rerun keeps the record, for githook to hand off to.
+# checkout's), nor .git/hooks/coddy from before the rename, whose record,
+# coddy.previousHooksPath, is read while hermy's is missing, so a rerun keeps
+# the record, for githook to hand off to.
 # git runs hooks outside a sandbox, so Claude Code's keeps writes out of
 # .git/hooks and .git/config: what a hook runs is named in one or the other
 # and lies outside the root and its worktrees (start refuses $exe otherwise),
@@ -1793,18 +1824,19 @@ hooks() {
   # This directory by any spelling of the root, and absolute: git resolves a
   # relative core.hooksPath per worktree.
   ours() { case "$1" in /*) [ "$1" -ef "$d" ] ;; *) return 1 ;; esac; }
-  p=$(git config --local hermy.previousHooksPath)
+  p=$(git config --local hermy.previousHooksPath) || p=$(git config --local coddy.previousHooksPath)
   if ! ours "$(git config core.hooksPath)"; then
     new=1 o=$(git config --type=path core.hooksPath)
     # this directory by another spelling is not a hook to hand off to, and
-    # neither is hermy's by a path the checkout was moved from: the record stays
-    case "$o" in */.git/hooks/hermy|*/.git/hooks/hermy/) ;; *) { [ -n "$o" ] && [ "$o" -ef "$d" ]; } || p=$o ;; esac
+    # neither is hermy's by a path the checkout was moved from, nor the one
+    # from before the rename, by any spelling: the record stays
+    case "$o" in */.git/hooks/hermy|*/.git/hooks/hermy/|*/.git/hooks/coddy|*/.git/hooks/coddy/) ;; *) { [ -n "$o" ] && { [ "$o" -ef "$d" ] || [ "$o" -ef .git/hooks/coddy ]; }; } || p=$o ;; esac
   fi
   g="${p:-${d%/hermy}}"
   # Every name here is a plain file start wrote (its temps are dotfiles, which * skips).
   for f in "$d"/*; do
     { [ -e "$f" ] || [ -L "$f" ]; } || continue
-    { [ -f "$f" ] && [ ! -L "$f" ] && grep -q '^# Written by hermy start: ' "$f"; } || die "$f is not a hook hermy start wrote: a tool that installs into git's hooks path put it there. Move it to $g, where hermy runs it after its check, then run /hermy:start $issue again."
+    { [ -f "$f" ] && [ ! -L "$f" ] && grep -qe '^# Written by hermy start: ' -e '^# Written by coddy start: ' "$f"; } || die "$f is not a hook hermy start wrote: a tool that installs into git's hooks path put it there. Move it to $g, where hermy runs it after its check, then run /hermy:start $issue again."
   done
   # git hook names hold no dot (a .sample does) and are files (not this
   # directory, under .git/hooks); never this directory again, or it would loop;

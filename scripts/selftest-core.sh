@@ -48,6 +48,8 @@ git checkout -q -b main; echo hi > README.md; git add -A; git commit -q -m init;
 mkdir .claude sub
 
 t 1 "the core reads no CLAUDE_ variable" grep -q CLAUDE_ "$here/bin/hermy"
+# nor an input under the name from before the rename (spelled as a class, so this line holds no old name)
+t 1 "the core reads no input under the old name" grep -q 'C[O]DDY_' "$here/bin/hermy"
 t 0 "root: from HERMY_ROOT" rooted /
 t 0 "root: from the working directory without HERMY_ROOT" rooted "$repo" -u HERMY_ROOT
 t 0 "root: from a subdirectory without HERMY_ROOT" rooted "$repo/sub" -u HERMY_ROOT
@@ -64,7 +66,6 @@ verb=detect t 0 "detect: root from a subdirectory without HERMY_ROOT" rooted "$r
 t 0 "config: NOT_ONBOARDED before onboarding" says '^NOT_ONBOARDED$' run config
 t 0 "status: no config before onboarding" says '^config: none$' run status
 t 0 "detect: no config" says '^config: none$' run detect
-t 0 "detect: no legacy config" says '^legacy_config: none$' run detect
 # What is at AGENTS.md, so onboard writes its block into a plain file alone: a
 # link reads as one whether or not it reaches a file, never as the file behind it.
 t 0 "detect: no AGENTS.md" says '^agents_md: absent$' run detect
@@ -161,14 +162,21 @@ tripped 0 "onboarding: the command that writes the config is let through" 'print
 t 0 "onboarding: and the config stands" test -f .claude/coddy.yml
 t 0 "config: the legacy file is read when it is the only one" says '^worktree: git$' run config
 t 0 "status names the legacy file" says '^config: .claude/coddy.yml$' run status
-t 0 "detect: config present with the legacy file alone" says '^config: present$' run detect
-t 0 "detect: and reports it as legacy" says '^legacy_config: present$' run detect
+t 0 "detect names the legacy file alone" says '^config: .claude/coddy.yml$' run detect
 printf 'tracker: github\nworktree: git\ndefault_branch: main\nverify: test -f ok.txt\nroadmap: R.md\n' > .hermy.yml
 t 0 "config: .hermy.yml is read before the legacy file" says '^roadmap: R.md$' run config
 t 0 "status names .hermy.yml" says '^config: .hermy.yml$' run status
+# .coddy.yml, from before the rename, sits between the two.
+printf 'tracker: github\nworktree: git\ndefault_branch: main\nverify: test -f ok.txt\nroadmap: M.md\n' > .coddy.yml
+t 0 "config: .hermy.yml is read before .coddy.yml" says '^roadmap: R.md$' run config
+mv .hermy.yml "$tmp/h.yml"
+t 0 "config: .coddy.yml is read before the legacy file" says '^roadmap: M.md$' run config
+t 0 "status names .coddy.yml" says '^config: .coddy.yml$' run status
+t 0 "detect names .coddy.yml" says '^config: .coddy.yml$' run detect
+rm .coddy.yml; mv "$tmp/h.yml" .hermy.yml
 rm .claude/coddy.yml
 t 0 "config: .hermy.yml alone" says '^roadmap: R.md$' run config
-t 0 "detect: no legacy config next to .hermy.yml" says '^legacy_config: none$' run detect
+t 0 "detect names .hermy.yml" says '^config: .hermy.yml$' run detect
 t 0 "detect: .hermy.yml is not ignored" says '^config_ignored: no$' run detect
 printf '*.log' >> .git/info/exclude # a last line without its newline
 t 0 "exclude config: appends .hermy.yml" says '^excluded: .hermy.yml$' run exclude config
@@ -250,15 +258,35 @@ t 1 "migrate: a legacy source that is a link is refused" run migrate
 rm .claude/coddy.yml; cp "$tmp/v1.yml" .hermy.yml
 for k in file link dir; do
   case $k in file) cp "$tmp/v0.yml" .claude/coddy.yml ;; link) ln -s "$tmp/legacy.yml" .claude/coddy.yml ;; dir) mkdir .claude/coddy.yml ;; esac
-  t 0 "migrate: a leftover legacy $k says its kind" says "^legacy: $k\$" run migrate
+  t 0 "migrate: a leftover legacy $k says its kind and path" says "^legacy: $k .claude/coddy.yml\$" run migrate
   rm -r .claude/coddy.yml
 done
+# .coddy.yml, from before the rename, moves the same way, and is a leftover below .hermy.yml.
+rm .hermy.yml; cp "$tmp/v0.yml" .coddy.yml
+t 0 "migrate: moves .coddy.yml" says '^changed: move .coddy.yml -> .hermy.yml$' run migrate
+t 0 "migrate: says an untracked .coddy.yml is untracked" says '^tracked: no$' run migrate
+t 0 "migrate: the file after --- is the expected v2" after "$tmp/v1.yml"
+cp "$tmp/v0.yml" .claude/coddy.yml
+t 0 "migrate: a legacy file below a live .coddy.yml is a leftover" says '^legacy: file .claude/coddy.yml$' run migrate
+rm .claude/coddy.yml .coddy.yml; ln -s "$tmp/v0.yml" .coddy.yml
+t 1 "migrate: a .coddy.yml source that is a link is refused" run migrate
+rm .coddy.yml; cp "$tmp/v1.yml" .hermy.yml; cp "$tmp/v0.yml" .coddy.yml
+t 0 "migrate: a .coddy.yml below a current .hermy.yml says remove" says '^changed: remove .coddy.yml$' run migrate
+t 0 "migrate: and its kind and path" says '^legacy: file .coddy.yml$' run migrate
+t 1 "migrate: and prints no file for it" says '^---$' run migrate
+rm .coddy.yml
 mv "$tmp/live.yml" .hermy.yml
 
 # Editing .hermy.yml is for the user to allow, in both guard modes; without
 # jq the guard cannot tell which path is edited and fails closed.
 t 0 "guard asks on .hermy.yml" asks "$repo/.hermy.yml"
 for p in "$repo/./.hermy.yml" "$repo//.hermy.yml" "$repo/sub/../.hermy.yml" "$repo/.HERMY.YML" .hermy.yml; do t 0 "guard asks on .hermy.yml spelled $p" asks "$p"; done
+# .coddy.yml, live from before the rename while .hermy.yml is absent, the same way.
+casks() { out=$(guard "$1") && printf %s "$out" | jq -e '.hookSpecificOutput.permissionDecision == "ask" and (.hookSpecificOutput.permissionDecisionReason | contains(".coddy.yml"))'; }
+for p in "$repo/.coddy.yml" "$repo/sub/../.coddy.yml" "$repo/.CODDY.YML"; do t 0 "guard asks on .coddy.yml spelled $p" casks "$p"; done
+# and the legacy .claude/coddy.yml, in the agent dir, which is free otherwise.
+lasks() { out=$(guard "$1") && jq -e '.hookSpecificOutput.permissionDecision == "ask" and (.hookSpecificOutput.permissionDecisionReason | contains(".claude/coddy.yml"))' <<<"$out"; }
+HERMY_AGENT_DIR=.claude t 0 "guard asks on the legacy config" lasks "$repo/.claude/coddy.yml"
 # The Write tool collapses .. by name before it writes, so a .. after a link
 # out of the project still lands on the root's .hermy.yml.
 mkdir -p "$tmp/out/deep" && ln -s "$tmp/out/deep" lnk
@@ -346,7 +374,7 @@ t 0 "config: and is still that link" test -L .hermy.yml
 mkdir "$tmp/plant"
 for v in "$tmp/victim" "$tmp/nothing"; do
   echo keep > "$tmp/victim"
-  printf '#!/bin/sh\nfor n in "" .wt ..hermy.yml ..hermy.yml.kind ..hermy.yml.link .%s .%s.kind .%s.link; do ln -s "%s" "%s$n" 2>/dev/null; done\nexec "%s" "$@"\n' "${lgs#"$snapfile."}" "${lgs#"$snapfile."}" "${lgs#"$snapfile."}" "$v" "$snapfile" "$(command -v head)" > "$tmp/plant/head"; chmod +x "$tmp/plant/head"
+  printf '#!/bin/sh\nfor n in "" .wt ..hermy.yml ..hermy.yml.kind ..hermy.yml.link ..coddy.yml ..coddy.yml.kind ..coddy.yml.link .%s .%s.kind .%s.link; do ln -s "%s" "%s$n" 2>/dev/null; done\nexec "%s" "$@"\n' "${lgs#"$snapfile."}" "${lgs#"$snapfile."}" "${lgs#"$snapfile."}" "$v" "$snapfile" "$(command -v head)" > "$tmp/plant/head"; chmod +x "$tmp/plant/head"
   PATH="$tmp/plant:$PATH" wire snap w 2>/dev/null
   t 0 "snapshot: a link planted at each name is not written through: ${v##*/}" test "$(cat "$tmp/victim")" = keep
   t 1 "snapshot: nor is its target made: ${v##*/}" test -e "$tmp/nothing"
@@ -409,6 +437,24 @@ t 0 "config: which records its kind" test "$(cat "$lgs.kind")" = file
 t 1 "config: and no copy of it" test -e "$lgs"
 t 0 "config: and trip lets it go" wire trip w
 rm .claude/coddy.yml
+# .coddy.yml, from before the rename, sits between the two: restored while it
+# is live, a .hermy.yml made above it removed, a .coddy.yml made above the
+# live legacy file removed, and let go below a live .hermy.yml.
+mv .hermy.yml .coddy.yml
+tripped 2 "config: deleting a live .coddy.yml trips" 'rm .coddy.yml'
+t 0 "config: and it is restored" same .coddy.yml
+tripped 2 "config: a .hermy.yml created next to a live .coddy.yml trips" 'cp .coddy.yml .hermy.yml'
+t 1 "config: and is removed" test -e .hermy.yml
+t 0 "config: the .coddy.yml stands" same .coddy.yml
+mv .coddy.yml .claude/coddy.yml
+tripped 2 "config: a .coddy.yml created next to the live legacy file trips" 'cp .claude/coddy.yml .coddy.yml'
+t 1 "config: and is removed" test -e .coddy.yml
+mv .claude/coddy.yml .hermy.yml; cp .hermy.yml .coddy.yml
+tripped 0 "config: changing .coddy.yml next to a live .hermy.yml is quiet" 'echo "verify: true" >> .coddy.yml'
+t 0 "config: and the change stands" grep -q '^verify: true$' .coddy.yml
+tripped 0 "config: deleting .coddy.yml next to a live .hermy.yml is quiet" 'rm .coddy.yml'
+t 1 "config: and it is not restored" test -e .coddy.yml
+t 0 "config: the .hermy.yml stands" same .hermy.yml
 # A copy holds 64 KiB and a byte at most, so a .hermy.yml past 64 KiB could
 # not be put back: snap refuses every command while it is, in either guard
 # mode, naming /hermy:config, its size read from 64 KiB and a byte at most,
@@ -655,7 +701,7 @@ t 2 "snapshot: and so with nullglob inherited" env BASHOPTS=nullglob "$here/bin/
 # as a path that was absent: a weakened legacy file planted next to the live
 # .hermy.yml is let go, and a command that then removed .hermy.yml with its
 # copy alone would leave the planted one live.
-kinds() { wire snap w && [ "$(cat "$snapfile..hermy.yml.kind")" = "$1" ] && [ "$(cat "$lgs.kind")" = "$2" ]; }
+kinds() { wire snap w && [ "$(cat "$snapfile..hermy.yml.kind")" = "$1" ] && [ "$(cat "$lgs.kind")" = "$2" ] && [ "$(cat "$snapfile..coddy.yml.kind")" = absent ]; }
 t 0 "snapshot: records .hermy.yml as a file and the legacy path absent" kinds file absent
 HERMY_AGENT_DIR=.claude tripped 0 "snapshot: a legacy file planted next to the live .hermy.yml is let go" 'echo "guard: warn" > .claude/coddy.yml'
 report "snapshot: removing .hermy.yml with its copy alone then trips" 'rm -f "$snapfile..hermy.yml" .hermy.yml'
@@ -918,9 +964,9 @@ GIT_DIR="$tmp/origin.git" t 0 "shim: GIT_DIR in the environment does not move th
 GIT_DIR="$tmp/origin.git" t 2 "shim: so the guard still blocks the main checkout" shimguard "$repo/README.md"
 shimv() { CLAUDE_PROJECT_DIR=$repo HERMY_ROOT=/ bash "$here/scripts/$1.sh"; }
 t 0 "shim: config.sh takes the root from CLAUDE_PROJECT_DIR too" says '^tracker: github$' shimv config
-t 0 "shim: so does detect.sh" says '^config: present$' shimv detect
+t 0 "shim: so does detect.sh" says '^config: .hermy.yml$' shimv detect
 GIT_DIR="$tmp/origin.git" t 0 "shim: config.sh drops GIT_DIR too" says '^tracker: github$' shimv config
-GIT_DIR="$tmp/origin.git" t 0 "shim: so does detect.sh" says '^config: present$' shimv detect
+GIT_DIR="$tmp/origin.git" t 0 "shim: so does detect.sh" says '^config: .hermy.yml$' shimv detect
 HERMY_AGENT_DIR=.codex t 0 "agent dir: its worktree of a claimed issue is editable" guard "$repo/.codex/worktrees/1/a.txt"
 echo x > .worktrees/1/a.txt
 t 1 "push refuses another session" as sess-b 1 push 1 "feat(1): thing"
@@ -1264,21 +1310,21 @@ t 1 "githook: and pre-push to it" pp
 mv .hermy.yml "$tmp/aside"
 t 1 "removed config: with a claim and the git hooks left, pre-commit on main refuses" "$hooks/pre-commit"
 t 1 "removed config: and pre-push" pp
-t 0 "removed config: naming the missing config and the hooks directory" says 'no config file is at .hermy.yml or .claude/coddy.yml, yet .git/hooks/hermy is there' "$hooks/pre-commit"
+t 0 "removed config: naming the missing config and the hooks directory" says 'no config file is at .hermy.yml, .coddy.yml or .claude/coddy.yml, yet .git/hooks/hermy is there' "$hooks/pre-commit"
 t 2 "removed config: guard refuses an edit" guard "$repo/README.md"
 t 2 "removed config: snap refuses a command" wire snap w
-t 0 "removed config: snap names the config and the hooks directory" says 'no config file is at .hermy.yml or .claude/coddy.yml, yet .git/hooks/hermy is there' wire snap w
+t 0 "removed config: snap names the config and the hooks directory" says 'no config file is at .hermy.yml, .coddy.yml or .claude/coddy.yml, yet .git/hooks/hermy is there' wire snap w
 t 1 "removed config: and writes no not-onboarded snapshot" test -e "$snapfile"
 tm=$(guard "$repo/README.md" 2>&1)
-t 0 "removed config: guard names the config and the hooks directory" grep -q 'no config file is at .hermy.yml or .claude/coddy.yml, yet .git/hooks/hermy is there' <<<"$tm"
-t 0 "removed config: and both ways out, in words" grep -q 'write .hermy.yml with the Write tool.*remove the claim locks under .git/hermy and the .git/hooks/hermy directory, and set core.hooksPath back.*when that is empty or missing, unset core.hooksPath, never set it to an empty value' <<<"$tm"
+t 0 "removed config: guard names the config and the hooks directory" grep -q 'no config file is at .hermy.yml, .coddy.yml or .claude/coddy.yml, yet .git/hooks/hermy is there' <<<"$tm"
+t 0 "removed config: and both ways out, in words" grep -q 'write .hermy.yml with the Write tool.*remove the claim locks under .git/hermy and .git/coddy and the .git/hooks/hermy and .git/hooks/coddy directories, and set core.hooksPath back to the hermy.previousHooksPath that .git/config records (coddy.previousHooksPath when that is missing).*when that is empty or missing, unset core.hooksPath, never set it to an empty value' <<<"$tm"
 t 1 "removed config: with no command to paste" grep -qE 'git config |rm -|`' <<<"$tm"
 t 0 "removed config: and that a tracked config comes back from HEAD in your own terminal" grep -qF 'when git tracks it, restore it from HEAD with git in your own terminal' <<<"$tm"
 t 2 "removed config: guard refuses a path outside the project too" guard "$tmp/elsewhere.txt"
 t 0 "removed config: a Write of .hermy.yml is asked" asks "$repo/.hermy.yml"
 t 1 "removed config: naming no /hermy:config, which stops without a config" grep -qF '/hermy:config' <<<"$out"
-lasks() { out=$(guard "$1") && jq -e '.hookSpecificOutput.permissionDecision == "ask" and (.hookSpecificOutput.permissionDecisionReason | contains(".claude/coddy.yml"))' <<<"$out"; }
 t 0 "removed config: and one of .claude/coddy.yml" lasks "$repo/.claude/coddy.yml"
+t 0 "removed config: and one of .coddy.yml" casks "$repo/.coddy.yml"
 t 2 "removed config: but no other edit under .claude/" guard "$repo/.claude/notes.md"
 mv "$hooks" "$tmp/hooks-aside"
 t 2 "removed config: a claim alone is enough for guard" guard "$repo/README.md"
@@ -1374,6 +1420,45 @@ t 0 "moved checkout: start records the hook manager's core.hooksPath" test "$(gi
 mv "$mv1" "$mv2"; HERMY_ROOT="$mv2" run start 4 feat/4-mv >/dev/null 2>&1
 t 0 "moved checkout: start points core.hooksPath at the new path" test "$(git -C "$mv2" config core.hooksPath)" = "$mv2/.git/hooks/hermy"
 t 0 "moved checkout: and keeps that record, not the old path" test "$(git -C "$mv2" config --local hermy.previousHooksPath)" = .husky/_
+# A project onboarded before the rename (#463), as that version left it: its
+# config at .coddy.yml, its hooks under .git/hooks/coddy carrying the old
+# header, core.hooksPath there and the hook before them recorded in
+# coddy.previousHooksPath. start moves core.hooksPath to .git/hooks/hermy and
+# records that hook as hermy's, a commit on the claimed issue's branch passes
+# and runs it, and no hook with the old header ever runs.
+lg="$tmp/lg"
+git init -q --bare "$tmp/lgo.git"; git clone -q "$tmp/lgo.git" "$lg" 2>/dev/null
+mkdir "$tmp/lgprev"; printf '#!/bin/sh\necho prev >> "%s"\n' "$tmp/lg.log" > "$tmp/lgprev/pre-commit"; chmod +x "$tmp/lgprev/pre-commit"
+(cd "$lg" && git checkout -q -b main && echo hi > README.md && git add -A && git commit -q -m init && git push -q -u origin main && cp "$repo/.hermy.yml" .coddy.yml && mkdir .git/hooks/coddy &&
+  for h in pre-commit pre-push; do printf '#!/bin/sh\n# Written by coddy start: the hook from before the rename.\necho old >> "%s"; exit 1\n' "$tmp/lg.log" > .git/hooks/coddy/$h; chmod +x .git/hooks/coddy/$h; done &&
+  git config core.hooksPath "$lg/.git/hooks/coddy" && git config coddy.previousHooksPath "$tmp/lgprev")
+lgr() { HERMY_ROOT="$lg" run "$@"; }
+lgr start 5 feat/5-old >/dev/null 2>&1; lgr claim 5 >/dev/null 2>&1
+t 0 "old name: start points core.hooksPath at hermy's directory" test "$(git -C "$lg" config core.hooksPath)" = "$lg/.git/hooks/hermy"
+t 0 "old name: recording the hook before the old ones as hermy's" test "$(git -C "$lg" config --local hermy.previousHooksPath)" = "$tmp/lgprev"
+t 0 "old name: a commit on the claimed issue's branch passes" git -C "$lg/.worktrees/5" commit -q --allow-empty -m x
+t 0 "old name: running the hook before, never an old one" test "$(cat "$tmp/lg.log")" = prev
+t 1 "old name: a commit on the default branch is refused" git -C "$lg" commit -q --allow-empty -m x
+t 0 "old name: the old directory and record stay" test -x "$lg/.git/hooks/coddy/pre-commit" -a "$(git -C "$lg" config --local coddy.previousHooksPath)" = "$tmp/lgprev"
+lgr start 5 feat/5-old >/dev/null 2>&1
+t 0 "old name: a rerun keeps the record" test "$(git -C "$lg" config --local hermy.previousHooksPath)" = "$tmp/lgprev"
+git -C "$lg" config hermy.previousHooksPath "$lg/.git/hooks/coddy"; : > "$tmp/lg.log"
+t 0 "old name: githook never hands off to a hook carrying the old header" git -C "$lg/.worktrees/5" commit -q --allow-empty -m x
+t 0 "old name: which never ran" test ! -s "$tmp/lg.log"
+git -C "$lg" config --unset hermy.previousHooksPath
+t 0 "old name: githook reads coddy.previousHooksPath while hermy's is missing" git -C "$lg/.worktrees/5" commit -q --allow-empty -m x
+t 0 "old name: and runs that hook" test "$(cat "$tmp/lg.log")" = prev
+# Its leftovers are a removed config's too (left): with no config, the old
+# hooks directory alone, or a claim under the old records alone, refuses.
+lgguard() { printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$lg/README.md" | HERMY_ROOT="$lg" run guard; }
+mv "$lg/.coddy.yml" "$tmp/lg.yml"; rm -rf "$lg/.git/hooks/hermy" "$lg/.git/hermy"
+t 2 "old name: no config next to .git/hooks/coddy refuses an edit" lgguard
+t 0 "old name: naming it" says 'yet .git/hooks/coddy is there' lgguard
+mv "$lg/.git/hooks/coddy" "$tmp/lghooks"; mkdir -p "$lg/.git/coddy/5"
+t 2 "old name: and next to a claim under .git/coddy" lgguard
+t 0 "old name: naming it" says 'yet .git/coddy/5 is there' lgguard
+rmdir "$lg/.git/coddy/5"; mkdir "$lg/.git/coddy/swept"; : > "$lg/.git/coddy/5.branch"; : > "$lg/.git/coddy/.snap-x"
+t 0 "old name: its swept/, .branch record and dot names are no leftover" quiet lgguard
 
 # get.sh installs main from HERMY_REPO_URL into HERMY_HOME and links hermy
 # into HERMY_BIN, run as curl pipes it (the script on stdin), with no network.
@@ -1551,6 +1636,18 @@ prob "a hook git would skip" '^hooks: pre-push is not executable' 'chmod -x .git
 prob "hooks not installed" '^hooks: core.hooksPath is not set.*(fix: /hermy:start <issue>)' 'git config --unset core.hooksPath' 'git config core.hooksPath "$PWD/.git/hooks/hermy"'
 prob "PR check missing" '^pr_check: .*is missing or not a plain file (fix: copy ' 'rm .github/workflows/hermy.yml' 'cp "$here/templates/hermy.yml" .github/workflows/hermy.yml'
 prob "PR check different" '^pr_check: .*differs from ' 'echo x >> .github/workflows/hermy.yml' 'cp "$here/templates/hermy.yml" .github/workflows/hermy.yml'
+# The workflow from before the rename stands while hermy's is absent, when it is
+# that template byte for byte: this one with the old name back (old, built so
+# no line here holds it), as long as this template is unchanged since.
+old=$(printf 'c%sddy' o)
+(cd "$dp" && mv .github/workflows/hermy.yml "$tmp/hwf" && sed "s/hermy/$old/g" "$here/templates/hermy.yml" > ".github/workflows/$old.yml")
+t 0 "doctor: the PR check from before the rename, as its template was, stands" dsays "^pr_check: ok (.github/workflows/$old.yml, from before the rename)\$"
+t 0 "doctor: and all ok" dd doctor
+(cd "$dp" && echo x >> ".github/workflows/$old.yml")
+t 0 "doctor: one that differs does not" dsays '^pr_check: .github/workflows/hermy.yml is missing or not a plain file'
+(cd "$dp" && sed "s/hermy/$old/g" "$here/templates/hermy.yml" > ".github/workflows/$old.yml" && cp "$tmp/hwf" .github/workflows/hermy.yml && echo x >> .github/workflows/hermy.yml)
+t 0 "doctor: nor once hermy's is there" dsays '^pr_check: .*differs from '
+(cd "$dp" && rm ".github/workflows/$old.yml" && mv "$tmp/hwf" .github/workflows/hermy.yml)
 # tracker: gitlab holds the job file to the template, as github its workflow, and .gitlab-ci.yml to including it.
 glt="$here/templates/hermy.gitlab-ci.yml"; gli='include:\n  - local: .gitlab/hermy.yml\n'
 (cd "$dp" && sed -i.bak 's/^tracker:.*/tracker: gitlab/' .hermy.yml && rm .hermy.yml.bak && mkdir .gitlab && cp "$glt" .gitlab/hermy.yml && printf "$gli" > .gitlab-ci.yml)
@@ -1578,6 +1675,12 @@ prob "AGENTS.md missing" '^agents_md: AGENTS.md is missing' 'mv AGENTS.md "$tmp/
 prob "AGENTS.md without the block" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; echo "# x" > AGENTS.md' 'cp "$tmp/am" AGENTS.md'
 prob "AGENTS.md with a lone marker" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; sed -i.bak "/hermy:end/d" AGENTS.md; rm AGENTS.md.bak' 'cp "$tmp/am" AGENTS.md'
 prob "AGENTS.md with reversed markers" '^agents_md: AGENTS.md needs exactly one' 'cp AGENTS.md "$tmp/am"; sed -i.bak "s/hermy:begin/hermy:X/;s/hermy:end/hermy:begin/;s/hermy:X/hermy:end/" AGENTS.md; rm AGENTS.md.bak' 'cp "$tmp/am" AGENTS.md'
+# The block from before the rename stands, its markers both of that spelling.
+(cd "$dp" && cp AGENTS.md "$tmp/am" && sed -i.bak "s/hermy:begin/$old:begin/;s/hermy:end/$old:end/" AGENTS.md && rm AGENTS.md.bak)
+t 0 "doctor: AGENTS.md with the block from before the rename" dsays '^agents_md: ok$'
+(cd "$dp" && sed -i.bak "s/$old:end/hermy:end/" AGENTS.md && rm AGENTS.md.bak)
+t 0 "doctor: but not markers that mix both spellings" dsays '^agents_md: AGENTS.md needs exactly one'
+(cd "$dp" && cp "$tmp/am" AGENTS.md)
 # AGENTS.md as a link: to a file holding the block it reads ok, to a directory or nowhere it fails
 (cd "$dp" && mv AGENTS.md "$tmp/am" && ln -s "$tmp/am" AGENTS.md)
 t 0 "doctor: AGENTS.md linked to a file holding the block" dd doctor

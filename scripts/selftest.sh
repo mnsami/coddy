@@ -171,7 +171,7 @@ t 0 "onboard names the AGENTS.md end marker" grep -qF '<!-- hermy:end -->' "$her
 t 0 "onboard names the seven wizard steps in order" grep -qF 'checks → tracker → branch → verify → tiers → AGENTS.md → review' "$here/skills/onboard/SKILL.md"
 t 0 "onboard saves its answers under the agent dir" grep -qF '.claude/hermy/onboard-answers.json' "$here/skills/onboard/SKILL.md"
 t 0 "onboard backs up what it replaces under the agent dir" grep -qF '.claude/hermy/backup/' "$here/skills/onboard/SKILL.md"
-t 0 "onboard stops on an existing config and names /hermy:config" sh -c "grep -F 'config: present' '$here/skills/onboard/SKILL.md' | grep -qF '/hermy:config'"
+t 0 "onboard stops on an existing config and names /hermy:config" sh -c "grep -F 'naming a path, not' '$here/skills/onboard/SKILL.md' | grep -qF '/hermy:config'"
 t 0 "onboard stops on native Windows, writing nothing" grep -qF '`os: windows` → stop and write nothing' "$here/skills/onboard/SKILL.md"
 t 1 "onboard carries no install command for gh" grep -qiE 'install (-y )?(gh|github\.cli)( |$|`)' "$here/skills/onboard/SKILL.md"
 # No hook is live during onboard, so its pre-approved shell is the core's
@@ -774,7 +774,9 @@ leg() {
 
 printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml
 t 2 "guard blocks the main checkout" guard "$repo/README.md"
-t 0 "guard allows .claude/" guard "$repo/.claude/coddy.yml"
+t 0 "guard allows .claude/" quiet guard "$repo/.claude/notes.md"
+legask() { guard "$repo/.claude/coddy.yml" | jq -e '.hookSpecificOutput.permissionDecision == "ask"'; }
+t 0 "guard asks on the legacy config there" legask
 t 0 "guard allows .claude/settings.json" guard "$repo/.claude/settings.json"
 t 2 "guard blocks a Claude Code worktree under .claude/ without a claim" guard "$repo/.claude/worktrees/55/a.txt"
 t 2 "guard blocks one in any case of worktrees/" guard "$repo/.claude/WORKTREES/55/a.txt"
@@ -1161,7 +1163,7 @@ t 0 "warn: guard lets an unclaimed worktree through with the message" warned "$r
 mkdir -p .git/hermy/77 && echo "sess-z 1" > .git/hermy/77/owner # claimed by another session, in another process
 t 0 "warn: guard lets another session's worktree through, naming the owner" warned "$repo/.worktrees/77/a.txt" sess-a "belongs to session sess-z"
 rm -r .git/hermy/77
-t 0 "warn: guard says nothing about .claude/" test -z "$(guard "$repo/.claude/coddy.yml")"
+t 0 "warn: guard says nothing about .claude/" test -z "$(guard "$repo/.claude/notes.md")"
 tripped 2 "warn: the tripwire still trips" 'echo x > stray.txt'; rm -f stray.txt
 tripped 2 "warn: the config lock still holds" 'rm .claude/coddy.yml'
 t 0 "warn: the config came back as it was" grep -qx 'guard: warn' .claude/coddy.yml
@@ -2058,7 +2060,7 @@ rooted() (
   cd "$1" && export CLAUDE_PROJECT_DIR=$1
   bash "$here/scripts/issue.sh" status | grep -qx "root: $repo" || exit 1
   bash "$here/scripts/config.sh" | grep -q '^tracker:' || exit 1
-  bash "$here/scripts/detect.sh" | grep -qx 'config: present' || exit 1
+  bash "$here/scripts/detect.sh" | grep -qx 'config: .claude/coddy.yml' || exit 1
   bash "$here/scripts/detect.sh" | grep -qx "root: $repo" || exit 1
   printf '{"tool_input":{"file_path":"%s"}}' "$repo/README.md" | bash "$here/scripts/issue.sh" guard
   [ $? = 2 ]

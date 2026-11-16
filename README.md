@@ -4,6 +4,8 @@
 
 # hermy
 
+Formerly coddy; not affiliated with Coddy Agent or Coddy, Inc.
+
 [![CI](https://github.com/mnsami/coddy/actions/workflows/ci.yml/badge.svg)
 ](https://github.com/mnsami/coddy/actions/workflows/ci.yml) [![release][rb]][r]
 
@@ -107,7 +109,7 @@ flowchart TB
 | `/hermy:refresh` | After a merge, updates the other claimed worktrees from the default branch. |
 | `/hermy:triage` | Turns findings into issues, skipping ones already open. |
 | `/hermy:config [key=value]` | Shows `.hermy.yml` or changes the keys you name. |
-| `/hermy:migrate` | Brings the config to the current `version`, moving `.claude/coddy.yml` to `.hermy.yml`. |
+| `/hermy:migrate` | Brings the config to the current `version`, moving `.coddy.yml` or `.claude/coddy.yml` to `.hermy.yml`. |
 
 - `/hermy:onboard` is a seven-step wizard that saves your answers, so a run that stops resumes. It assumes one
   remote, `origin`, that you can write to, and write or triage access to the tracker's repository.
@@ -192,8 +194,9 @@ review_rounds: 3             # optional; 1-5 (default 3)
   Below version 2, an absent key means `jj`. `/hermy:config` refuses to switch it while an issue worktree exists.
 - `guard: warn` turns the edit guard's rejections into [notices](docs/enforcement.md#guard-warn).
   Set it with `/hermy:config guard=warn`.
-- A config without `version` is read as version 0. One at `.claude/coddy.yml` is read while `.hermy.yml` is absent.
-  `/hermy:migrate` updates either. Every skill but `/hermy:onboard` refuses to run without one.
+- A config without `version` is read as version 0. One at `.coddy.yml`, then `.claude/coddy.yml`, from before
+  the rename, is read while `.hermy.yml` is absent. `/hermy:migrate` updates any of them.
+  Every skill but `/hermy:onboard` refuses to run without one.
 - To leave the workflow, [follow these steps](docs/enforcement.md#leaving-the-workflow) from your own terminal.
 
 ## Related projects
