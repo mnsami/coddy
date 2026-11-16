@@ -34,38 +34,13 @@ because Claude Code writes that itself when you allow a command for good.
   Every change to it is reported, `permissions.allow` included.
   A same-size rewrite that keeps its inode and ctime is not.
 
-## What the text check reads
+## What the tripwire leaves to other layers
 
-Before a command runs, the hook reads its text, following quotes, `cd`, `git -C`, options and compound commands.
-It looks for a worktree add and for a push.
+The tripwire reads no command's text. It records the main checkout before a command and compares after it.
 
-- It cannot work out a path or word that is `"$p"`, a backtick, a glob, a brace, `~` or a line break.
-  The command passes with a notice.
-- Spellings that dodge it:
-  - a variable, `bash -c`, `eval`, a shell function (`p() { git "$@"; }`), a git alias, `sudo`;
-    the check reads the command's name, not what a function or alias runs;
-  - a `cd -`, or a `cd` in a pipeline;
-  - a quoted word such as `work"tree"`;
-  - a `case` pattern's `)` inside a `$(`, which it reads as closing the substitution early;
-  - a path through a symlink that it resolves by name.
-- Push checks are also dodged by a here-string or a pipe into a shell, `env -S`, and a wrapper or wrapper option
-  it does not know. Other `-c` keys are not read: `push.default=upstream`, `remote.<name>.mirror`,
-  `branch.<name>.pushRemote`.
-- The check afterwards still reports a worktree it missed, except from a background command.
-- It does not check the issue's claim. The edit guard does.
-- A call a working `jq` cannot read is refused. Under `guard: warn` it is a notice.
-
-How the push check reads a push:
-
-- It reads `HEAD` from the repository git would find, without running git.
-  From the command's own `-c` settings it reads only `remote.<name>.push`, `push.default=matching`
-  and `help.autocorrect`. It reads none of your git config.
-- It reads `HEAD` as it stands before the command runs. A command that moves it first is read by where it was.
-- A push with no refspec is read as the checked-out branch's, unless a `-c remote.<name>.push` or
-  `push.default=matching` says otherwise.
-- It refuses a push to a branch of the default branch's name in any repository.
-- It sees no `jj git push` force, because jj has no force flag and always pushes with a lease.
-- jj coverage is partial. A bare `jj git push`, or one with `-r` alone, passes with a notice,
-  since only jj knows which bookmarks it moves. The git hooks never run under jj.
-- A target it cannot work out passes with a notice.
-  After that only the git hooks and branch protection stand in the way, and under jj only branch protection.
+- A worktree outside `.worktrees/` and `.claude/worktrees/` is reported after it is made, not refused before.
+  A background command's goes unreported.
+- A push is not checked. The `pre-push` hook and branch protection hold a push to the default branch.
+  Under jj, which runs no git hooks, and past `--no-verify` or `git send-pack`, branch protection holds it alone.
+- A force push of a claimed issue's branch is allowed.
+- Deleting a claimed issue's branch is not refused yet (#269).

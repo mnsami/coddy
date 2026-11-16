@@ -7,10 +7,7 @@ The [README](../README.md) has the short version.
 flowchart LR
   subgraph L["On your machine: Claude Code hooks"]
     e["Claude edits a file"] -->|edit guard| e2["in the project, only inside<br/>a claimed .worktrees/42/"]
-    s["Claude runs a shell command"]
-    s2["refuses a worktree elsewhere,<br/>a push to main, a force push"]
-    s -->|reads it first| s2
-    s -->|checks after| s3["reports changes to the main checkout,<br/>puts .coddy.yml back"]
+    s["Claude runs a shell command"] -->|checks after| s3["reports changes to the main checkout<br/>and worktrees made elsewhere,<br/>puts .coddy.yml back"]
   end
   subgraph G["In git: any agent, not jj"]
     c["git commit, git push"] -->|git hooks| c2["refuse main and branches<br/>no claimed issue owns"]
@@ -182,8 +179,7 @@ A `PreToolUse` hook on Edit, Write and NotebookEdit.
   or in one another session claimed, and which command to run.
 - The ask on `.coddy.yml` stays an ask.
 - Everything in **Always refuses** stays refused, and so does a coddy crash.
-- Of the other layers, only the tripwire's worktree and push checks read the key. They become notices too:
-  a worktree add outside `.worktrees/`, a push to the default branch, every force push and every remote branch delete.
+- No other layer reads the key.
 - Set it with `/coddy:config guard=warn`. `/coddy:onboard` leaves the key out.
 
 ## Shell tripwire
@@ -202,7 +198,7 @@ The record (a fingerprint) holds:
 
 What it does with that:
 
-- **Stops** (under `guard: warn`, the refused commands below are let through with a notice):
+- **Stops:**
   - A change a command left in the main checkout, reported after it ran.
   - A new git worktree or jj workspace outside `.worktrees/<issue>/` and `.claude/worktrees/`, reported after it ran.
     The report gives its path and says whether the command made it, or moved, renamed or re-created it.
@@ -210,20 +206,16 @@ What it does with that:
     what the directory holds) or puts it back (`git worktree move`, `jj workspace rename`).
     It gives no command to paste, since a command can arrange for one to remove something it did not make.
     A worktree moved out of `.worktrees/<issue>/`, or reached there through a link, counts as outside.
-  - A `git worktree add` or `jj workspace add` that would put a worktree anywhere else, refused before it runs.
-    It names `/coddy:start <issue>`.
-  - A `git push`, `git send-pack` or `jj git push` to the default branch, refused before it runs.
-    It names `/coddy:ship`.
-  - Every force push and every remote branch delete, refused before it runs. Those are a person's to make.
-    That includes the issue's own branch.
   - A change to a settings file, reported after it ran. Claude is told to have you check it.
     coddy does not put the file back. See [Settings files](enforcement-limits.md#settings-files).
   - A change to `core.hooksPath`, reported once. A hook manager's install does it.
     husky's `prepare` script does it on every `npm install` or `npm ci`, in a worktree too.
 - **Lets through:**
-  - A dry run, `--help`, and `jj git push -c`.
-  - A command with a word it cannot work out. It passes with a notice.
-    A worktree it makes is still reported after the command. A push is not.
+  - Any command, before it runs: the tripwire does not read it.
+    A worktree it makes outside `.worktrees/<issue>/` is reported after it is made.
+  - Every push. The `pre-push` hook and branch protection hold a push to the default branch,
+    and under jj, which runs no git hooks, branch protection alone.
+    A force push of a claimed issue's branch is allowed. Its delete is not refused yet (#269).
   - A command whose main checkout takes more than 20 seconds to record. It runs, and Claude is told it went unchecked.
 - **Always refuses:** every shell command, in either guard mode, when:
   - `HOME` or `XDG_CONFIG_HOME` lies at or under the project, since git and jj read `core.fsmonitor` from there;
@@ -250,18 +242,15 @@ What it does with that:
     you set up in your git config, on a modified tracked file whose `.gitattributes` names it.
   - A jj workspace whose path jj cannot give (made before jj 0.38, or, before jj 0.46, its directory gone).
   - A git worktree moved, renamed or re-created by a command that also broke git's own record of worktrees.
-  - A worktree check or push check that was dodged.
-    See [What the text check reads](enforcement-limits.md#what-the-text-check-reads).
 - **Needs:** `git`, and `jj` where the project holds a `.jj` (0.38 or later to list its workspaces).
-  Without `jq`, the worktree and push checks pass with a notice.
 
 The long lists are on [Enforcement limits](enforcement-limits.md):
 
 - [A check that fails is never read as a clean one](
   enforcement-limits.md#a-check-that-fails-is-never-read-as-a-clean-one).
 - [Settings files](enforcement-limits.md#settings-files): what the tripwire compares there, and what it does not.
-- [What the text check reads](enforcement-limits.md#what-the-text-check-reads): how the worktree and push checks read
-  a command, and the spellings that dodge them.
+- [What the tripwire leaves to other layers](enforcement-limits.md#what-the-tripwire-leaves-to-other-layers):
+  a push, and a worktree before it is made.
 
 ## Config lock
 
@@ -310,12 +299,14 @@ They never run a `coddy` on `PATH`.
   They refuse people too.
 - **Lets through:**
   - A commit on a detached `HEAD`, a tag, and deleting a branch other than the default one.
+    A claimed issue's branch is no exception: its force push is allowed, and its delete is not refused yet (#269).
   - The hook `core.hooksPath` named before, or the one in `.git/hooks/`. It runs once the check passes.
   - Every other hook that old directory holds, a `commit-msg` say. It gets a pass-through,
     so pointing `core.hooksPath` elsewhere turns none of them off.
 - **Doesn't catch:**
   - `git commit --no-verify` and `git push --no-verify` skip them, and `git -c core.hooksPath=` runs without them.
-  - Under jj. jj runs no git hooks.
+  - Under jj. jj runs no git hooks, so only branch protection holds a push to the default branch.
+  - `git send-pack`, which runs no `pre-push`.
   - A merge, cherry-pick or revert runs no `pre-commit`. The push catches it.
   - A tool that sets `core.hooksPath` itself turns them off until the next `/coddy:start`.
     husky's `prepare` script does it on every `npm install` or `npm ci`, in a worktree too.
@@ -385,7 +376,8 @@ Branch protection and the PR check hold only when all of these are true.
 
 ## Branch protection
 
-The only layer that holds when a command edits, commits and pushes to the default branch in one go.
+The only layer that holds when a command edits, commits and pushes to the default branch in one go,
+and the only one that holds a push to it under jj, with `--no-verify` or by `git send-pack`.
 
 - **Stops:** a push to the default branch that skips a pull request, once you have set it.
 - **Doesn't catch:** anything, until you set it. coddy cannot set it: no MCP tool reads or writes protection.
