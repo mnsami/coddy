@@ -1691,10 +1691,11 @@ if [ "$cmd" = doctor ]; then
   esac
   if [ -n "$w" ]; then
     # The workflow from before the rename stands while hermy's is absent, when
-    # it is that template byte for byte: its blob id, which no install keeps.
+    # it is that template byte for byte: its blob id, which no install keeps,
+    # SHA-1's, so hashed outside the project, whose repository may use SHA-256.
     ow=.github/workflows/coddy.yml
     if [ "$w" = .github/workflows/hermy.yml ] && [ ! -e "$w" ] && [ ! -L "$w" ] && [ ! -L .github ] && [ ! -L .github/workflows ] && [ -f "$ow" ] && [ ! -L "$ow" ] &&
-      [ "$(git hash-object --no-filters -- "$ow" 2>/dev/null)" = 0c511fc1c01987a6677fc77e304f5476e113e541 ]; then say pr_check "ok ($ow, from before the rename)"
+      [ "$( (cd / && git hash-object --no-filters --stdin) < "$ow" 2>/dev/null)" = 0c511fc1c01987a6677fc77e304f5476e113e541 ]; then say pr_check "ok ($ow, from before the rename)"
     elif [ -L "${w%%/*}" ] || [ -L "${w%/*}" ] || [ -L "$w" ] || [ ! -f "$w" ]; then say pr_check "$w is missing or not a plain file (fix: copy $tpl to $w)"
     elif [ ! -f "$tpl" ]; then say pr_check "the install has no $tpl to compare $w with (fix: reinstall hermy)"
     elif ! cmp -s "$w" "$tpl"; then say pr_check "$w differs from $tpl (fix: copy it over $w)"
@@ -1705,11 +1706,13 @@ if [ "$cmd" = doctor ]; then
     elif awk '{ sub(/\r$/, ""); sub(/(^|[[:space:]])#.*/, "") } /^[^[:space:]-]/ { b = /^include:/ } b && /(^|[ \t"\047{[])\/?\.gitlab\/hermy\.yml([] \t"\047,}]|$)/ { f = 1 } END { exit !f }' <(head -c 1048576 .gitlab-ci.yml); then say pr_check ok
     else say pr_check ".gitlab-ci.yml does not include $w (fix: add an entry local: $w under its include:)"; fi
   fi
-  # one begin marker before one end, both hermy's or both from before the rename
+  # one begin marker before one end, both hermy's or, with no hermy marker at
+  # all (onboard's in-place replace reads it so), both from before the rename
   mk() { awk -v b="<!-- $1 -->" -v e="<!-- $2 -->" 'index($0, b) { n++; if (!bl) bl = NR } index($0, e) { m++; if (!el) el = NR } END { exit !(n == 1 && m == 1 && bl < el) }' <(head -c 1048576 AGENTS.md); }
+  nohm() { ! head -c 1048576 AGENTS.md | grep -qF -e '<!-- hermy:begin -->' -e '<!-- hermy:end -->'; }
   if [ ! -f AGENTS.md ]; then say agents_md "AGENTS.md is missing or not a plain file (fix: add the block in step 6 of $inst/skills/onboard/SKILL.md)"
   elif [ "$(wc -c < AGENTS.md)" -gt 1048576 ]; then say agents_md "AGENTS.md is over 1 MiB, not read (fix: check the hermy block by hand)"
-  elif mk hermy:begin hermy:end || mk coddy:begin coddy:end; then say agents_md ok
+  elif mk hermy:begin hermy:end || { nohm && mk coddy:begin coddy:end; }; then say agents_md ok
   else say agents_md "AGENTS.md needs exactly one hermy:begin marker before one hermy:end (fix: replace the block with the one in step 6 of $inst/skills/onboard/SKILL.md)"; fi
   exit "$bad"
 fi

@@ -178,7 +178,7 @@ oldname() (
   cd "$1" || exit 2 # paths below it alone: the checkout's own may hold the name
   if [ -e .git ]; then git ls-files -z; elif [ -d .jj ]; then jj file list -T 'path ++ "\0"'; else exit 2; fi > "$tmp/tracked" && [ -s "$tmp/tracked" ] || exit 2
   tr '\0' '\n' < "$tmp/tracked" | grep -i 'c[o]ddy' && exit 0
-  xargs -0 grep -IiH 'c[o]ddy' < "$tmp/tracked" 2>/dev/null | awk -v ok="$oldok" '
+  xargs -0 grep -IiH -e 'c[o]ddy' -- < "$tmp/tracked" 2>/dev/null | awk -v ok="$oldok" '
     { l = tolower($0); sub(/^[^:]*:/, "", l); n = split(tolower(ok), a, "|")
       for (i = 1; i <= n; i++) while ((p = index(l, a[i])) > 0) l = substr(l, 1, p - 1) substr(l, p + length(a[i]))
       if (index(l, "c" "oddy")) { print; f = 1 } } END { exit !f }'
@@ -194,7 +194,21 @@ git -C "$tmp/old" rm -qf ok.md; : > "$tmp/old/$(printf 'C%sDDY' O).txt"; git -C 
 t 0 "and a tracked path holding it in any case" oldname "$tmp/old"
 git -C "$tmp/old" rm -qf "$(printf 'C%sDDY' O).txt"
 t 2 "and fails where nothing is tracked" oldname "$tmp/old"
+: > "$tmp/old/-l"; printf 'run %s\n' "$(printf 'c%sddy' o)" > "$tmp/old/ok.md"; git -C "$tmp/old" add -- -l ok.md
+t 0 "and a tracked file named like an option is read as a file" oldname "$tmp/old"
 rm -rf "$tmp/old"
+# The jj leg: a jj workspace with no .git, its files tracked by hand.
+if command -v jj >/dev/null; then
+  jj git init --no-colocate "$tmp/old" >/dev/null 2>&1; jj -R "$tmp/old" config set --repo snapshot.auto-track 'none()' >/dev/null 2>&1
+  printf 'see .coddy.yml and mnsami/coddy\n' > "$tmp/old/ok.md"; jj -R "$tmp/old" file track 'root-file:"ok.md"' >/dev/null 2>&1
+  t 1 "jj: a workspace with no .git" test -e "$tmp/old/.git"
+  t 1 "jj: the old-name check passes the spellings it allows" oldname "$tmp/old"
+  printf 'run %s\n' "$(printf 'c%sddy' o)" > "$tmp/old/$(printf 'c%sddy' o).md"
+  t 1 "jj: and reads no untracked file, by path or by line" oldname "$tmp/old"
+  printf 'run %s\n' "$(printf 'c%sddy' o)" >> "$tmp/old/ok.md"
+  t 0 "jj: and finds a line with any other in a tracked file" oldname "$tmp/old"
+  rm -rf "$tmp/old"
+fi
 # onboard is a resumable wizard: the agenda in order, answers saved under the
 # agent dir, a stop on native Windows and on an existing config that names
 # /hermy:config, and no install command for gh (the PR check runs it inside

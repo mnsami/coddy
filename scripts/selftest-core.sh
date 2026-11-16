@@ -274,7 +274,9 @@ rm .coddy.yml; cp "$tmp/v1.yml" .hermy.yml; cp "$tmp/v0.yml" .coddy.yml
 t 0 "migrate: a .coddy.yml below a current .hermy.yml says remove" says '^changed: remove .coddy.yml$' run migrate
 t 0 "migrate: and its kind and path" says '^legacy: file .coddy.yml$' run migrate
 t 1 "migrate: and prints no file for it" says '^---$' run migrate
-rm .coddy.yml
+cp "$tmp/v0.yml" .claude/coddy.yml
+t 0 "migrate: both below a current .hermy.yml say remove, each" sh -c "'$here/bin/hermy' migrate | grep -c '^changed: remove \\(.coddy.yml\\|.claude/coddy.yml\\)\$' | grep -qx 2"
+rm .coddy.yml .claude/coddy.yml
 mv "$tmp/live.yml" .hermy.yml
 
 # Editing .hermy.yml is for the user to allow, in both guard modes; without
@@ -1667,6 +1669,13 @@ t 0 "doctor: one that differs does not" dsays '^pr_check: .github/workflows/herm
 (cd "$dp" && sed "s/hermy/$old/g" "$here/templates/hermy.yml" > ".github/workflows/$old.yml" && cp "$tmp/hwf" .github/workflows/hermy.yml && echo x >> .github/workflows/hermy.yml)
 t 0 "doctor: nor once hermy's is there" dsays '^pr_check: .*differs from '
 (cd "$dp" && rm ".github/workflows/$old.yml" && mv "$tmp/hwf" .github/workflows/hermy.yml)
+# The blob id held is SHA-1's, whatever object format the project's repository uses.
+if git init -q --object-format=sha256 "$tmp/d256" 2>/dev/null; then
+  mkdir -p "$tmp/d256/.github/workflows"; printf 'tracker: github\nworktree: git\ndefault_branch: main\n' > "$tmp/d256/.hermy.yml"
+  sed "s/hermy/$old/g" "$here/templates/hermy.yml" > "$tmp/d256/.github/workflows/$old.yml"
+  t 0 "doctor: the PR check from before the rename stands in a SHA-256 repository" sh -c "HERMY_ROOT='$tmp/d256' '$here/bin/hermy' doctor | grep -q '^pr_check: ok (.github/workflows/$old.yml, from before the rename)\$'"
+  rm -rf "$tmp/d256"
+fi
 # tracker: gitlab holds the job file to the template, as github its workflow, and .gitlab-ci.yml to including it.
 glt="$here/templates/hermy.gitlab-ci.yml"; gli='include:\n  - local: .gitlab/hermy.yml\n'
 (cd "$dp" && sed -i.bak 's/^tracker:.*/tracker: gitlab/' .hermy.yml && rm .hermy.yml.bak && mkdir .gitlab && cp "$glt" .gitlab/hermy.yml && printf "$gli" > .gitlab-ci.yml)
@@ -1699,6 +1708,9 @@ prob "AGENTS.md with reversed markers" '^agents_md: AGENTS.md needs exactly one'
 t 0 "doctor: AGENTS.md with the block from before the rename" dsays '^agents_md: ok$'
 (cd "$dp" && sed -i.bak "s/$old:end/hermy:end/" AGENTS.md && rm AGENTS.md.bak)
 t 0 "doctor: but not markers that mix both spellings" dsays '^agents_md: AGENTS.md needs exactly one'
+# onboard replaces the old block only with no hermy marker in the file, so a stray one is a problem.
+(cd "$dp" && sed -i.bak "s/hermy:begin/$old:begin/;s/hermy:end/$old:end/" AGENTS.md && rm AGENTS.md.bak && echo '<!-- hermy:begin -->' >> AGENTS.md)
+t 0 "doctor: nor the old block beside a lone hermy marker" dsays '^agents_md: AGENTS.md needs exactly one'
 (cd "$dp" && cp "$tmp/am" AGENTS.md)
 # AGENTS.md as a link: to a file holding the block it reads ok, to a directory or nowhere it fails
 (cd "$dp" && mv AGENTS.md "$tmp/am" && ln -s "$tmp/am" AGENTS.md)
