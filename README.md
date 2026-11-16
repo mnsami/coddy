@@ -5,8 +5,10 @@
 # coddy
 
 [![CI](https://github.com/mnsami/coddy/actions/workflows/ci.yml/badge.svg)
-](https://github.com/mnsami/coddy/actions/workflows/ci.yml)
+](https://github.com/mnsami/coddy/actions/workflows/ci.yml) [![release][rb]][r]
 
+[r]: https://github.com/mnsami/coddy/commits/main/.claude-plugin/plugin.json
+[rb]: https://img.shields.io/github/package-json/v/mnsami/coddy?filename=.claude-plugin%2Fplugin.json&label=release
 coddy is an issue-driven workflow for Claude Code. Every change Claude makes is tied to a claimed issue,
 lives in its own worktree and lands through a pull request. The tracker holds the state. The plugin holds the habits.
 
