@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `/coddy:start <issue>` thinks the issue through with the user, then implements it on a difficulty-matched model, hardens it twice and loops code + security review until nothing blocking is left, resuming where it stopped.
+**Goal:** `/hermy:start <issue>` thinks the issue through with the user, then implements it on a difficulty-matched model, hardens it twice and loops code + security review until nothing blocking is left, resuming where it stopped.
 
 **Architecture:** `start/SKILL.md` drives phases; each phase's sub-agent brief is a portable Markdown file next to it. Mechanics (phase, round, upheld disputes, summary) live in a new `issue.sh state` subcommand under the lock directory. Three config keys (`tiers`, `review_block`, `review_rounds`) join the three schema copies. `ship` reads the state into the PR body.
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Work only in `/Users/minasami/dev/private/coddy/.worktrees/88`. It is a jj workspace: commit with `jj commit -m`, never `git` inside it.
+- Work only in `/Users/minasami/dev/private/hermy/.worktrees/88`. It is a jj workspace: commit with `jj commit -m`, never `git` inside it.
 - Commit messages: `type: summary` (`feat`, `fix`, `chore`), ending with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - Skill bodies are terse imperative checklists: `condition → action` guards, numbered steps, per-tracker sub-bullets. No explanatory prose.
 - Frontmatter values contain no `: ` and no ` #`.
@@ -41,7 +41,7 @@ The design rests on this. If it fails, stop and report to the user before any ot
 - [ ] **Step 1: Build an onboarded scratch repo**
 
 ```bash
-S=$(mktemp -d); P=/Users/minasami/dev/private/coddy/.worktrees/88
+S=$(mktemp -d); P=/Users/minasami/dev/private/hermy/.worktrees/88
 git init -q --bare "$S/origin.git" && git clone -q "$S/origin.git" "$S/repo" 2>/dev/null
 cd "$S/repo" && git checkout -q -b main && echo hi > README.md && git add -A && git commit -q -m init && git push -q -u origin main
 mkdir .claude && printf 'tracker: github\nrepo: nobody/nothing\nworktree: git\ndefault_branch: main\nbranch: "{type}/{issue}-{slug}"\ncommit: "{type}: {summary}"\nverify: "true"\n' > .claude/coddy.yml
@@ -57,7 +57,7 @@ cd "$S/repo" && claude --plugin-dir "$P" --permission-mode acceptEdits --allowed
 - [ ] **Step 3: Read the result**
 
 ```bash
-test -f "$S/repo/.worktrees/1/spike.txt" && echo inside-written; test -f "$S/repo/outside.txt" && echo outside-written; cat "$S/repo/.git/coddy/1/owner"
+test -f "$S/repo/.worktrees/1/spike.txt" && echo inside-written; test -f "$S/repo/outside.txt" && echo outside-written; cat "$S/repo/.git/hermy/1/owner"
 ```
 
 Expected: `inside-written`, no `outside-written` (the guard is live for the sub-agent), and the owner line still names the parent's session id. Outcome A (expected) → continue. Outcome B (inside blocked with "belongs to session") → stop, report the quoted error and ask the user whether to proceed with the main agent implementing. Outcome C (outside written) → stop: hooks do not fire for sub-agents, report.
@@ -75,7 +75,7 @@ Post one comment on #88 (github `add_issue_comment`) with the three result lines
 - Test: `scripts/selftest.sh` (inside `leg()`, after the line `t 0 "$tool: guard allows a Claude Code worktree named for the claimed issue" …`; and in the sweep block after `t 1 "$tool: sweep removed its lock and branch record" …`)
 
 **Interfaces:**
-- Produces: `bash issue.sh state <issue>` prints the state file (`key=value` lines; nothing when empty), exit 0. `bash issue.sh state <issue> key=value… ` replaces each key's line; `key+=value` appends a line. Exit 1 with `coddy: …` on stderr when: the issue has no lock, the lock is a plain file, another session owns it, a key is not `[a-z_]+`, or an argument has no `=`. File: `.git/coddy/<issue>/state`.
+- Produces: `bash issue.sh state <issue>` prints the state file (`key=value` lines; nothing when empty), exit 0. `bash issue.sh state <issue> key=value… ` replaces each key's line; `key+=value` appends a line. Exit 1 with `hermy: …` on stderr when: the issue has no lock, the lock is a plain file, another session owns it, a key is not `[a-z_]+`, or an argument has no `=`. File: `.git/hermy/<issue>/state`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -106,25 +106,25 @@ In `scripts/selftest.sh`, inside `leg()`, after the line ending `guard "$repo/.c
 In the sweep block, right before the line `t 0 "$tool: sweep reports a merged, clean worktree as cleaned" …`, insert:
 
 ```bash
-  mkdir -p ".git/coddy/$p" && echo "phase=done" > ".git/coddy/$p/state"
+  mkdir -p ".git/hermy/$p" && echo "phase=done" > ".git/hermy/$p/state"
 ```
 
 and right after `t 1 "$tool: sweep removed its lock and branch record" …`, insert:
 
 ```bash
-  t 1 "$tool: sweep removed its state" test -e ".git/coddy/$p/state"
+  t 1 "$tool: sweep removed its state" test -e ".git/hermy/$p/state"
 ```
 
 Right after the line `t 0 "$tool: --take adopts a lock with no owner" run claim "$p" --take`:
 
 ```bash
-  rm -rf ".git/coddy/$p"; : > ".git/coddy/$p"
+  rm -rf ".git/hermy/$p"; : > ".git/hermy/$p"
   t 1 "$tool: state refuses a plain-file marker" run state "$p" phase=x
-  t 0 "$tool: and says to re-claim" says "/coddy:start $p" run state "$p" phase=x
-  rm -f ".git/coddy/$p"
+  t 0 "$tool: and says to re-claim" says "/hermy:start $p" run state "$p" phase=x
+  rm -f ".git/hermy/$p"
 ```
 
-(The existing next line `rm -rf ".git/coddy/$p"` stays harmless.)
+(The existing next line `rm -rf ".git/hermy/$p"` stays harmless.)
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -146,12 +146,12 @@ Insert before the `*)` case:
     # start's phase state: key=value lines in the lock directory, so sweep
     # removes them with the lock. Anyone may read; only the lock's owner
     # writes, held as push is. Values are written, never evaluated.
-    lock=".git/coddy/$issue" f=".git/coddy/$issue/state"
-    [ -e "$lock" ] || die "issue $issue is not In Progress. Run /coddy:start $issue."
+    lock=".git/hermy/$issue" f=".git/hermy/$issue/state"
+    [ -e "$lock" ] || die "issue $issue is not In Progress. Run /hermy:start $issue."
     [ $# -gt 2 ] || { cat "$f" 2>/dev/null; exit 0; }
-    [ -d "$lock" ] || die "issue $issue's claim is from before locks. Run /coddy:start $issue to re-claim it."
+    [ -d "$lock" ] || die "issue $issue's claim is from before locks. Run /hermy:start $issue to re-claim it."
     me="${CLAUDE_CODE_SESSION_ID-}"; owner "$issue"
-    [ -z "$sid" ] || [ -z "$me" ] || mine || die "the worktree of issue $issue belongs to session $sid. Run /coddy:start $issue to take it over."
+    [ -z "$sid" ] || [ -z "$me" ] || mine || die "the worktree of issue $issue belongs to session $sid. Run /hermy:start $issue to take it over."
     shift 2
     for kv; do
       case "$kv" in *=*) ;; *) die "state takes key=value or key+=value, got '$kv'" ;; esac
@@ -415,7 +415,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `issue.sh state` (Task 2), config keys (Task 3), briefs (Task 4).
-- Produces: plan comment whose first line is `<!-- coddy:plan -->`; state keys `phase` (think, implement, harden, review, done), `round`, `upheld`, `summary` that Task 6 reads.
+- Produces: plan comment whose first line is `<!-- hermy:plan -->`; state keys `phase` (think, implement, harden, review, done), `round`, `upheld`, `summary` that Task 6 reads.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -450,11 +450,11 @@ allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh"), Bash(bash "
 ## Worktrees
 !`bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" status`
 
-`NOT_ONBOARDED` → stop and say: run `/coddy:onboard` first.
+`NOT_ONBOARDED` → stop and say: run `/hermy:onboard` first.
 `tracker: jira` → every Atlassian MCP call takes `cloudId`: call `getAccessibleAtlassianResources` once and use the entry whose url is `jira.site`; me is `atlassianUserInfo`'s `accountId`. Those tools not loaded → stop and say the atlassian plugin needs to be authenticated.
 Lines under Cleaned up → say so first, in one sentence. `cleaned` is an issue whose PR merged and whose worktree was removed, so it has no worktree even if Worktrees still lists it; `kept` is a merged one whose worktree still holds work to push or discard, or that another running session still holds.
-Empty issue id, or `$onto` given without a base issue after it → stop and say: usage `/coddy:start <issue> [onto <base-issue>]`.
-`$base` is set and Worktrees does not list `$base=<branch>` → stop and say: run `/coddy:start $base` first, a branch can only be stacked on a claimed issue's.
+Empty issue id, or `$onto` given without a base issue after it → stop and say: usage `/hermy:start <issue> [onto <base-issue>]`.
+`$base` is set and Worktrees does not list `$base=<branch>` → stop and say: run `/hermy:start $base` first, a branch can only be stacked on a claimed issue's.
 `tracker: jira` and `$issue` is not a ticket key → stop and ask which ticket the work belongs to.
 
 ## Non-negotiable
@@ -463,9 +463,9 @@ Empty issue id, or `$onto` given without a base issue after it → stop and say:
 - One issue, one branch, one worktree. Every edit and commit for this issue happens in `.worktrees/$issue` on its own branch: never in the main checkout, never on `default_branch`, never on another issue's branch.
 - No code is edited before the user approves the plan (step 7). The ticket is one input, not the whole truth.
 
-Hooks enforce the first two: every Edit and Write outside a worktree whose issue step 4 has claimed is rejected, so is one inside a worktree another session claimed (the remedy is `/coddy:start <issue>`, which asks before taking it over), and any shell command that leaves a change in the main checkout is flagged. A rejection means a step was skipped: go back and do it, and undo what was flagged. Never route around it.
+Hooks enforce the first two: every Edit and Write outside a worktree whose issue step 4 has claimed is rejected, so is one inside a worktree another session claimed (the remedy is `/hermy:start <issue>`, which asks before taking it over), and any shell command that leaves a change in the main checkout is flagged. A rejection means a step was skipped: go back and do it, and undo what was flagged. Never route around it.
 
-Paths below are relative to `root`. State is `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" state $issue`: with no more arguments it prints `phase`, `round`, `upheld` and `summary` lines; `key=value` sets one, `upheld+=<title>` adds one. The briefs `implement.md`, `harden.md`, `review.md` and `security.md` sit next to this file. Asking the user means one question call per round; no such tool (headless) → print the questions and stop: `/coddy:start $issue` again resumes.
+Paths below are relative to `root`. State is `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" state $issue`: with no more arguments it prints `phase`, `round`, `upheld` and `summary` lines; `key=value` sets one, `upheld+=<title>` adds one. The briefs `implement.md`, `harden.md`, `review.md` and `security.md` sit next to this file. Asking the user means one question call per round; no such tool (headless) → print the questions and stop: `/hermy:start $issue` again resumes.
 
 ## Steps
 
@@ -483,32 +483,32 @@ Paths below are relative to `root`. State is `bash "${CLAUDE_PLUGIN_ROOT}/script
 
    `create` fails → show the output and stop. Never pass another issue id or branch to get past it. `jj_repo: no` while `worktree` is `jj`, or absent in a config below version 2, → first ask, then `jj git init --colocate; echo '.jj/' >> .git/info/exclude`.
 4. Move it to In Progress. A failure here → stop and report; do not continue. An issue whose branch has an open PR is past In Progress: its labels and status stay as they are; github still assigns you, since the PR check reads the assignee.
-   - github: I am `get_me`'s `login`. Step 1 shows the issue assigned to someone else and not to me, or labelled `in progress` with nobody assigned → stop and ask the user whether to take it over; only on a yes continue, with me as the only assignee, and say who lost it. Then `issue_write` `update`: `assignees` is the current list plus me (on a takeover, me alone); no open PR for `<branch>` (step 3, else `list_pull_requests` with `state: open` and `head: <owner>:<branch>`) → `labels` is the current list plus `in progress` as well; an open PR → leave `labels` out. No open PR → then `issue_read` `get_labels`: `in progress` missing → stop and say the label must exist in the repository first (create it under the repository's labels, then run `/coddy:start $issue` again). Then `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim $issue` records it.
+   - github: I am `get_me`'s `login`. Step 1 shows the issue assigned to someone else and not to me, or labelled `in progress` with nobody assigned → stop and ask the user whether to take it over; only on a yes continue, with me as the only assignee, and say who lost it. Then `issue_write` `update`: `assignees` is the current list plus me (on a takeover, me alone); no open PR for `<branch>` (step 3, else `list_pull_requests` with `state: open` and `head: <owner>:<branch>`) → `labels` is the current list plus `in progress` as well; an open PR → leave `labels` out. No open PR → then `issue_read` `get_labels`: `in progress` missing → stop and say the label must exist in the repository first (create it under the repository's labels, then run `/hermy:start $issue` again). Then `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim $issue` records it.
    - jira: read the ticket (`getJiraIssue`): assigned to someone else, or In Progress and not to me → stop and say who has it; take it over only when the user says so: assign to me (`editJiraIssue`), then the steps below with `claim $issue --take` in place of `claim $issue`. No open PR → assign to me (`editJiraIssue`, `fields: {assignee: {accountId: <me>}}`), then `executeRead` `listJiraIssueTransitions` and `transitionJiraIssue` with the id of the one that leads to the In Progress status (already there → no transition; none leads there → stop and list the available ones), then `getJiraIssue` again: status not In Progress or assignee not me → stop and report, no claim. Then, open PR or not, `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim $issue` to record it.
 
    Either tracker: `claim` is refused because another session holds the claim and is running, or a claim is in flight → stop and ask the user whether to take it over; only on a yes run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" claim $issue --take`. `claim` reports a takeover → say so in one line, naming the session it was taken from, and continue.
 
-   Resume: the latest comment from step 1 whose first line is `<!-- coddy:plan -->` is the agreed plan. None → step 5. One, and the worktree has no diff against its base (step 9) → step 8 with that plan. One and a diff → step 10 with that plan, keeping `upheld`. Say in one line where it resumes.
+   Resume: the latest comment from step 1 whose first line is `<!-- hermy:plan -->` is the agreed plan. None → step 5. One, and the worktree has no diff against its base (step 9) → step 8 with that plan. One and a diff → step 10 with that plan, keeping `upheld`. Say in one line where it resumes.
 5. Gather context beyond the ticket, read-only, and with sub-agents available hand this to a read-only one that returns at most 40 lines: issues and PRs the issue or its comments reference (github `issue_read` `get`, `pull_request_read` `get`; jira `getJiraIssue`), the last 15 commits on the paths involved (`git -C <root> log --oneline -15 origin/<default_branch> -- <paths>`), and the code itself in `.worktrees/$issue`.
 6. Think it through with the user. `state $issue phase=think`.
-   - A skill whose description says it brainstorms or plans work is available (not one of coddy's) → run it for this step. It writes nothing outside `.worktrees/$issue`; when it moves on to writing a plan document or implementing, stop it there and continue at step 7 with what it agreed.
+   - A skill whose description says it brainstorms or plans work is available (not one of hermy's) → run it for this step. It writes nothing outside `.worktrees/$issue`; when it moves on to writing a plan document or implementing, stop it there and continue at step 7 with what it agreed.
    - Otherwise ask, in rounds, until nothing is open: gaps in the ticket, contradictions between the ticket and the code or context, the assumptions you would otherwise make silently, two or three approaches with a recommendation, and acceptance criteria sharpened into observable checks. A one-line change still gets one round that confirms your reading of the ticket.
 7. Plan and approval. Rate the tier, the highest row that matches:
    - high: cross-cutting; a new interface, schema or config key; security-, lock- or concurrency-sensitive code; a root cause still unclear.
    - medium: several files in one area; tests to write; open questions settled in step 6.
    - low: one file or one obvious change, a known pattern, acceptance criteria already testable.
 
-   The model is `tiers.<agent>.<tier>`, `<agent>` being this agent's lower-case name (`claude`, `codex`, `gemini`, `cursor`, `copilot`). No `tiers.<agent>` → ask once for its low, medium and high models and say `/coddy:config` saves them; never guess a model name. Show the plan: the approach, the acceptance criteria as a checklist, and `Tier: <tier> (<model>): <one-line reason>`. No yes → back to step 6. On a yes, post it as an issue comment whose first line is `<!-- coddy:plan -->` (github `add_issue_comment`; jira `addOrEditJiraIssueComment`), then `state $issue phase=implement round=0`.
+   The model is `tiers.<agent>.<tier>`, `<agent>` being this agent's lower-case name (`claude`, `codex`, `gemini`, `cursor`, `copilot`). No `tiers.<agent>` → ask once for its low, medium and high models and say `/hermy:config` saves them; never guess a model name. Show the plan: the approach, the acceptance criteria as a checklist, and `Tier: <tier> (<model>): <one-line reason>`. No yes → back to step 6. On a yes, post it as an issue comment whose first line is `<!-- hermy:plan -->` (github `add_issue_comment`; jira `addOrEditJiraIssueComment`), then `state $issue phase=implement round=0`.
 8. Implement. Run `implement.md` as a sub-agent on the tier's model with: the absolute worktree path, the plan, `verify`, the `commit` pattern and the `worktree` tool. No sub-agents, or no choice of model → follow the brief yourself and say so once. Its open questions → ask the user, then run it again with the answers. Keep its out-of-scope ideas.
 9. Harden. `state $issue phase=harden`. Twice, each time a fresh sub-agent on the same model with `harden.md`, the diff, the plan, `verify`, `commit` and `worktree`. The diff is against the issue's base (`bases` entry, else `default_branch`): git `git -C .worktrees/$issue diff origin/<default_branch>...HEAD` (a `bases` entry: `<base>...HEAD`); jj `jj -R .worktrees/$issue diff -r '<default_branch>@origin..@'` (a `bases` entry: `'"<base>"..@'`). Keep its out-of-scope ideas.
 10. Review loop. `state $issue phase=review`. Each round, `round` one higher:
     1. Run `verify` in `.worktrees/$issue`. Non-zero → a blocking finding with the last 20 lines of output.
-    2. Code review: a skill whose description says it reviews code changes for bugs is available (not one of coddy's) → run it on the diff. None, or it would stop to ask with no question tool → a sub-agent on `tiers.<agent>.high` with `review.md`, the diff and the acceptance criteria.
-    3. Security review: a skill whose description says it reviews for security is available (not one of coddy's) → run it on the diff. None, or it would stop to ask with no question tool → a sub-agent on `tiers.<agent>.high` with `security.md` and the diff.
+    2. Code review: a skill whose description says it reviews code changes for bugs is available (not one of hermy's) → run it on the diff. None, or it would stop to ask with no question tool → a sub-agent on `tiers.<agent>.high` with `review.md`, the diff and the acceptance criteria.
+    3. Security review: a skill whose description says it reviews for security is available (not one of hermy's) → run it on the diff. None, or it would stop to ask with no question tool → a sub-agent on `tiers.<agent>.high` with `security.md` and the diff.
     4. Put every finding on critical, high, medium or low. Leave out those whose title is an `upheld` line.
     5. Blocking: a failing verify, and every finding at or above `review_block` (absent: `high`). None → step 11. A finding you judge wrong → ask the user; upheld → `state $issue "upheld+=<title>"`. The rest → `implement.md` in fix mode with those findings, then `state $issue round=<round>`.
-    6. `round` reached `review_rounds` (absent: `3`) with blocking findings left → list them and ask: another round, fix by hand and run `/coddy:start $issue` again, or go on to step 11 as is.
-11. Done. List the out-of-scope ideas from steps 8 to 10 and ask, for each: fold in, triage, or drop. Folded in → add them to the acceptance criteria, post the updated plan as a new `<!-- coddy:plan -->` comment, run `implement.md` in fix mode with them, then one more round of step 10. Triage → list them and say: run `/coddy:triage`. Then `state $issue phase=done "summary=<rounds> rounds; fixed: <titles>; left below <review_block>: <titles>; upheld: <titles>"` and say: run `/coddy:ship`.
+    6. `round` reached `review_rounds` (absent: `3`) with blocking findings left → list them and ask: another round, fix by hand and run `/hermy:start $issue` again, or go on to step 11 as is.
+11. Done. List the out-of-scope ideas from steps 8 to 10 and ask, for each: fold in, triage, or drop. Folded in → add them to the acceptance criteria, post the updated plan as a new `<!-- hermy:plan -->` comment, run `implement.md` in fix mode with them, then one more round of step 10. Triage → list them and say: run `/hermy:triage`. Then `state $issue phase=done "summary=<rounds> rounds; fixed: <titles>; left below <review_block>: <titles>; upheld: <titles>"` and say: run `/hermy:ship`.
 ````
 
 - [ ] **Step 3: Run the checks**
@@ -543,7 +543,7 @@ In the frontmatter, after `Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" pu
 Replace step 1 with:
 
 ```markdown
-1. Run `verify` inside `.worktrees/<issue>`. Non-zero exit → show the failing output and stop. Fixing belongs to the issue branch, not to this skill. Then `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" state <issue>`: `phase=done` → its `summary` goes into the PR body (step 3). Any other phase, or none → say start's review loop has not passed and ask whether to ship anyway; no, or no question tool → stop and say: run `/coddy:start <issue>`. Yes → the PR body says `Review loop not completed.`
+1. Run `verify` inside `.worktrees/<issue>`. Non-zero exit → show the failing output and stop. Fixing belongs to the issue branch, not to this skill. Then `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" state <issue>`: `phase=done` → its `summary` goes into the PR body (step 3). Any other phase, or none → say start's review loop has not passed and ask whether to ship anyway; no, or no question tool → stop and say: run `/hermy:start <issue>`. Yes → the PR body says `Review loop not completed.`
 ```
 
 - [ ] **Step 3: Add the Review section to the body**
@@ -575,13 +575,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 Line 3 becomes:
 
 ```markdown
-coddy's purpose stays the same: **every change an agent makes is tied to a claimed issue, lives in its own worktree, and lands through a pull request, enforced by tooling rather than by prompts.** Within one issue, coddy also runs its own stage from the agreed plan to a reviewed diff: an implementer on a model matched to the issue's difficulty, two hardening passes, and a code and security review loop.
+hermy's purpose stays the same: **every change an agent makes is tied to a claimed issue, lives in its own worktree, and lands through a pull request, enforced by tooling rather than by prompts.** Within one issue, hermy also runs its own stage from the agreed plan to a reviewed diff: an implementer on a model matched to the issue's difficulty, two hardening passes, and a code and security review loop.
 ```
 
 The Parallel-orchestrated bullet becomes:
 
 ```markdown
-- **Parallel-orchestrated**: launching and coordinating agents across issues. Out of scope; that stays with other tools, with coddy guarding underneath. Sub-agents inside one issue's stage are coddy's own (#88).
+- **Parallel-orchestrated**: launching and coordinating agents across issues. Out of scope; that stays with other tools, with hermy guarding underneath. Sub-agents inside one issue's stage are hermy's own (#88).
 ```
 
 In M1, after `- #13 Add a warn mode for the edit guard` add `- #88 Redesign start: think with the user, tier by difficulty, implement, harden, review and security loop`, and to the M1 go signals line append `; cold users ship a PR that passed start's review loop`.
@@ -590,13 +590,13 @@ In M1, after `- #13 Add a warn mode for the edit guard` add `- #88 Redesign star
 
 - "What this is": `the deliverable is six prompt files (\`skills/*/SKILL.md\`)` → `the deliverable is six prompt files (\`skills/*/SKILL.md\`), the four sub-agent briefs next to \`start\`'s (\`skills/start/{implement,harden,review,security}.md\`)`.
 - `issue.sh` paragraph: after `` `push` commits and pushes, `` add `` `state` records `start`'s phase, review round, upheld disputes and summary in the lock directory for the owner alone (anyone reads it, `ship` too), ``.
-- Replace the "Skill flow" line with: `Skill flow is \`onboard\` → \`next\` → \`start <issue>\` → \`ship\`, with \`triage\` feeding new issues back into the tracker. \`start\` runs from the claim to a reviewed diff in one command: context, thinking with the user, one plan approval with the tier inside it, then implementer, two hardening passes and the code and security review loop, as sub-agents on the briefs next to it (the main agent follows them itself without sub-agents); re-running it resumes from the \`<!-- coddy:plan -->\` comment and \`issue.sh state\`. Each skill ends by naming the next command rather than chaining into it, and each states what it must not do (\`ship\` never merges or fixes failures; \`onboard\` writes nothing but the config and, when accepted, the PR check workflow).`
+- Replace the "Skill flow" line with: `Skill flow is \`onboard\` → \`next\` → \`start <issue>\` → \`ship\`, with \`triage\` feeding new issues back into the tracker. \`start\` runs from the claim to a reviewed diff in one command: context, thinking with the user, one plan approval with the tier inside it, then implementer, two hardening passes and the code and security review loop, as sub-agents on the briefs next to it (the main agent follows them itself without sub-agents); re-running it resumes from the \`<!-- hermy:plan -->\` comment and \`issue.sh state\`. Each skill ends by naming the next command rather than chaining into it, and each states what it must not do (\`ship\` never merges or fixes failures; \`onboard\` writes nothing but the config and, when accepted, the PR check workflow).`
 - Known ceilings: append `; start's sub-agents run in the parent's process and session, so the lock and the guard cannot tell them apart from the parent: a sub-agent's edit counts as the session's own`.
 - "Config schema has three copies": after `` `guard` is the one key `onboard` never asks for `` add ``, with `review_block` and `review_rounds`; `tiers` it asks for the running agent only``.
 
 - [ ] **Step 3: README**
 
-Line 68 becomes `The lifecycle is \`next → start (think, implement, harden, review) → ship → merge\`.` The `/coddy:start` table row's description becomes:
+Line 68 becomes `The lifecycle is \`next → start (think, implement, harden, review) → ship → merge\`.` The `/hermy:start` table row's description becomes:
 
 ```markdown
 Fetches the issue, claims it, moves it to In Progress and gives it its own worktree in `.worktrees/<issue>`. Then reads beyond the ticket, thinks the work through with you, and asks for one approval of the plan with its difficulty tier. On a yes it implements on that tier's model, hardens the result twice, and loops code and security review until nothing at `review_block` or above is left (at most `review_rounds` rounds). Run it again to resume. Name a PR or branch, or let the issue's open PR be found: that branch instead. `onto` starts from another issue's branch instead of the default branch
@@ -626,15 +626,15 @@ Needs a GitHub repository the GitHub MCP plugin can read and write, where test i
 - [ ] **Step 2: A vague issue stops with questions**
 
 ```bash
-cd "$S/sandbox" && claude --plugin-dir "$P" --allowedTools "Skill(coddy:start) Bash mcp__plugin_github_github__issue_read mcp__plugin_github_github__issue_write mcp__plugin_github_github__get_me mcp__plugin_github_github__add_issue_comment mcp__plugin_github_github__list_pull_requests" -p "/coddy:start <A>"
+cd "$S/sandbox" && claude --plugin-dir "$P" --allowedTools "Skill(hermy:start) Bash mcp__plugin_github_github__issue_read mcp__plugin_github_github__issue_write mcp__plugin_github_github__get_me mcp__plugin_github_github__add_issue_comment mcp__plugin_github_github__list_pull_requests" -p "/hermy:start <A>"
 ```
 
-Expected: output lists questions; `git -C .worktrees/<A> status --porcelain` is empty; no `<!-- coddy:plan -->` comment on A.
+Expected: output lists questions; `git -C .worktrees/<A> status --porcelain` is empty; no `<!-- hermy:plan -->` comment on A.
 
-- [ ] **Step 3: Missing tier asks, never guesses** — remove `tiers` from the config, create issue B with clear acceptance criteria ("Add a `hello.sh` that prints hello; acceptance: `bash hello.sh` prints `hello`"), post a `<!-- coddy:plan -->` comment yourself, run step 2's command with `<B>`. Expected: output asks for the models; no `hello.sh` is written. Put `tiers` back.
+- [ ] **Step 3: Missing tier asks, never guesses** — remove `tiers` from the config, create issue B with clear acceptance criteria ("Add a `hello.sh` that prints hello; acceptance: `bash hello.sh` prints `hello`"), post a `<!-- hermy:plan -->` comment yourself, run step 2's command with `<B>`. Expected: output asks for the models; no `hello.sh` is written. Put `tiers` back.
 
-- [ ] **Step 4: A seeded finding causes a fix round, and the cap hands off** — in issue B's worktree, have the plan comment demand `hello.sh` also handle an empty `$1` safely; set `review_rounds: 1`; run interactively `claude --plugin-dir "$P"` then `/coddy:start <B>`. Expected: one review round runs, `issue.sh state <B>` shows `round=1`, and either the loop exits with no blocking finding or it lists what is left and asks the three-way question.
+- [ ] **Step 4: A seeded finding causes a fix round, and the cap hands off** — in issue B's worktree, have the plan comment demand `hello.sh` also handle an empty `$1` safely; set `review_rounds: 1`; run interactively `claude --plugin-dir "$P"` then `/hermy:start <B>`. Expected: one review round runs, `issue.sh state <B>` shows `round=1`, and either the loop exits with no blocking finding or it lists what is left and asks the three-way question.
 
-- [ ] **Step 5: ship carries the summary** — after step 4 reaches `phase=done`, run `/coddy:ship`. Expected: the PR body has a **Review** section with the summary. Close the PR and both issues afterwards.
+- [ ] **Step 5: ship carries the summary** — after step 4 reaches `phase=done`, run `/hermy:ship`. Expected: the PR body has a **Review** section with the summary. Close the PR and both issues afterwards.
 
 - [ ] **Step 6: Report** — post the results of steps 2–5 as one comment on #88 (github `add_issue_comment`), each with pass or fail and the evidence line.

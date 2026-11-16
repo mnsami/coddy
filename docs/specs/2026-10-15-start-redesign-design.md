@@ -2,7 +2,7 @@
 
 ## Problem
 
-`start` treats the ticket as the only context and goes straight to execution: step 2 only restates the issue, step 5 lets the model call the work trivial and skip asking, and its handoff to a planning skill drops coddy's own steps. There is no per-issue model choice, no hardening, and no review or security gate before `ship`.
+`start` treats the ticket as the only context and goes straight to execution: step 2 only restates the issue, step 5 lets the model call the work trivial and skip asking, and its handoff to a planning skill drops hermy's own steps. There is no per-issue model choice, no hardening, and no review or security gate before `ship`.
 
 ## Goals
 
@@ -10,7 +10,7 @@
 - One approval per issue: the plan, with the tier inside it.
 - Implementation runs on a model tier matched to the issue's difficulty.
 - The diff is hardened and passes code and security review before `ship`.
-- One command until ship: `/coddy:start <issue>` runs every phase and resumes where it stopped.
+- One command until ship: `/hermy:start <issue>` runs every phase and resumes where it stopped.
 - Vendor-agnostic: no skill is named, sub-agent briefs are plain Markdown, `tiers` is keyed per agent.
 
 Out of scope: adapters for other agents, sub-agent ownership outside Claude Code (#39), review on the opened PR.
@@ -26,12 +26,12 @@ skills/start/
   security.md     # security-review brief, used when no security skill is installed
 ```
 
-Each phase is recorded in `.git/coddy/<issue>/state` (see State).
+Each phase is recorded in `.git/hermy/<issue>/state` (see State).
 
 1. **claim**: fetch, create the worktree, claim. Unchanged; the claim stays first.
 2. **context**: linked and related issues and PRs, `git log` of the touched paths, the code. Read-only; delegated to a sub-agent when the host has one.
-3. **think**: an installed brainstorming or planning skill, bounded to `.worktrees/<issue>`, else coddy's own rounds: gaps, contradictions between ticket and code, assumptions, approaches with a recommendation, sharpened acceptance criteria. Never a "trivial" shortcut. Headless: print the questions and stop; a re-run resumes here.
-4. **approve**: the plan is the approach, the acceptance criteria and the tier with a one-line rubric reason. One user yes; then post it as an issue comment carrying `<!-- coddy:plan -->`.
+3. **think**: an installed brainstorming or planning skill, bounded to `.worktrees/<issue>`, else hermy's own rounds: gaps, contradictions between ticket and code, assumptions, approaches with a recommendation, sharpened acceptance criteria. Never a "trivial" shortcut. Headless: print the questions and stop; a re-run resumes here.
+4. **approve**: the plan is the approach, the acceptance criteria and the tier with a one-line rubric reason. One user yes; then post it as an issue comment carrying `<!-- hermy:plan -->`.
 5. **implement**: sub-agent on `tiers.<agent>.<tier>` with `implement.md`, the plan and the worktree path.
 6. **harden ×2**: a fresh sub-agent per pass, same tier, with `harden.md`, the diff, the acceptance criteria and the plan.
 7. **review loop**, repeated:
@@ -42,11 +42,11 @@ Each phase is recorded in `.git/coddy/<issue>/state` (see State).
    5. Findings at or above `review_block`, or a failing verify, go to `implement.md` in fix mode.
 
    Exit when verify passes and no finding reaches `review_block`, or after `review_rounds` rounds, handing what is left to the user. A finding the user upheld as a dispute is not raised again.
-8. **done**: list the out-of-scope ideas; per idea the user picks fold in (added to the acceptance criteria, plan comment updated, one more implement → review round), triage (name `/coddy:triage`), or drop. Write the summary to state and say: run `/coddy:ship`.
+8. **done**: list the out-of-scope ideas; per idea the user picks fold in (added to the acceptance criteria, plan comment updated, one more implement → review round), triage (name `/hermy:triage`), or drop. Write the summary to state and say: run `/hermy:ship`.
 
 ### Resume
 
-`/coddy:start <issue>` on a claimed issue reads the plan comment and the state:
+`/hermy:start <issue>` on a claimed issue reads the plan comment and the state:
 
 | Found | Resumes at |
 |---|---|
@@ -99,14 +99,14 @@ No brief asks the user: one that needs an answer stops and returns the question,
 
 ### Skill detection
 
-The host lists a skill whose description says it reviews code changes for bugs → run it on the worktree's diff; one whose description says security review → run that. coddy's own skills are excluded, and no skill is named in the text. Headless, an installed skill that would stop to ask counts as unavailable and the brief runs instead.
+The host lists a skill whose description says it reviews code changes for bugs → run it on the worktree's diff; one whose description says security review → run that. hermy's own skills are excluded, and no skill is named in the text. Headless, an installed skill that would stop to ask counts as unavailable and the brief runs instead.
 
 ## State
 
 `issue.sh state <issue>` prints it; `issue.sh state <issue> key=value…` sets keys.
 
 - Keys: `phase` (think, implement, harden, review, done), `round`, `upheld` (one disputed finding title per line), `summary`.
-- File: `.git/coddy/<issue>/state`, inside the lock directory, so sweep removes it with the lock.
+- File: `.git/hermy/<issue>/state`, inside the lock directory, so sweep removes it with the lock.
 - Writes need the lock to be this session's, the same rule as `push`.
 - Added to `allowed-tools` of `start` and `ship`.
 
@@ -121,7 +121,7 @@ After verify, `ship` reads `issue.sh state <issue>`:
 
 ## Docs
 
-- ROADMAP: the purpose line adds that within one issue coddy runs its own implement, harden and review stage; "Parallel-orchestrated" is narrowed to coordinating agents across issues; M1 lists #88 with the go signal "cold users ship a PR that passed the review loop".
+- ROADMAP: the purpose line adds that within one issue hermy runs its own implement, harden and review stage; "Parallel-orchestrated" is narrowed to coordinating agents across issues; M1 lists #88 with the go signal "cold users ship a PR that passed the review loop".
 - CLAUDE.md: skill flow, `issue.sh state`, the allowed-tools mirror for it, briefs as portable Markdown, and the known ceiling that in-process sub-agents share the parent's identity.
 - README: the new keys and the flow in one paragraph.
 

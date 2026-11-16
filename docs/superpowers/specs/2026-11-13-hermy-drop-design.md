@@ -1,4 +1,4 @@
-# coddy drop (#252)
+# hermy drop (#252)
 
 ## Why
 
@@ -6,9 +6,9 @@ A claim ends only when its PR merges (`sweep`). An abandoned issue keeps its loc
 
 ## Goals
 
-- `coddy drop <issue> [--force]` ends a claim locally: the worktree goes, then the lock and the `.branch`/`.base` records. The local branch stays.
-- `/coddy:drop <issue>` also ends the claim in the tracker: no `in progress`, no assignee, and a one-line comment. If you say yes, it closes an open PR.
-- `sweep` prints `kept: <n> (not merged)` for an unmerged claim whose owner is gone, and `next` offers `/coddy:drop <n>` for it.
+- `hermy drop <issue> [--force]` ends a claim locally: the worktree goes, then the lock and the `.branch`/`.base` records. The local branch stays.
+- `/hermy:drop <issue>` also ends the claim in the tracker: no `in progress`, no assignee, and a one-line comment. If you say yes, it closes an open PR.
+- `sweep` prints `kept: <n> (not merged)` for an unmerged claim whose owner is gone, and `next` offers `/hermy:drop <n>` for it.
 
 ## Non-goals
 
@@ -29,9 +29,9 @@ A claim ends only when its PR merges (`sweep`). An abandoned issue keeps its loc
 
 ## Design
 
-**bin/coddy**
+**bin/hermy**
 - `landed`, `ignored` and `lines` move out of the `sweep` case to top level. The removal code becomes one function:
-  - **Move to swept/:** when the worktree holds ignored files, or is dirty under `--force`, it moves whole to `.git/coddy/swept/<n>`, as #254 does today. If `swept/<n>` already exists, the worktree stays and the function reports it. Under git, `drop --force` first saves anything staged as `.coddy-staged.patch` in the worktree (`git diff-index --cached -p --binary HEAD`), since the index goes with the worktree's admin dir; a save that fails refuses the drop.
+  - **Move to swept/:** when the worktree holds ignored files, or is dirty under `--force`, it moves whole to `.git/hermy/swept/<n>`, as #254 does today. If `swept/<n>` already exists, the worktree stays and the function reports it. Under git, `drop --force` first saves anything staged as `.hermy-staged.patch` in the worktree (`git diff-index --cached -p --binary HEAD`), since the index goes with the worktree's admin dir; a save that fails refuses the drop.
   - **Otherwise:** `git worktree remove` / `jj workspace forget`.
   - **Last:** the lock and the `.branch`/`.base` records are removed. One that will not go once the worktree has gone is its own status: `sweep` still deletes the branch and prints `cleaned:`, `drop` prints a `left:` line for it.
   - **Branch:** the function never touches the branch. `sweep` deletes it after the function returns (as today: `git branch -D` / `jj bookmark forget`); `drop` keeps it.
@@ -59,10 +59,10 @@ A claim ends only when its PR merges (`sweep`). An abandoned issue keeps its loc
    - GitLab: `save_work_item` with `remove_labels: [in progress]` and the assignees minus me, then a `save_note`.
    - Jira: a To Do-category transition and unassign, then a comment.
    - Each tracker is read back afterwards. Anything still set is reported, never retried.
-6. End by naming `/coddy:next`.
+6. End by naming `/hermy:next`.
 
 **Skills touched:**
-- `next`: the cleanup rule covers `kept: <n> (not merged)`, shown with `/coddy:drop <n>` only when `<n>` matches the tracker id pattern (digits or a Jira key), else the line as printed.
+- `next`: the cleanup rule covers `kept: <n> (not merged)`, shown with `/hermy:drop <n>` only when `<n>` matches the tracker id pattern (digits or a Jira key), else the line as printed.
 - `start`: its cleanup sentence names the new kind of `kept:` line.
 - `onboard`: the AGENTS.md block's skill list gains `drop`.
 

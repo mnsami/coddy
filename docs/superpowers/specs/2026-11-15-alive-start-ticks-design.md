@@ -28,7 +28,7 @@
 
 ## Design
 
-**bin/coddy**
+**bin/hermy**
 - `ticks <pid>`: reads `/proc/<pid>/stat` with shell builtins, drops everything up to the last `) ` (the command name may hold spaces and parentheses), and prints field 22 (field 20 of the remainder) when it is all digits. It prints nothing otherwise, for example on macOS or with no `/proc`.
 - `myline` appends `t<ticks>` as a fifth field, but only when the fourth (UTC start) field is written. A line without `ps` stays as it is now, so 0.6.0 never reads the ticks as its start.
 - `owner` reads `read -r sid pid _ start tk _`. `tk` counts only when it matches `t[0-9]+`.

@@ -1,12 +1,12 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "coddy",
+  "name": "hermy",
   "description": "Mina's issue-driven development workflow for Claude Code.",
   "owner": { "name": "Mina Sami" },
   "plugins": [
     {
-      "name": "coddy",
-      "description": "Onboard a project, then /coddy:start, /coddy:ship, /coddy:triage, /coddy:next against GitHub Issues, GitLab or Jira.",
+      "name": "hermy",
+      "description": "Onboard a project, then /hermy:start, /hermy:ship, /hermy:triage, /hermy:next against GitHub Issues, GitLab or Jira.",
       "source": "./",
       "category": "productivity"
     }

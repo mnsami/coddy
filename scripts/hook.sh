@@ -14,7 +14,7 @@
 # topmost one holding a .git at all and, with none git takes, the project a
 # /.worktrees/ path names, since root resolution walks past a .git that is
 # no repository, a link or a commondir, and a command can plant those. An
-# entry is followed a component at a time (f, as bin/coddy's follow does), so
+# entry is followed a component at a time (f, as bin/hermy's follow does), so
 # its own spelling and every link on the way count, not only where it lands:
 # a link in the project a command repointed outside it, or one outside that
 # goes through one there. A link is read with /usr/bin/readlink,
@@ -25,7 +25,7 @@
 # bash left runs, once a -c : of it has: one that cannot run is refused,
 # exit 2, as no bash is, since /bin/sh's own exit for an exec that fails (1,
 # 126, 127) blocks nothing; a bash that goes between the two still gets that
-# exit. bin/coddy drops those at or under the root it resolves too (unpath,
+# exit. bin/hermy drops those at or under the root it resolves too (unpath,
 # the same walk). Shell builtins alone until then, readlink, head and tr aside.
 # POSIX sh, run without -p, which dash and BusyBox reject.
 r=${CLAUDE_PROJECT_DIR:-$PWD} t='' w='' k='' h='[0-9a-fA-F]' g='' v=''
@@ -77,8 +77,8 @@ while [ -n "$s" ]; do
   n=$n${n:+:}$d
   [ -n "$b" ] || [ ! -f "$d/bash" ] || [ ! -x "$d/bash" ] || b=$d/bash
 done
-[ -n "$b" ] || { printf '%s\n' "coddy: no bash on PATH outside the project at $r, so the coddy ${1-} hook cannot run, and the call is refused. An entry that is empty, relative or lies in the project is skipped, since a command in the project could plant a bash there." >&2; exit 2; }
+[ -n "$b" ] || { printf '%s\n' "hermy: no bash on PATH outside the project at $r, so the hermy ${1-} hook cannot run, and the call is refused. An entry that is empty, relative or lies in the project is skipped, since a command in the project could plant a bash there." >&2; exit 2; }
 PATH=$n
 export PATH
-"$b" -p -c : </dev/null >/dev/null 2>&1 || { printf '%s\n' "coddy: the bash at $b, the first on PATH outside the project, cannot run, so the coddy ${1-} hook cannot run, and the call is refused." >&2; exit 2; }
+"$b" -p -c : </dev/null >/dev/null 2>&1 || { printf '%s\n' "hermy: the bash at $b, the first on PATH outside the project, cannot run, so the hermy ${1-} hook cannot run, and the call is refused." >&2; exit 2; }
 exec "$b" -p "${0%/*}/issue.sh" "$@"

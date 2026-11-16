@@ -1,6 +1,6 @@
 ---
 name: simplest
-description: Coddy start's simplest-solution check. Only for use when the coddy:start skill delegates to it, which passes policy.md's path, the worktree path and the plan with its acceptance criteria.
+description: Hermy start's simplest-solution check. Only for use when the hermy:start skill delegates to it, which passes policy.md's path, the worktree path and the plan with its acceptance criteria.
 tools: Read, Grep, Glob, Bash, Skill
 model: inherit
 ---

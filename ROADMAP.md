@@ -1,8 +1,8 @@
 # Roadmap
 
-coddy's purpose stays the same: **every change an agent makes is tied to a claimed issue, lives in its own worktree, and lands through a pull request, enforced by tooling rather than by prompts.** Within one issue, coddy also runs its own stage from the agreed plan to a reviewed diff: an implementer on a model matched to the issue's difficulty, two hardening passes, and a code and security review loop.
+hermy's purpose stays the same: **every change an agent makes is tied to a claimed issue, lives in its own worktree, and lands through a pull request, enforced by tooling rather than by prompts.** Within one issue, hermy also runs its own stage from the agreed plan to a reviewed diff: an implementer on a model matched to the issue's difficulty, two hardening passes, and a code and security review loop.
 
-What this roadmap changes is reach and concurrency. coddy aims to support **Claude Code, Codex, Cursor, Copilot CLI and Gemini CLI or Antigravity CLI** (a spike picks the Google host, #150) first-class, and to stay correct when several terminals, a lead session with subagents or agent teams, or several teammates work the same repository.
+What this roadmap changes is reach and concurrency. hermy aims to support **Claude Code, Codex, Cursor, Copilot CLI and Gemini CLI or Antigravity CLI** (a spike picks the Google host, #150) first-class, and to stay correct when several terminals, a lead session with subagents or agent teams, or several teammates work the same repository.
 
 Each phase below is a [GitHub milestone](https://github.com/mnsami/coddy/milestones). Issue numbers are listed per milestone; the milestone pages are the live source.
 
@@ -10,7 +10,7 @@ Each phase below is a [GitHub milestone](https://github.com/mnsami/coddy/milesto
 
 | Layer | Role | Works with any agent? |
 | --- | --- | --- |
-| Agent hook adapters | Default. Block early, with instructions; `coddy doctor` reports each agent's protection level | Per agent |
+| Agent hook adapters | Default. Block early, with instructions; `hermy doctor` reports each agent's protection level | Per agent |
 | Git hooks + branch protection | The floor: nothing is committed or pushed to the default branch outside the workflow | Yes (git hooks not under jj, which doesn't run them; the push refusal in the shell hook covers `jj git push` too) |
 | PR check (GitHub Action) | Always on. Fails a PR that isn't linked to a claimed, in-progress issue. Keyed on the issue link, not the branch name, so cloud agents' own branches pass | Yes, including cloud agents |
 | Strict mode | Opt-in. Each agent's sandbox can only write to its issue's worktree | Yes |
@@ -19,7 +19,7 @@ Each phase below is a [GitHub milestone](https://github.com/mnsami/coddy/milesto
 
 - **Parallel-safe** (M1): sessions and agents can't corrupt each other's work.
 - **Parallel-convenient** (M5): running several at once is pleasant, not just safe.
-- **Parallel-orchestrated**: launching and coordinating agents across issues. Out of scope; that stays with other tools, with coddy guarding underneath. Sub-agents inside one issue's stage are coddy's own (#88).
+- **Parallel-orchestrated**: launching and coordinating agents across issues. Out of scope; that stays with other tools, with hermy guarding underneath. Sub-agents inside one issue's stage are hermy's own (#88).
 
 ## Milestones
 
@@ -44,8 +44,8 @@ Make parallel sessions safe on Claude Code, add the PR check, lower adoption fri
 Go signals (the waived gate's, kept as the bar #283 is read against): still in use at the end of 4 weeks of dogfooding; at least 3 of 5 cold users finish onboarding and ship a PR; at least 2 people outside the project file issues or PRs; cold users ship a PR that passed start's review loop.
 
 ### M2 · Agent-agnostic core
-Extract a `coddy` CLI core with no Claude Code dependencies; Claude Code becomes the first adapter.
-- #27 Extract an agent-agnostic coddy CLI core: `bin/coddy` on `CODDY_*` inputs and `.coddy.yml`, with `scripts/*.sh` as the Claude Code adapter (done)
+Extract a `hermy` CLI core with no Claude Code dependencies; Claude Code becomes the first adapter.
+- #27 Extract an agent-agnostic hermy CLI core: `bin/hermy` on `HERMY_*` inputs and `.hermy.yml`, with `scripts/*.sh` as the Claude Code adapter (done)
 - #28 Write an AGENTS.md section at onboarding and keep skills portable
 - #16 Post the restated acceptance criteria back to the issue (closed, folded into #88)
 
@@ -56,13 +56,13 @@ Enforcement every agent gets.
 - #14 Make git the default worktree tool, keep jj opt-in
 
 ### M4 · Agent adapters
-No adapter is built before the M6 spike (#40) reports; the M4 spikes (#30, the Copilot spike) run alongside. One plugin per agent, each carrying the same skills, briefs and `bin/coddy`; what differs is the manifest and the hook names.
+No adapter is built before the M6 spike (#40) reports; the M4 spikes (#30, the Copilot spike) run alongside. One plugin per agent, each carrying the same skills, briefs and `bin/hermy`; what differs is the manifest and the hook names.
 - #30 Spike: build agent adapters on an existing cross-agent hook layer
 - #31 Codex adapter: `.codex-plugin/plugin.json` with PreToolUse hooks
 - #32 Cursor adapter: a Cursor plugin; a blocking pre-edit hook is unconfirmed
 - #33 Copilot CLI adapter: loads the plugin's skills but drops the `args` of the exec form in `hooks/hooks.json` (so no hook guardrail runs) and expands nothing in skill bodies, so it needs its own hook manifest and shim
 - #150 Google adapter: Gemini CLI or Antigravity CLI, a spike picks; Gemini CLI's is an extension (`gemini-extension.json`) with BeforeTool hooks
-- #34 coddy doctor: prerequisites and per-agent enforcement level
+- #34 hermy doctor: prerequisites and per-agent enforcement level
 
 ### M5 · Parallel-convenient
 - #35 next --parallel N: pick issues that can safely run side by side
@@ -79,5 +79,5 @@ The spike (#40) reports before any M4 adapter is built.
 
 - **Maintenance.** Five agents' hook APIs are still changing. M4 starts with a spike on building on an existing cross-agent hook layer instead of maintaining five adapters here.
 - **Adoption is untested.** The M1 test window was waived (2026-10-15); #283's three cold-user sessions are the stand-in and run before any M4 adapter is built.
-- **Platform absorption.** GitHub already enforces the remote half for its own cloud agent. coddy's value rests on the local, cross-vendor layer and on tracker semantics (exclusive claims, Jira, lifecycle cleanup).
+- **Platform absorption.** GitHub already enforces the remote half for its own cloud agent. hermy's value rests on the local, cross-vendor layer and on tracker semantics (exclusive claims, Jira, lifecycle cleanup).
 - **Orchestrators can grow a guard.** Autonomous board executors such as [super-board](https://github.com/EricTechPro/super-board) already have worktree-per-card, atomic assignee claims, merged-worktree cleanup and a Codex host, and could add interactive-session enforcement from above. The defence is the same: tracker breadth (Jira), the human-in-the-merge promise, and being the guard a factory runs on top of rather than a rival to it.

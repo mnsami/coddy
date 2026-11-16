@@ -1,43 +1,43 @@
 #!/usr/bin/env bash
-# The coddy core: the mechanics of the workflow, and the guard that makes
+# The hermy core: the mechanics of the workflow, and the guard that makes
 # its rules binding, with no agent dependency. Claude Code reaches it through
 # the shims under scripts/, which map its environment onto the inputs below.
-#   coddy start  <issue> <branch> [base-issue]   worktree at .worktrees/<issue> on <branch>, from default_branch or the base issue's branch (alias: create)
-#   coddy claim  <issue> [--take]   lock the issue for this session, move it to In Progress
-#   coddy ship   <issue> [message] [-- <path>...]  verify, then commit the tracked changes and the untracked files named after --, and push (push: the push alone)
-#   coddy state  <issue> [key=value | key+=value ...]   print, or set, the issue's phase state for start and ship
-#   coddy verify <issue>            run the config's verify command in the issue's worktree, passing its exit code through
-#   coddy diff   <issue>            the worktree's diff against its base (default_branch on the remote, or the stacked issue's branch)
-#   coddy log    <issue> <path>...  the last 15 commits on the paths, on the issue's base
-#   coddy mark   <issue> [digest]   a fingerprint of the issue's worktree and its records under .git/coddy, its digest first; given one, exit 1 when it differs
-#   coddy sweep                     remove what issues with a merged PR left behind
-#   coddy drop   <issue> [--force]  end a claim here: its worktree, lock and records go, its branch stays; without --force, refused for uncommitted work or commits on no remote
-#   coddy refresh <issue>           bring the worktree up to date with default_branch on the remote (git: merge, jj: rebase) and verify it, in one line: current, refreshed, failed, conflict or skipped
-#   coddy status                    the root, the config path and the claimed worktrees, for the prompts
-#   coddy config | detect           the config, or NOT_ONBOARDED; facts about the project for onboarding
-#   coddy exclude answers | config  put the agent's coddy/ directory, or .coddy.yml, into git's info/exclude unless git ignores it already
-#   coddy forget answers            remove the agent's coddy/onboard-answers.json once the config is written
-#   coddy migrate                   the config brought up to the current schema version, for /coddy:migrate to write
-#   coddy doctor                    the install this runs from (its directory, how it got there, version and commit) and the bash on PATH, a platform: line on native Windows, which coddy does not run on, and, in a project, what is missing or off, one line per check; exit 1 on either
-#   coddy guard                     PreToolUse hook on Edit/Write (hooks/hooks.json)
-#   coddy snap | trip               Pre/PostToolUse hooks on Bash
-#   coddy githook pre-commit|pre-push   the git hooks start installs under .git/hooks/coddy
-#   coddy link <dir>                point <dir>/coddy at this file, the launcher the git hooks run (CODDY_EXEC); needs no project, prints nothing
-# Inputs, all optional: CODDY_ROOT, where root resolution starts ($PWD
-# without it); CODDY_SESSION and CODDY_PID, the session id and process the
+#   hermy start  <issue> <branch> [base-issue]   worktree at .worktrees/<issue> on <branch>, from default_branch or the base issue's branch (alias: create)
+#   hermy claim  <issue> [--take]   lock the issue for this session, move it to In Progress
+#   hermy ship   <issue> [message] [-- <path>...]  verify, then commit the tracked changes and the untracked files named after --, and push (push: the push alone)
+#   hermy state  <issue> [key=value | key+=value ...]   print, or set, the issue's phase state for start and ship
+#   hermy verify <issue>            run the config's verify command in the issue's worktree, passing its exit code through
+#   hermy diff   <issue>            the worktree's diff against its base (default_branch on the remote, or the stacked issue's branch)
+#   hermy log    <issue> <path>...  the last 15 commits on the paths, on the issue's base
+#   hermy mark   <issue> [digest]   a fingerprint of the issue's worktree and its records under .git/hermy, its digest first; given one, exit 1 when it differs
+#   hermy sweep                     remove what issues with a merged PR left behind
+#   hermy drop   <issue> [--force]  end a claim here: its worktree, lock and records go, its branch stays; without --force, refused for uncommitted work or commits on no remote
+#   hermy refresh <issue>           bring the worktree up to date with default_branch on the remote (git: merge, jj: rebase) and verify it, in one line: current, refreshed, failed, conflict or skipped
+#   hermy status                    the root, the config path and the claimed worktrees, for the prompts
+#   hermy config | detect           the config, or NOT_ONBOARDED; facts about the project for onboarding
+#   hermy exclude answers | config  put the agent's hermy/ directory, or .hermy.yml, into git's info/exclude unless git ignores it already
+#   hermy forget answers            remove the agent's hermy/onboard-answers.json once the config is written
+#   hermy migrate                   the config brought up to the current schema version, for /hermy:migrate to write
+#   hermy doctor                    the install this runs from (its directory, how it got there, version and commit) and the bash on PATH, a platform: line on native Windows, which hermy does not run on, and, in a project, what is missing or off, one line per check; exit 1 on either
+#   hermy guard                     PreToolUse hook on Edit/Write (hooks/hooks.json)
+#   hermy snap | trip               Pre/PostToolUse hooks on Bash
+#   hermy githook pre-commit|pre-push   the git hooks start installs under .git/hooks/hermy
+#   hermy link <dir>                point <dir>/hermy at this file, the launcher the git hooks run (HERMY_EXEC); needs no project, prints nothing
+# Inputs, all optional: HERMY_ROOT, where root resolution starts ($PWD
+# without it); HERMY_SESSION and HERMY_PID, the session id and process the
 # lock's owner line records and is compared with (a caller naming none is
-# not held to the owner); CODDY_AGENT_DIR, the agent's own directory under
+# not held to the owner); HERMY_AGENT_DIR, the agent's own directory under
 # the root, free to edit and skipped by snap, except its worktrees/<name>/,
-# held to <name>'s lock (none without it); CODDY_EXEC, the coddy the git
-# hooks start writes run (this file without it); CODDY_PATH, set by those
+# held to <name>'s lock (none without it); HERMY_EXEC, the hermy the git
+# hooks start writes run (this file without it); HERMY_PATH, set by those
 # hooks alone: the PATH git gave them, which githook hands the hook before,
 # its own PATH having lost every entry that is relative or in the repository;
-# CODDY_HOOKS, set to 1 by an adapter whose agent runs snap before each
+# HERMY_HOOKS, set to 1 by an adapter whose agent runs snap before each
 # shell command (any other value is none): start and claim then print
 # hooks: off, with Claude Code's causes, when snap left no mark for
-# CODDY_SESSION in the last 60 s.
-# The config is .coddy.yml at the root, or .claude/coddy.yml from before.
-# An issue counts as In Progress once the lock .git/coddy/<issue>/ exists.
+# HERMY_SESSION in the last 60 s.
+# The config is .hermy.yml at the root, or .claude/coddy.yml from before.
+# An issue counts as In Progress once the lock .git/hermy/<issue>/ exists.
 # Only claim makes it (mkdir -p for the directory alone; of two sessions
 # claiming at once the one that creates owner under set -C wins;
 # a plain-file marker from before locks still counts until the next claim
@@ -48,7 +48,7 @@
 # guard rejects every edit that is not inside a claimed
 # worktree, or is inside one another session claimed (with "guard: warn" in
 # the config it lets the edit through and says so).
-# create records the issue's branch in .git/coddy/<issue>.branch, and push
+# create records the issue's branch in .git/hermy/<issue>.branch, and push
 # pushes that branch and no other, for the lock's owner and no other session.
 # snap and trip fingerprint the main checkout around each shell command and
 # reject the command's result when it left new changes there, or a new
@@ -92,7 +92,7 @@ follow() {
   rp=${d:-/}
 }
 # Whether directory $1, or one above it, is one of ins (wtroots): a place a
-# command in the project can write, so a coddy there is no coddy for git to
+# command in the project can write, so a hermy there is no hermy for git to
 # run outside the sandbox.
 inproj() { local d=$1 w; while [ -n "$d" ]; do for w in "${ins[@]}"; do [ "$d" -ef "$w" ] && return 0; done; d=${d%/*}; done; return 1; }
 # PATH as the hooks' launcher (scripts/hook.sh) leaves it for directory $1:
@@ -137,17 +137,17 @@ unpath() {
 osname() { case "$1" in Darwin) echo macos ;; Linux) echo linux ;; CYGWIN*|MINGW*|MSYS*|Windows_NT) echo windows ;; *) echo unknown ;; esac; }
 
 # The install this runs from: its real directory, through a PATH link or a
-# shim that sources it; get.sh's when that is CODDY_HOME; then the bash on
+# shim that sources it; get.sh's when that is HERMY_HOME; then the bash on
 # PATH with its version, which the hooks run. Outside a project
 # that is all doctor prints, with a platform: line after it on native
-# Windows, which coddy does not run on, and bad, doctor's exit, starting at 1
+# Windows, which hermy does not run on, and bad, doctor's exit, starting at 1
 # there; inside one, the checks after the config guard.
 if [ "${1-}" = doctor ]; then
   p="${BASH_SOURCE[0]-}"
-  [ -n "$p" ] || { echo "coddy: doctor needs to run from its file, not stdin" >&2; exit 1; }
+  [ -n "$p" ] || { echo "hermy: doctor needs to run from its file, not stdin" >&2; exit 1; }
   follow "$p" || exit 1
   d=$(cd -P "${rp%/*}/.." && pwd -P) || exit 1
-  h=$(cd "${CODDY_HOME:-${HOME-}/.coddy}" 2>/dev/null && pwd -P)
+  h=$(cd "${HERMY_HOME:-${HOME-}/.hermy}" 2>/dev/null && pwd -P)
   v=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$d/.claude-plugin/plugin.json" 2>/dev/null | head -1)
   c=""; [ ! -e "$d/.git" ] || c=$(unset GIT_DIR GIT_WORK_TREE; git -C "$d" rev-parse --short HEAD 2>/dev/null)
   echo "install: $d"
@@ -157,22 +157,22 @@ if [ "${1-}" = doctor ]; then
   # the bash the hooks run, first on PATH as their launcher leaves it for the
   # project (unpath; type -P: a function named bash is not it), as it reports
   # its own version, unknown when that is no x.y.z; informational, never bad
-  u=$(unpath "${CODDY_ROOT:-$PWD}" && type -P bash) && { c=$("$u" -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}.${BASH_VERSINFO[2]}"' 2>/dev/null); [[ $c =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || c=""; u="$u ${c:-unknown}"; }
+  u=$(unpath "${HERMY_ROOT:-$PWD}" && type -P bash) && { c=$("$u" -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}.${BASH_VERSINFO[2]}"' 2>/dev/null); [[ $c =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || c=""; u="$u ${c:-unknown}"; }
   echo "bash: $(printf %s "${u:-missing}" | tr -d '[:cntrl:]')"
   inst=$d bad=0 u=$(uname -s 2>/dev/null | tr -d '[:cntrl:]')
-  [ "$(osname "$u")" != windows ] || { echo "platform: windows ($u) is not supported: coddy runs on macOS, Linux and WSL"; bad=1; }
+  [ "$(osname "$u")" != windows ] || { echo "platform: windows ($u) is not supported: hermy runs on macOS, Linux and WSL"; bad=1; }
 fi
 
-# link <dir>: <dir>/coddy, a link to this file by its real path, the launcher
+# link <dir>: <dir>/hermy, a link to this file by its real path, the launcher
 # an adapter keeps pointed at its current install for the git hooks to run
-# (CODDY_EXEC), so they outlive the install an update replaces. Only when it
+# (HERMY_EXEC), so they outlive the install an update replaces. Only when it
 # points elsewhere, made aside under a dot name and moved over, so a hook
 # never finds it missing, and never moved into a directory. Needs no project,
 # prints nothing and exits 0: an adapter runs it as a hook whose output an
 # agent reads.
 if [ "${1-}" = link ]; then
-  { follow "${BASH_SOURCE[0]-}" && [ -f "$rp" ] && [ -d "${2-}" ] && [ ! -d "$2/coddy" ] && [ "$(rdl "$2/coddy")" != "${rp}x" ] &&
-    rm -f "$2/.coddy.$$" && ln -s "$rp" "$2/.coddy.$$" && { mv -f "$2/.coddy.$$" "$2/coddy" || rm -f "$2/.coddy.$$"; }; } >/dev/null 2>&1
+  { follow "${BASH_SOURCE[0]-}" && [ -f "$rp" ] && [ -d "${2-}" ] && [ ! -d "$2/hermy" ] && [ "$(rdl "$2/hermy")" != "${rp}x" ] &&
+    rm -f "$2/.hermy.$$" && ln -s "$rp" "$2/.hermy.$$" && { mv -f "$2/.hermy.$$" "$2/hermy" || rm -f "$2/.hermy.$$"; }; } >/dev/null 2>&1
   exit 0
 fi
 
@@ -196,7 +196,7 @@ isgit() {
   fi
   [ -x "$c/objects" ] && [ -x "$c/refs" ]
 }
-# The project's main checkout, from CODDY_ROOT or the working directory: the
+# The project's main checkout, from HERMY_ROOT or the working directory: the
 # root, a subdirectory, an issue worktree (git or jj, whose workspace has no
 # .git and so reaches the main one) or an agent's own worktree. git names a
 # linked worktree's common dir by its real path, so the caller's own spelling
@@ -259,7 +259,7 @@ legacy=".claude/coddy.yml"
 # root: the nearest repository at or above $1 (physical) that holds a config.
 upcfg() {
   local g=$1
-  while [ -n "$g" ] && ! { [ -d "$g/.git" ] && { [ -f "$g/.coddy.yml" ] || [ -f "$g/$legacy" ]; }; }; do case "$g" in */*) g=${g%/*} ;; *) g="" ;; esac; done
+  while [ -n "$g" ] && ! { [ -d "$g/.git" ] && { [ -f "$g/.hermy.yml" ] || [ -f "$g/$legacy" ]; }; }; do case "$g" in */*) g=${g%/*} ;; *) g="" ;; esac; done
   [ -z "$g" ] || root=$g
 }
 # Root resolution's git. The hooks run it outside the sandbox before homes
@@ -270,7 +270,7 @@ upcfg() {
 # to the walk.
 case "${1-}" in guard|snap|trip) hk=1 ;; *) hk="" ;; esac
 rgit() { if [ -n "$hk" ]; then HOME=/dev/null XDG_CONFIG_HOME=/dev/null git "$@"; else git "$@"; fi; }
-dir="${CODDY_ROOT:-$PWD}" odd="" proj="" back="" groot="" stop=""
+dir="${HERMY_ROOT:-$PWD}" odd="" proj="" back="" groot="" stop=""
 if common=$(rgit -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd "$dir" && cd "$common/.." && pwd); then
   proj=1 groot=$root rel=$(cd "$dir" && pwd -P); g=$rel
   pg=$(cd "$groot" && pwd -P); case "$rel/" in "${pg%/}"/*) [ "$(cd "$dir" && cd "$common" 2>/dev/null && pwd -P)" != "${pg%/}/.git" ] || stop=$pg ;; esac
@@ -285,17 +285,17 @@ if common=$(rgit -C "$dir" rev-parse --git-common-dir 2>/dev/null) && root=$(cd 
   # when git walked past the link (a root strictly above, not the odd
   # directory git took itself), else at the nearest repository above that
   # holds one.
-  if [ -n "$odd" ] && [ ! -f "$root/.coddy.yml" ] && [ ! -f "$root/$legacy" ]; then
+  if [ -n "$odd" ] && [ ! -f "$root/.hermy.yml" ] && [ ! -f "$root/$legacy" ]; then
     pb=$(cd "$back" && pwd -P)
     case "$pb/" in "$(cd "$groot" && pwd -P)"/?*) root=$groot ;; *) upcfg "$pb" ;; esac
-    [ -f "$root/.coddy.yml" ] || [ -f "$root/$legacy" ] || { [ ! -f "$groot/.coddy.yml" ] && [ ! -f "$groot/$legacy" ]; } || root=$groot
+    [ -f "$root/.hermy.yml" ] || [ -f "$root/$legacy" ] || { [ ! -f "$groot/.hermy.yml" ] && [ ! -f "$groot/$legacy" ]; } || root=$groot
   fi
   rel="${rel#"$root"/}"
   case "$dir" in */"$rel") root="${dir%/"$rel"}" ;; esac
 else
   root="$dir"; g=$(cd "$dir" 2>/dev/null && pwd) || g=$dir; top=""
   case "$g" in */.worktrees/*) top="${g%%/.worktrees/*}"; root=$top ;; esac
-  [ -n "$top" ] || ! { [ -f "$g/.coddy.yml" ] || [ -f "$g/$legacy" ]; } || top=$g
+  [ -n "$top" ] || ! { [ -f "$g/.hermy.yml" ] || [ -f "$g/$legacy" ]; } || top=$g
   walk
   # Never above the project a .worktrees/ path names: a repository up there
   # (the project nested in another) is no root of ours.
@@ -313,12 +313,12 @@ fi
 # found: git failing in a worktree whose .git is garbage lands on the second
 # branch, with the root's .git untouched. No .git there is a plain jj root.
 [ -n "$odd" ] || if [ -e "$root/.git" ] || [ -L "$root/.git" ] || [ -n "$proj" ]; then
-  if [ ! -e "$root/.git" ] && [ ! -L "$root/.git" ] && [ -n "$proj" ] && [ ! -f "$root/.coddy.yml" ] && [ ! -f "$root/$legacy" ] && { [ -z "$back" ] || { [ ! -e "$back/.git" ] && [ ! -L "$back/.git" ]; }; }; then
+  if [ ! -e "$root/.git" ] && [ ! -L "$root/.git" ] && [ -n "$proj" ] && [ ! -f "$root/.hermy.yml" ] && [ ! -f "$root/$legacy" ] && { [ -z "$back" ] || { [ ! -e "$back/.git" ] && [ ! -L "$back/.git" ]; }; }; then
     # a bare repository in no project (git's root, its parent, has no .git and nothing above holds one)
     proj=""
   elif [ -L "$root/.git" ] || [ ! -d "$root/.git" ]; then
     odd="$root/.git"
-    [ -f "$root/.coddy.yml" ] || [ -f "$root/$legacy" ] || [ -z "$back" ] || { [ ! -f "$back/.coddy.yml" ] && [ ! -f "$back/$legacy" ]; } || { [ -d "$back/.git" ] && [ ! -L "$back/.git" ]; } || root=$back
+    [ -f "$root/.hermy.yml" ] || [ -f "$root/$legacy" ] || [ -z "$back" ] || { [ ! -f "$back/.hermy.yml" ] && [ ! -f "$back/$legacy" ]; } || { [ -d "$back/.git" ] && [ ! -L "$back/.git" ]; } || root=$back
     [ -e "$odd" ] || [ -L "$odd" ] || odd="$root/.git"
   elif [ -e "$root/.git/commondir" ] || [ -L "$root/.git/commondir" ]; then odd="$root/.git/commondir"
   fi
@@ -329,11 +329,11 @@ fi
 # starts at the project, as the strip does, never at the link inside it.
 if [ -z "$odd" ] || [ -n "$proj" ]; then :; else
   if [ -n "$top" ]; then root=$top
-  elif [ ! -f "$root/.coddy.yml" ] && [ ! -f "$root/$legacy" ]; then upcfg "$(cd "$root" 2>/dev/null && pwd -P || echo "$root")"; fi
+  elif [ ! -f "$root/.hermy.yml" ] && [ ! -f "$root/$legacy" ]; then upcfg "$(cd "$root" 2>/dev/null && pwd -P || echo "$root")"; fi
 fi
 # A .git ($1, else odd) that is a gitdir: file (a submodule's, a bare repository's worktree's).
 gitlink() { local f=${1-$odd} l=""; case "$f" in */commondir) return 1 ;; esac; [ -L "$f" ] || [ ! -f "$f" ] || { IFS= read -r -d '' -n 1024 l < "$f"; } 2>/dev/null; [[ $l == gitdir:* ]]; }
-glmsg="is a file naming a git dir elsewhere, and coddy does not run its hooks in a checkout whose .git points at a git dir elsewhere (a submodule or a bare repository's worktree included)"
+glmsg="is a file naming a git dir elsewhere, and hermy does not run its hooks in a checkout whose .git points at a git dir elsewhere (a submodule or a bare repository's worktree included)"
 # An absorbed submodule's root is the git dir under the superproject's, which has no .git:
 # the .git that is odd is the checkout's own gitdir: file.
 absorbed=""
@@ -350,30 +350,30 @@ gdmsg() {
   elif [ ! -e "$odd" ] && [ ! -L "$odd" ]; then echo "git_dir: $(bare | tr -d '[:cntrl:]') is a bare repository nested in the project, so the session started inside it (fix: open the session in the main checkout)"
   else echo "git_dir: $(printf %s "$odd" | tr -d '[:cntrl:]') is not the main checkout's own git dir (fix: remove it$([ -L "$odd" ] || echo ", or put the .git directory back,") by hand)"; fi
 }
-# .coddy.yml when it exists, else the legacy file; trip asks again after it
+# .hermy.yml when it exists, else the legacy file; trip asks again after it
 # has put the config back.
-confpath() { if [ -f "$root/.coddy.yml" ]; then conf="$root/.coddy.yml"; else conf="$root/$legacy"; fi; cname="${conf#"$root"/}"; }
+confpath() { if [ -f "$root/.hermy.yml" ]; then conf="$root/.hermy.yml"; else conf="$root/$legacy"; fi; cname="${conf#"$root"/}"; }
 confpath
-# What a started issue leaves: start's git hooks, .git/hooks/coddy (written
-# outside the sandbox), checked first, or a claim under .git/coddy (a lock,
+# What a started issue leaves: start's git hooks, .git/hooks/hermy (written
+# outside the sandbox), checked first, or a claim under .git/hermy (a lock,
 # or a marker from before locks; the .branch and .base records, dot names
 # and swept/ are none). With neither config beside it the config was
 # removed, not never written, so guard, snap and githook refuse rather than
 # go inert, naming the leftover in $tm. Existence tests alone: no git call,
-# and no config opened, so a FIFO at .coddy.yml hangs nothing.
+# and no config opened, so a FIFO at .hermy.yml hangs nothing.
 left() {
-  local r l=.git/hooks/coddy
+  local r l=.git/hooks/hermy
   if [ ! -e "$root/$l" ] && [ ! -L "$root/$l" ]; then
     l=""
-    for r in "$root"/.git/coddy/*; do
+    for r in "$root"/.git/hermy/*; do
       case "${r##*/}" in swept|*[!A-Za-z0-9_-]*) continue ;; esac
       { [ -e "$r" ] || [ -L "$r" ]; } && { l=${r#"$root"/}; break; }
     done
     [ -n "$l" ] || return 1
   fi
-  tm="no config file is at .coddy.yml or $legacy, yet $l is there, which only a project in the workflow leaves, so the config was removed, not never written, and coddy refuses every edit, shell command, commit and push until either the config is back (write .coddy.yml with the Write tool, which asks you first, or, when git tracks it, restore it from HEAD with git in your own terminal) or you finish leaving the workflow from your own terminal: remove the claim locks under .git/coddy and the .git/hooks/coddy directory, and set core.hooksPath back to the coddy.previousHooksPath that .git/config records, or, when that is empty or missing, unset core.hooksPath, never set it to an empty value."
+  tm="no config file is at .hermy.yml or $legacy, yet $l is there, which only a project in the workflow leaves, so the config was removed, not never written, and hermy refuses every edit, shell command, commit and push until either the config is back (write .hermy.yml with the Write tool, which asks you first, or, when git tracks it, restore it from HEAD with git in your own terminal) or you finish leaving the workflow from your own terminal: remove the claim locks under .git/hermy and the .git/hooks/hermy directory, and set core.hooksPath back to the hermy.previousHooksPath that .git/config records, or, when that is empty or missing, unset core.hooksPath, never set it to an empty value."
 }
-self="${0##*/}" # how the caller names this command: coddy, or a shim's name
+self="${0##*/}" # how the caller names this command: hermy, or a shim's name
 code=1
 
 # With the main checkout's git dir not its own (odd) the root may be another
@@ -416,7 +416,7 @@ if [ "${1-}" = detect ]; then
   # since no hook is live before the config and a write through a link lands
   # wherever it points. The PR check's path the same way, a link at .github
   # or .github/workflows included; a plain file is present, nothing is none.
-  w=.github/workflows/coddy.yml
+  w=.github/workflows/hermy.yml
   c=$( { [ -L .github ] || [ -L .github/workflows ] || [ -L "$w" ]; } && echo symlink || kind "$w")
   case "$c" in file) c=present ;; absent) c=none ;; esac
   echo "pr_check: $c"
@@ -429,7 +429,7 @@ if [ "${1-}" = detect ]; then
   echo "package_scripts: $(jq -r '.scripts // {} | keys | join(" ")' package.json 2>/dev/null | tr '\n\r' '  ')"
   echo "go_modules: $(ls go.mod */go.mod 2>/dev/null | tr '\n\r' '  ')"
   echo "roadmap: $(ls ROADMAP.md docs/ROADMAP.md .planning/ROADMAP.md 2>/dev/null | tr '\n' ' ')"
-  echo "config_ignored: $(git check-ignore -q .coddy.yml 2>/dev/null && echo yes || echo no)"
+  echo "config_ignored: $(git check-ignore -q .hermy.yml 2>/dev/null && echo yes || echo no)"
   echo "recent_commits:"
   git log --format='  %s' -n 15 2>/dev/null | tr '\r' ' '
   echo "recent_branches:"
@@ -479,7 +479,7 @@ alive() {
   [ -n "${3-}" ] && t=$(ticks "$1") && [ -n "$t" ] && { [ "t$t" = "$3" ]; return; }
   now=$(started "$1"); [ -z "${2-}" ] || [ -z "$now" ] || ! cstart "$2" || [ "$now" = "$2" ]
 }
-die() { echo "coddy: $*" >&2; exit "$code"; }
+die() { echo "hermy: $*" >&2; exit "$code"; }
 cfg() { # key $1, from the config or file $2: a quoted value runs to its closing quote (a \" does not close one) when only blanks or a # comment follow it, else it is read as an unquoted one; that loses a blank-led # comment, a CRLF line's \r and trailing blanks
   local _l _q; _l=$(sed -n "s/^$1:[[:space:]]*//p" "${2:-$conf}" | head -1); _l=${_l%$'\r'}
   case $_l in
@@ -500,34 +500,34 @@ wtool() {
 # The lock's owner ($sid, $pid, $start, $tk) is this session ($me): the same
 # session id, or the same agent process, since Claude Code's /clear changes
 # the id and not the pid; a pid reused since the owner's start is not that process.
-mine() { [ "$sid" = "$me" ] || { [ -n "$pid" ] && [ "$pid" = "${CODDY_PID-}" ] && alive "$pid" "$start" "$tk"; }; }
+mine() { [ "$sid" = "$me" ] || { [ -n "$pid" ] && [ "$pid" = "${HERMY_PID-}" ] && alive "$pid" "$start" "$tk"; }; }
 # Issue $1's owner line, as claim wrote it ("<session> <pid> <local start>
 # <start> [t<ticks>]"), into $own, $sid, $pid, $start, the UTC one, and $tk;
 # all empty for a plain-file marker or a lock with no owner yet, $start for
 # a line written before start times or by 0.6.0, whose third field is local,
 # and $tk for one without ticks or with a fifth field not t and digits.
-owner() { own=$(cat "$root/.git/coddy/$1/owner" 2>/dev/null); read -r sid pid _ start tk _ <<<"$own"; [[ $tk =~ ^t[0-9]+$ ]] || tk=; }
+owner() { own=$(cat "$root/.git/hermy/$1/owner" 2>/dev/null); read -r sid pid _ start tk _ <<<"$own"; [[ $tk =~ ^t[0-9]+$ ]] || tk=; }
 # This session's owner line; the UTC start only after a local one, so it
 # never lands in the third field, and the ticks only after a UTC start, so
 # they never land in the fourth, nor 0.6.0 reads them as its start.
-myline() { local l u='' t=''; l=$(lstarted "${CODDY_PID-}"); [ -z "$l" ] || u=$(started "${CODDY_PID-}"); [ -z "$u" ] || t=$(ticks "${CODDY_PID-}"); echo "$me ${CODDY_PID-} $l${l:+ $u}${t:+ t$t}"; }
+myline() { local l u='' t=''; l=$(lstarted "${HERMY_PID-}"); [ -z "$l" ] || u=$(started "${HERMY_PID-}"); [ -z "$u" ] || t=$(ticks "${HERMY_PID-}"); echo "$me ${HERMY_PID-} $l${l:+ $u}${t:+ t$t}"; }
 # The mark snap leaves at each run for session $1, which start and claim
 # read (hookson): a directory, the id kept to A-Za-z0-9_- and 128
 # characters, dot-named so it is never read as an issue's record; status 1
 # when nothing is kept.
-smark() { local s=${1//[!A-Za-z0-9_-]/}; s=${s:0:128}; [ -n "$s" ] && echo "$root/.git/coddy/.snap-$s"; }
+smark() { local s=${1//[!A-Za-z0-9_-]/}; s=${s:0:128}; [ -n "$s" ] && echo "$root/.git/hermy/.snap-$s"; }
 # For an adapter whose agent runs snap before each shell command
-# (CODDY_HOOKS=1), one hooks: off line, with Claude Code's causes, when snap
+# (HERMY_HOOKS=1), one hooks: off line, with Claude Code's causes, when snap
 # left no mark for this session in the last 60 s: the shell command running
-# this one went past no coddy hook. Its mtime by BSD's stat or GNU's (by
+# this one went past no hermy hook. Its mtime by BSD's stat or GNU's (by
 # what it prints).
 hookson() {
   local m t n
-  [ "${CODDY_HOOKS-}" = 1 ] && [ -d "$root/.git" ] && m=$(smark "${CODDY_SESSION-}") || return 0
+  [ "${HERMY_HOOKS-}" = 1 ] && [ -d "$root/.git" ] && m=$(smark "${HERMY_SESSION-}") || return 0
   t=$(stat -f %m -- "$m" 2>/dev/null); [[ $t =~ ^[0-9]+$ ]] || t=$(stat -c %Y -- "$m" 2>/dev/null)
   n=$(date +%s 2>/dev/null)
   [[ $t =~ ^[0-9]+$ && $n =~ ^[0-9]+$ ]] && [ "$((n - t))" -le 60 ] && return 0
-  echo "hooks: off: no coddy shell hook ran before this command in this session, so the edit guard, the shell tripwire and the config lock are likely off for it too. Likely causes: disableAllHooks set in a settings file or passed with --settings; managed settings with allowManagedHooksOnly whose enabledPlugins does not force-enable coddy@coddy; a Claude Code older than 2.1.139, which cannot run coddy's hooks."
+  echo "hooks: off: no hermy shell hook ran before this command in this session, so the edit guard, the shell tripwire and the config lock are likely off for it too. Likely causes: disableAllHooks set in a settings file or passed with --settings; managed settings with allowManagedHooksOnly whose enabledPlugins does not force-enable hermy@hermy; a Claude Code older than 2.1.139, which cannot run hermy's hooks."
 }
 # jq for the hooks: HOME=/dev/null, so a ~/.jq (loaded into every program)
 # is never read. Not named jq, so command -v jq still finds the real one.
@@ -537,7 +537,7 @@ jqh() { HOME=/dev/null jq "$@"; }
 note() { jqh -cn --arg m "$*" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $m}}'; }
 # guard: warn lets the $1 (edit) through and hands the agent die's
 # message as context instead.
-warnmode() { [ "$(cfg guard)" = warn ] || return 0; wm=$1; die() { note "coddy warning, the $wm was let through (guard: warn): $*"; exit 0; }; }
+warnmode() { [ "$(cfg guard)" = warn ] || return 0; wm=$1; die() { note "hermy warning, the $wm was let through (guard: warn): $*"; exit 0; }; }
 # The hooks run git outside any sandbox: with the main checkout's git dir
 # not its own (odd) they run none and refuse every edit and command, in
 # either guard mode, after trip's report so far, $1.
@@ -545,25 +545,25 @@ oddly() {
   [ -n "$odd" ] || return 0
   code=2
   case "$odd" in
-    */commondir) die "${1-}$odd, which git never writes in a main checkout, points git there at another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you remove that file by hand." ;;
-    *) [ ! -L "$odd" ] || die "${1-}$odd is a link, so git there reads another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you remove it by hand."
+    */commondir) die "${1-}$odd, which git never writes in a main checkout, points git there at another repository, whose config can run a program outside the sandbox, so hermy refuses every edit and command until you remove that file by hand." ;;
+    *) [ ! -L "$odd" ] || die "${1-}$odd is a link, so git there reads another repository, whose config can run a program outside the sandbox, so hermy refuses every edit and command until you remove it by hand."
        ! gitlink || die "${1-}$odd $glmsg, so it refuses every edit and command until you open the session in the main checkout, or remove the file by hand if it was not put there on purpose."
-       [ -e "$odd" ] || die "${1-}$(bare) is a bare repository nested in the project, so $odd does not exist and the session started inside it, where git reads another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you open the session in the main checkout."
-       die "${1-}$odd is not a directory, so git there reads another repository, whose config can run a program outside the sandbox, so coddy refuses every edit and command until you put the main checkout's .git directory back by hand." ;;
+       [ -e "$odd" ] || die "${1-}$(bare) is a bare repository nested in the project, so $odd does not exist and the session started inside it, where git reads another repository, whose config can run a program outside the sandbox, so hermy refuses every edit and command until you open the session in the main checkout."
+       die "${1-}$odd is not a directory, so git there reads another repository, whose config can run a program outside the sandbox, so hermy refuses every edit and command until you put the main checkout's .git directory back by hand." ;;
   esac
 }
 
 # Onboarding's one write outside the agent dir, here so the skill's command
-# text holds no path and no wildcard: the agent's coddy/ directory (answers,
-# backups) or .coddy.yml (a personal config) goes into git's info/exclude,
+# text holds no path and no wildcard: the agent's hermy/ directory (answers,
+# backups) or .hermy.yml (a personal config) goes into git's info/exclude,
 # unless git ignores it already. The directory pattern has no trailing
 # slash: a directory-only pattern does not match the path while the
 # directory is absent, and the line would be added on every run.
 if [ "${1-}" = exclude ]; then
   oddly
   case "${2-}" in
-    answers) [ -n "${CODDY_AGENT_DIR-}" ] || die "exclude answers needs CODDY_AGENT_DIR"; p="$CODDY_AGENT_DIR/coddy" ;;
-    config) p=.coddy.yml ;;
+    answers) [ -n "${HERMY_AGENT_DIR-}" ] || die "exclude answers needs HERMY_AGENT_DIR"; p="$HERMY_AGENT_DIR/hermy" ;;
+    config) p=.hermy.yml ;;
     *) die "usage: $self exclude answers|config" ;;
   esac
   cd "$root" || die "cannot enter $root"
@@ -573,9 +573,9 @@ if [ "${1-}" = exclude ]; then
   echo "excluded: $p"; exit 0
 fi
 
-# The project root and its claimed issue worktrees, injected by /coddy:start,
-# /coddy:ship, /coddy:config and /coddy:next. A directory under .worktrees/
-# counts only once claim has recorded it, so worktrees coddy did not create
+# The project root and its claimed issue worktrees, injected by /hermy:start,
+# /hermy:ship, /hermy:config and /hermy:next. A directory under .worktrees/
+# counts only once claim has recorded it, so worktrees hermy did not create
 # are never listed. Each is printed as issue=branch, with the branch create
 # recorded; under bases as issue=branch when create stacked it on another
 # issue's branch, which ship makes the PR's base; and under owners as
@@ -585,11 +585,11 @@ fi
 # Read-only and never fails loudly: its output is the prompt.
 if [ "${1-}" = status ]; then
   cd "$root" || exit 0
-  me="${CODDY_SESSION-}" ws="" bases="" owners=""
+  me="${HERMY_SESSION-}" ws="" bases="" owners=""
   for d in .worktrees/*/; do
-    n=$(basename "$d"); [ -e ".git/coddy/$n" ] || continue
-    b=$(cat ".git/coddy/$n.branch" 2>/dev/null); ws="$ws$n${b:+=$b} "
-    b=$(cat ".git/coddy/$n.base" 2>/dev/null); [ -z "$b" ] || bases="$bases$n=$b "
+    n=$(basename "$d"); [ -e ".git/hermy/$n" ] || continue
+    b=$(cat ".git/hermy/$n.branch" 2>/dev/null); ws="$ws$n${b:+=$b} "
+    b=$(cat ".git/hermy/$n.base" 2>/dev/null); [ -z "$b" ] || bases="$bases$n=$b "
     owner "$n"
     if [ -z "$sid" ]; then o=unknown; elif mine; then o=me; elif alive "$pid" "$start" "$tk"; then o="$sid (running)"; else o="$sid (gone)"; fi
     owners="$owners$n=$o "
@@ -636,10 +636,10 @@ if [ "${1-}" = guard ]; then
   oddly
   # Without jq, with one that fails or with a payload naming no path, the
   # path cannot be read, so every edit is blocked, in warn mode too:
-  # .coddy.yml must never go through unasked. So the payload is read before
+  # .hermy.yml must never go through unasked. So the payload is read before
   # warnmode, whose die lets the edit through.
   command -v jq >/dev/null || die "the edit guard needs jq"
-  # The hook's session_id is the editing session's CODDY_SESSION.
+  # The hook's session_id is the editing session's HERMY_SESSION.
   # jq once per field, not read per line: a path may hold a newline. $(...)
   # strips trailing ones, so a path ends in an x it then drops, here and from
   # phys and inroot below (abspath's own line ends in a newline).
@@ -659,13 +659,13 @@ if [ "${1-}" = guard ]; then
   # Where bash itself runs on native Windows ($OSTYPE msys or cygwin, a
   # variable bash sets, so no process is started), no path can be compared
   # with the root: /proj/x or ///proj/x reads as outside /c/proj or
-  # /cygdrive/c/proj while Windows writes C:\proj\x, and .coddy.yml with a
+  # /cygdrive/c/proj while Windows writes C:\proj\x, and .hermy.yml with a
   # trailing dot or space, or with ::$DATA, misses the ask below while
   # Windows writes the config. So every edit is refused there, in warn mode
   # too. bash takes OSTYPE from the environment when one is set there, so
   # hooks.json unsets it. The shapes below still refuse a Windows payload
   # handed to the core on macOS or Linux.
-  case "${OSTYPE-}" in msys*|cygwin*) die "the edit guard refuses every edit on native Windows (Git Bash, MSYS2, Cygwin), $f included: native Windows is not supported; coddy runs on macOS, Linux and WSL." ;; esac
+  case "${OSTYPE-}" in msys*|cygwin*) die "the edit guard refuses every edit on native Windows (Git Bash, MSYS2, Cygwin), $f included: native Windows is not supported; hermy runs on macOS, Linux and WSL." ;; esac
   # Native Windows (Git Bash, MSYS2, Cygwin) hands the path and the cwd as
   # D:\proj\x, D:/proj/x, D:x or //server/share/x (//./D:/x, //?/D:/x),
   # none of which the code below reads as Windows does. A drive letter or a
@@ -673,11 +673,11 @@ if [ "${1-}" = guard ]; then
   # an empty one, the edit was held as a path under that directory, and
   # passed when that was outside the project, in the agent dir or in a
   # claimed worktree, while the tool wrote the Windows path itself; a
-  # leading // reads as a path outside the project. coddy runs on macOS,
+  # leading // reads as a path outside the project. hermy runs on macOS,
   # Linux and WSL, so each is refused, in warn mode too, and so is a cwd
   # neither empty nor absolute, an object or array jq prints as JSON text
   # included, which abspath's unset $2 under set -u refused only by accident.
-  for x in "$f" "$cwd"; do case "$x" in [A-Za-z]:*|//[!/]*|*\\*) die "the edit guard refuses a Windows path (a drive letter, a backslash or a leading //) in $f or its cwd ${cwd:-none}: coddy runs on macOS, Linux and WSL, not on native Windows." ;; esac; done
+  for x in "$f" "$cwd"; do case "$x" in [A-Za-z]:*|//[!/]*|*\\*) die "the edit guard refuses a Windows path (a drive letter, a backslash or a leading //) in $f or its cwd ${cwd:-none}: hermy runs on macOS, Linux and WSL, not on native Windows." ;; esac; done
   case "$cwd" in ''|/*) ;; *) die "the edit guard refuses a cwd that is not an absolute path: $cwd" ;; esac
   # A relative path is written against the hook's cwd, as the tool resolves it.
   case "$f" in ''|/*) ;; *) f="${cwd:-$PWD}/$f" ;; esac
@@ -738,7 +738,7 @@ if [ "${1-}" = guard ]; then
   # they are collapsed here first (byname, $nm), and the links then followed;
   # the hard-link test stats $nm too, never a link's .. the write does not
   # take. A path the walk cannot follow is refused here, before warnmode, as
-  # the payload is: let through, a write could land on a .coddy.yml not made
+  # the payload is: let through, a write could land on a .hermy.yml not made
   # yet (the legacy file live) that nothing asked about.
   # The root's directory is compared by identity (-ef), not by name: macOS
   # reaches it through the /System/Volumes/Data firmlink too, which bash's
@@ -746,12 +746,12 @@ if [ "${1-}" = guard ]; then
   nf="the edit guard could not follow $f to where the edit lands (a cd or readlink failed, a link or directory into /proc or /dev/fd, more than 40 links, a path past 4096 bytes, a .. after a missing directory, or more than $budget seconds)."
   nm=$(byname "$f" && printf x) && nm=${nm%?x} && at=$(phys "$nm" new) && at=${at%x} || die "$nf"
   pr=$(cd "$root" && pwd -P && printf x) && pr=${pr%?x} || pr=$root
-  # Removed (tamp), /coddy:config stops on NOT_ONBOARDED, so the ask names none.
-  ask() { local m="Editing $1 changes the coddy guardrails. Allow it only if you asked for this change (/coddy:config)."; [ -z "$tamp" ] || m="Writing $1 puts back the coddy config that was removed, and with it the coddy guardrails. Allow it only if you asked for this change."; jqh -cn --arg m "$m" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'; exit 0; }
+  # Removed (tamp), /hermy:config stops on NOT_ONBOARDED, so the ask names none.
+  ask() { local m="Editing $1 changes the hermy guardrails. Allow it only if you asked for this change (/hermy:config)."; [ -z "$tamp" ] || m="Writing $1 puts back the hermy config that was removed, and with it the hermy guardrails. Allow it only if you asked for this change."; jqh -cn --arg m "$m" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'; exit 0; }
   lc=$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')
-  if [ "$nm" -ef "$root/.coddy.yml" ] || { [ "${at%/*}" -ef "$pr" ] && [ "$lc" = .coddy.yml ]; }; then ask .coddy.yml; fi
+  if [ "$nm" -ef "$root/.hermy.yml" ] || { [ "${at%/*}" -ef "$pr" ] && [ "$lc" = .hermy.yml ]; }; then ask .hermy.yml; fi
   # Removed (tamp): putting a config back is the one edit allowed, the
-  # legacy one too, asked as .coddy.yml is (the agent dir it lies in is
+  # legacy one too, asked as .hermy.yml is (the agent dir it lies in is
   # free otherwise), its directory by identity or, not made yet, by name.
   if [ -n "$tamp" ]; then
     lp="$pr/${legacy%/*}"
@@ -787,7 +787,7 @@ if [ "${1-}" = guard ]; then
   ! vcs "$f" "$root" && ! vcs "$p" "$pr" || die "the edit guard refuses $f in either guard mode: it lies in a .git or .jj below the project root, a repository's own files, which git or jj changes, never a file edit."
   # A hard link is the same file under another name, maybe in the main
   # checkout or another worktree, so a write through it lands there too:
-  # refused in either mode, a find that fails included. A .coddy.yml reached
+  # refused in either mode, a find that fails included. A .hermy.yml reached
   # so was asked about above.
   if [ -e "$at" ] && [ ! -d "$at" ]; then
     l=$(find "$at" -prune -links +1 2>/dev/null) || die "the edit guard could not count the links of $f, so it refuses the edit in either guard mode."
@@ -795,7 +795,7 @@ if [ "${1-}" = guard ]; then
   fi
   warnmode edit
   case "$f" in */../*) die "refusing a path containing '..': $f" ;; esac
-  agent="${CODDY_AGENT_DIR-}"
+  agent="${HERMY_AGENT_DIR-}"
   # held <path> <root>: dies unless an edit of <path>, read against <root>,
   # may go ahead.
   held() {
@@ -812,20 +812,20 @@ if [ "${1-}" = guard ]; then
           "$agent"/[Ww][Oo][Rr][Kk][Tt][Rr][Ee][Ee][Ss]/*) issue="${f#"$root/$agent"/[Ww][Oo][Rr][Kk][Tt][Rr][Ee][Ee][Ss]/}" ;;
           "$agent"/*) return 0 ;;
         esac
-        [ -n "$issue" ] || die "edits belong in an issue worktree, not the main checkout. Run /coddy:start <issue>, then edit under .worktrees/<issue>/." ;;
+        [ -n "$issue" ] || die "edits belong in an issue worktree, not the main checkout. Run /hermy:start <issue>, then edit under .worktrees/<issue>/." ;;
     esac
     [ -n "$issue" ] || return 0 # outside the project
     issue="${issue%%/*}"
-    [ -e "$root/.git/coddy/$issue" ] || die "issue $issue is not In Progress yet. Run /coddy:start $issue."
+    [ -e "$root/.git/hermy/$issue" ] || die "issue $issue is not In Progress yet. Run /hermy:start $issue."
     # A lock with no owner line is a claim in flight, or one that died between
     # its mkdir and that line.
-    [ ! -d "$root/.git/coddy/$issue" ] || [ -s "$root/.git/coddy/$issue/owner" ] || die "issue $issue's claim is in flight or died halfway. Run /coddy:start $issue."
+    [ ! -d "$root/.git/hermy/$issue" ] || [ -s "$root/.git/hermy/$issue/owner" ] || die "issue $issue's claim is in flight or died halfway. Run /hermy:start $issue."
     # The lock's owner, as claim wrote it; a plain-file marker has none. A
     # claim run by hand, or a hook payload without session_id, names no
     # session, and then the edit is not held to the owner.
     owner "$issue"
     [ -z "$sid" ] || [ -z "$me" ] || mine ||
-      die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" "$tk" && echo running || echo "not running")). Run /coddy:start $issue to take it over, or work on your own issue."
+      die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" "$tk" && echo running || echo "not running")). Run /hermy:start $issue to take it over, or work on your own issue."
     # The owner's edit from a new session id (/clear) or process (--resume)
     # moves the lock along, as its re-claim would: a pid left behind reads
     # as a dead owner to every other session. Only once every reading below
@@ -847,16 +847,16 @@ if [ "${1-}" = guard ]; then
   # The line is built before any owner file is truncated, so none sits
   # empty, a claim in flight to another session, while ps runs.
   [ -z "$m$n$move" ] || ml=$(myline)
-  [ -z "$m" ] || printf '%s\n' "$ml" > "$root/.git/coddy/$m/owner" 2>/dev/null
-  [ -z "$n" ] || [ "$n" = "$m" ] || printf '%s\n' "$ml" > "$root/.git/coddy/$n/owner" 2>/dev/null
-  [ -z "$move" ] || [ "$move" = "$m" ] || [ "$move" = "$n" ] || printf '%s\n' "$ml" > "$root/.git/coddy/$move/owner" 2>/dev/null
+  [ -z "$m" ] || printf '%s\n' "$ml" > "$root/.git/hermy/$m/owner" 2>/dev/null
+  [ -z "$n" ] || [ "$n" = "$m" ] || printf '%s\n' "$ml" > "$root/.git/hermy/$n/owner" 2>/dev/null
+  [ -z "$move" ] || [ "$move" = "$m" ] || [ "$move" = "$n" ] || printf '%s\n' "$ml" > "$root/.git/hermy/$move/owner" 2>/dev/null
   exit 0
 fi
-# Path $1, physical, is where coddy keeps worktrees: under .worktrees/<issue>/
+# Path $1, physical, is where hermy keeps worktrees: under .worktrees/<issue>/
 # or the agent's worktrees/<name>/ at the physical root $R.
-coddywt() {
+hermywt() {
   case "$1" in "$R"/.worktrees/?*) return 0 ;; esac
-  [ -n "${CODDY_AGENT_DIR-}" ] && case "$1" in "$R/$CODDY_AGENT_DIR"/worktrees/?*) return 0 ;; esac
+  [ -n "${HERMY_AGENT_DIR-}" ] && case "$1" in "$R/$HERMY_AGENT_DIR"/worktrees/?*) return 0 ;; esac
   return 1
 }
 # A real directory sits at path $1, physically: not gone, moved or a link.
@@ -909,7 +909,7 @@ hgit() { GIT_OPTIONAL_LOCKS=0 git -c core.hooksPath=/dev/null "$@" 8>&-; }
 # git worktree list --porcelain -z, or, from a git before 2.36, without -z:
 # each path as one field, and one not followed by its HEAD or bare line
 # taken with the lines up to it, so it holds a line break and is never
-# skipped as coddy's (clean). Its status is git's: a listing that failed is
+# skipped as hermy's (clean). Its status is git's: a listing that failed is
 # no empty one. Only the 129 of a git without -z falls back.
 gitwts() {
   local l p="" o s
@@ -970,7 +970,7 @@ out() {
 # does not, one for HEAD when it has left the default branch, and one for
 # core.hooksPath, its value quoted (q; its first 1024 characters and "cut
 # short" past them, since q takes time quadratic in the length and git sets
-# no bound) or unset, while .git/hooks/coddy is a
+# no bound) or unset, while .git/hooks/hermy is a
 # directory and it names anything else (start's test, ours), written on fd 4
 # too as "hooks <line>", which trip tells it by: a hook manager's install
 # re-points it (husky's prepare, on every npm install). A detached
@@ -978,7 +978,7 @@ out() {
 # leaves a synced checkout. Paths, not git status codes: jj colocation flips
 # untracked files to intent-to-add on its own. One line, ending in the tool
 # that removes it in parentheses, per git worktree and jj workspace outside
-# coddy's (coddywt, and real: one moved away or reached through a link is
+# hermy's (hermywt, and real: one moved away or reached through a link is
 # listed), the main checkout aside, so one a command made is reported
 # however it spelled it; jj names a workspace's path from 0.38 on and,
 # before 0.46, not once its directory has gone, so such a workspace is left
@@ -987,7 +987,7 @@ out() {
 # quoted (q), so none reads as a second entry. The root is matched as it is
 # spelled (as jj escapes it, J), and only what follows it, when it holds no
 # control character, quote or backslash (clean), is held to the test before
-# an entry is skipped as the root or coddy's own. No line is a command.
+# an entry is skipped as the root or hermy's own. No line is a command.
 # Every dirty file up to 1 MiB is hashed by one git hash-object, until 32
 # MiB have been, in git status order, as it is (--no-filters: a clean filter
 # the attributes name is a program); a path holding a newline is misread by
@@ -1033,7 +1033,7 @@ out() {
 # On fd 3, one line each (git's as %q, jj's as it escapes them): every
 # worktree's path, every git admin id (read from each worktree's .git and
 # from the common dir, so one whose directory is gone is there too) and
-# every jj workspace's name (one jj lists with no path included), coddy's
+# every jj workspace's name (one jj lists with no path included), hermy's
 # and the root's included. trip passes them back as $seen (out).
 # Under nowt (trip, an admin file that is no plain file) git lists no
 # worktree: each admin dir, globbed as admin globs them, whose id snap did
@@ -1060,12 +1060,12 @@ snap() {
   elif ! hgit merge-base --is-ancestor HEAD "refs/remotes/origin/$b" 2>/dev/null; then
     echo "detached HEAD $h"
   fi
-  [ ! -d .git/hooks/coddy ] || { hp=$(git config core.hooksPath 2>/dev/null)
-    case "$hp" in /*) [ "$hp" -ef .git/hooks/coddy ] ;; *) false ;; esac ||
+  [ ! -d .git/hooks/hermy ] || { hp=$(git config core.hooksPath 2>/dev/null)
+    case "$hp" in /*) [ "$hp" -ef .git/hooks/hermy ] ;; *) false ;; esac ||
       { hc=""; [ "${#hp}" -le 1024 ] || hc=" (cut short)"
         if [ -n "$hp" ]; then hp="core.hooksPath $(q "${hp:0:1024}")$hc"; else hp="core.hooksPath unset"; fi; echo "$hp"; echo "hooks $hp" >&4; }; }
   # The agent's settings files under the agent dir (Claude Code's), which
-  # can turn coddy's hooks off or change what runs outside the sandbox: one
+  # can turn hermy's hooks off or change what runs outside the sandbox: one
   # line each, written on fd 4 too as "settings <line>", which trip tells it
   # by. A plain file of 1 MiB at most, the bound dirty files are hashed to,
   # is hashed as jq reads it, keys sorted, without permissions.allow while
@@ -1081,7 +1081,7 @@ snap() {
   # holding that JSON) reads as one and hides its change; a bigger one by its size, ctime and inode after stat:, which no
   # dirty path's big: line carries, so a link to a big dirty file there does
   # not read as that file's line; anything else by its kind.
-  [ -z "${CODDY_AGENT_DIR-}" ] || for f in "$CODDY_AGENT_DIR/settings.json" "$CODDY_AGENT_DIR/settings.local.json"; do
+  [ -z "${HERMY_AGENT_DIR-}" ] || for f in "$HERMY_AGENT_DIR/settings.json" "$HERMY_AGENT_DIR/settings.local.json"; do
     if [ ! -f "$f" ]; then v=$(kind "$f")
     elif [ "$(head -c 1048577 -- "$f" 2>/dev/null | wc -c)" -gt 1048576 ]; then sflav; v=$(stat -L "${sf[@]}" -- "$f" 2>/dev/null); v=stat:${v%%:*}; v=${v// /:}
     elif v=$(jqh -cS 'if any(..; type == "number" and (isnan or isinfinite)) then error("nonfinite") else . end | if (.permissions.allow | type) == "array" and (.permissions.allow | all(type == "string")) then del(.permissions.allow) else . end | del(.permissions[]? | select(. == [])) | if .permissions == {} then del(.permissions) else . end' < "$f" 2>/dev/null); then
@@ -1095,7 +1095,7 @@ snap() {
     printf -v k 'path %q' "$p"; g=""; ! gid "$p" || printf -v g 'git %q' "$gi"
     printf '%s\n' "$k" ${g:+"$g"} >&3
     r=${p#"$R"}
-    [ "$r" != "$p" ] && clean "$r" && { [ -z "$r" ] || { coddywt "$p" && real "$p"; }; } ||
+    [ "$r" != "$p" ] && clean "$r" && { [ -z "$r" ] || { hermywt "$p" && real "$p"; }; } ||
       out "git worktree at $(q "$p") (git worktree remove)" "$k" "$g"
   done < <([ -n "$nowt" ] || gitwts || pjj || echo 'unchecked list' >&8)
   [ -z "$C" ] || for d in "$C"/worktrees/*/ "$C"/worktrees/.[!.]*/ "$C"/worktrees/..?*/; do [ ! -d "$d" ] || { d=${d%/}; printf -v g 'git %q' "${d##*/}"; echo "$g" >&3
@@ -1109,7 +1109,7 @@ snap() {
     [[ $p == \"*\" && $w == \"*\" ]] || { out "jj workspace $(q "$w") at $(q "$p") (jj workspace forget)" "jj $w" "path $p"; continue; }
     pi=${p:1:${#p}-2} wi=${w:1:${#w}-2}; r=${pi#"$J"}
     echo "path $pi" >&3
-    [ "$r" != "$pi" ] && clean "$r$wi" && { [ -z "$r" ] || { coddywt "$R$r" && real "$R$r"; }; } ||
+    [ "$r" != "$pi" ] && clean "$r$wi" && { [ -z "$r" ] || { hermywt "$R$r" && real "$R$r"; }; } ||
       out "jj workspace $(q "$wi") at $(q "$pi") (jj workspace forget)" "jj $wi" "path $pi"
   done < <(jj --no-pager workspace list --ignore-working-copy --color=never -T 'stringify(name).escape_json() ++ if(root, "\t" ++ stringify(root).escape_json()) ++ "\n"' 2>/dev/null 8>&- || { ! jjfailed || echo 'unchecked jj' >&8; }); }
   files=() n=0 nl=() nn=0 dp=0
@@ -1121,8 +1121,8 @@ snap() {
     for p; do
       # The config paths are the lock's: a restored one differs from a pulled
       # HEAD, and that is not the command's change to undo.
-      case "$p" in .coddy.yml|"$legacy") continue ;; esac
-      [ -z "${CODDY_AGENT_DIR-}" ] || case "$p" in "$CODDY_AGENT_DIR"/*) continue ;; esac
+      case "$p" in .hermy.yml|"$legacy") continue ;; esac
+      [ -z "${HERMY_AGENT_DIR-}" ] || case "$p" in "$HERMY_AGENT_DIR"/*) continue ;; esac
       dp=$((dp+1))
       if [ ! -f "$p" ]; then clean "$p" || p=$(q "$p"); printf '%s gone\n' "$p"
       else case "$p" in *$'\n'*) nl[nn]=$p; nn=$((nn+1)) ;; *) files[n]=$p; n=$((n+1)) ;; esac; fi
@@ -1157,13 +1157,13 @@ snap() {
 big() { local p=$1; printf 'b %s\n' "$p" >&6; clean "$p" || p=$(q "$p"); printf '%s big:%s\n' "$p" "${2// /:}"; }
 
 if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
-  # Seconds from here the fingerprint may run (CODDY_BUDGET, a whole number,
+  # Seconds from here the fingerprint may run (HERMY_BUDGET, a whole number,
   # else 20): well inside snap's 60 s timeout, which blocks the command, with
   # all else snap does bounded. The admin dirs' check (admin) may take the
   # first half of them, adb. Reset, not read, as an environment can set
   # SECONDS.
   fpb=20 SECONDS=0
-  case "${CODDY_BUDGET-}" in ''|*[!0-9]*) ;; *) [ "${#CODDY_BUDGET}" -gt 4 ] || fpb=$CODDY_BUDGET ;; esac
+  case "${HERMY_BUDGET-}" in ''|*[!0-9]*) ;; *) [ "${#HERMY_BUDGET}" -gt 4 ] || fpb=$HERMY_BUDGET ;; esac
   adb=$((10#$fpb / 2))
   # The snapshot is named by the tool use; an id that is not a plain word
   # reads as none, so it cannot name a path outside TMPDIR. Read without jq:
@@ -1199,12 +1199,12 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     [ -n "$C" ] || return 0
     while IFS= read -r -d '' d; do
       [ "$SECONDS" -lt "$adb" ] || {
-        st="$(q "$C/worktrees") holds more entries than coddy can check in $adb seconds before a shell command, so coddy refuses every command until you remove, by hand, the entries there that no worktree uses."; return 1; }
+        st="$(q "$C/worktrees") holds more entries than hermy can check in $adb seconds before a shell command, so hermy refuses every command until you remove, by hand, the entries there that no worktree uses."; return 1; }
       [ -d "$d" ] || continue
       for f in gitdir HEAD locked commondir; do
         p=$d/$f
         [ -f "$p" ] || { [ ! -e "$p" ] && { [ ! -L "$p" ] || { [ "$f" = HEAD ] && [[ $(readlink "$p" 2>/dev/null) == refs/* ]]; }; }; } || {
-          st="$(q "$p") is not a plain file, and git worktree list, which coddy runs before and after every shell command, would wait on it or misread it, so coddy refuses every command until you remove it, or replace it with a plain file, by hand."; return 1; }
+          st="$(q "$p") is not a plain file, and git worktree list, which hermy runs before and after every shell command, would wait on it or misread it, so hermy refuses every command until you remove it, or replace it with a plain file, by hand."; return 1; }
       done
     done < <(find -H "$C/worktrees" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
   }
@@ -1255,7 +1255,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
       y=${!v-}; [ "$y" != - ] || y=./-
       [ -n "$y" ] && { x=$(cd -P -- "$R" 2>/dev/null && cd -P -- "$y" 2>/dev/null && pwd -P) || x=$(abspath "$y" "$R"); } || continue
       while [ -n "$x" ]; do
-        [ "$x" -ef "$R" ] && { hm="$v ($(q "${!v}")) lies in the project at $(q "$R"), where a shell command can write the git config git reads from there, whose core.fsmonitor would run a program outside the sandbox, so coddy runs no git and refuses every shell command until $v names a directory outside the project."; return 1; }
+        [ "$x" -ef "$R" ] && { hm="$v ($(q "${!v}")) lies in the project at $(q "$R"), where a shell command can write the git config git reads from there, whose core.fsmonitor would run a program outside the sandbox, so hermy runs no git and refuses every shell command until $v names a directory outside the project."; return 1; }
         x=${x%/*}
       done
     done
@@ -1269,7 +1269,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     local x
     for x in git jj; do
       [ "$x" = git ] || [ -d "$root/.jj" ] || continue
-      command -v "$x" >/dev/null 2>&1 || { hm="no $x is on PATH outside the project, where the coddy hooks find their tools (one installed in the project alone, by a .venv, devbox or nix-shell, is one a shell command can write), so coddy cannot fingerprint the main checkout and refuses every shell command until $x is installed outside the project."; return 1; }
+      command -v "$x" >/dev/null 2>&1 || { hm="no $x is on PATH outside the project, where the hermy hooks find their tools (one installed in the project alone, by a .venv, devbox or nix-shell, is one a shell command can write), so hermy cannot fingerprint the main checkout and refuses every shell command until $x is installed outside the project."; return 1; }
     done
   }
   # Hook context of fixed text alone (no quote, backslash or control
@@ -1296,13 +1296,13 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   }
   seen="" nowt="" vf=/dev/null gd="" pd=""
   case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
-  file="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
-  # Both config paths are kept, present or not: a .coddy.yml the command
+  file="${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
+  # Both config paths are kept, present or not: a .hermy.yml the command
   # makes next to a live .claude/coddy.yml would shadow it. Each path's
   # kind is recorded, with a copy of a file and the target of a link, so a
   # record the command removed is told from a path that was absent. A
   # config the user keeps as a link is kept as its content and its target.
-  # The legacy file next to a live .coddy.yml is ignored, and let go: its
+  # The legacy file next to a live .hermy.yml is ignored, and let go: its
   # kind alone. A copy holds no more than 64 KiB and a byte, so a huge or
   # sparse one stalls no hook there. A live config over 64 KiB could not be
   # put back, so snap refuses every command while it is (in either guard
@@ -1324,7 +1324,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # Its size read from 64 KiB and a byte at most, before anything reads
     # the config, so a huge or sparse one is refused at once.
     [ "$(head -c 65537 -- "$conf" 2>/dev/null | wc -c)" -le 65536 ] ||
-      { code=2; die "$cname is over 64 KiB, more than coddy keeps a copy of to put it back when a shell command changes it, so coddy refuses every shell command until it is brought under 64 KiB with /coddy:config."; }
+      { code=2; die "$cname is over 64 KiB, more than hermy keeps a copy of to put it back when a shell command changes it, so hermy refuses every shell command until it is brought under 64 KiB with /hermy:config."; }
     oddly
     homes || { code=2; die "$hm"; }
     tools || { code=2; die "$hm"; }
@@ -1333,7 +1333,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # made anew each run by mkdir, which neither follows nor waits on a
     # link or FIFO planted at its name (the old one goes by rmdir, or rm -f
     # when it is no directory, since BusyBox's rm has no -d), and none when
-    # .git/coddy is a link or no directory; a session's first has fp prune
+    # .git/hermy is a link or no directory; a session's first has fp prune
     # those over a day old (pd).
     ss=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
     if [ -d "$root/.git" ] && m=$(smark "$ss"); then
@@ -1347,10 +1347,10 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     admin || { code=2; die "$st"; }
     b=$(cfg default_branch); b="${b:-main}" ok=1
     wtool
-    for c in .coddy.yml "$legacy"; do
+    for c in .hermy.yml "$legacy"; do
       p="$root/$c" s="$file.${c//\//_}"
       kind "$p" > "$s.kind" || ok=""
-      { [ "$c" = "$legacy" ] && [ -f "$root/.coddy.yml" ]; } && continue
+      { [ "$c" = "$legacy" ] && [ -f "$root/.hermy.yml" ]; } && continue
       { [ ! -f "$p" ] || head -c 65537 -- "$p" > "$s"; } && { [ ! -L "$p" ] || readlink "$p" > "$s.link"; } || ok=""
     done
     # Over its budget the fingerprint is an unchecked record: the command
@@ -1358,7 +1358,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # with the count of dirty paths git status gave, when it got that far
     # (on fd 5, into $file.n). So is one holding a source's failure (why).
     # One that fails on its own (sort), every record it writes a plain file,
-    # is an "unchecked fp" record, so trip reports coddy's failure, not a
+    # is an "unchecked fp" record, so trip reports hermy's failure, not a
     # command that touched the snapshot; a record that could not be written
     # (a link planted at its name) drops the snapshot, as does an unchecked
     # record that cannot be. Its verdicts go to $file.v, for trip.
@@ -1367,12 +1367,12 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
       rm -f "$file"; echo unchecked > "$file" || ok=""
       nd=""; [ ! -f "$file.n" ] || nd=$(head -c 20 "$file.n")
       case "$nd" in ''|*[!0-9]*) nd="whose dirty or untracked paths git status had not finished listing" ;; *) nd="which has $nd dirty or untracked paths" ;; esac
-      un="coddy could not fingerprint the main checkout, $nd, within $fpb seconds ($tl), $ut"
+      un="hermy could not fingerprint the main checkout, $nd, within $fpb seconds ($tl), $ut"
     elif [ "$r" != 0 ]; then
       for s in "$file" "$file.wt" "$file.n" "$file.v"; do [ -f "$s" ] && [ ! -L "$s" ] || ok=""; done
       [ -z "$ok" ] || { rm -f "$file"; echo 'unchecked fp' > "$file" || ok=""; }
-      [ -z "$ok" ] || un="coddy could not fingerprint the main checkout, since the fingerprint failed, $ut"
-    elif w=$(why "$file"); then un="coddy could not fingerprint the main checkout, since $w, $ut"; fi
+      [ -z "$ok" ] || un="hermy could not fingerprint the main checkout, since the fingerprint failed, $ut"
+    elif w=$(why "$file"); then un="hermy could not fingerprint the main checkout, since $w, $ut"; fi
     [ -n "$ok" ] || rm -f "$file" "$file".*
     [ -z "$un" ] || ctx "$un"; exit 0
   fi
@@ -1387,14 +1387,14 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # rejected too, the config left as the command left it. The records are
   # globbed by name, opened by none, and found whatever nullglob says. The
   # live config as snap saw it is the first path recorded as a file, and
-  # only it has a copy: the legacy file next to a live .coddy.yml has its
+  # only it has a copy: the legacy file next to a live .hermy.yml has its
   # kind alone.
   lost="that command left no snapshot of the main checkout at $file, so what it changed cannot be checked: a command may not touch the snapshot. Undo what it did."
   [ -f "$file" ] || die "$lost"
   grep -qx NOT_ONBOARDED "$file" && { for r in "$file".*; do { [ -e "$r" ] || [ -L "$r" ]; } && die "$lost"; done; rm -f "$file" "$file".*; exit 0; }
   common
   pre=""
-  for c in .coddy.yml "$legacy"; do
+  for c in .hermy.yml "$legacy"; do
     s="$file.${c//\//_}"; k=""; [ ! -f "$s.kind" ] || k=$(cat "$s.kind")
     case "$k" in file) [ -n "$pre" ] || { [ -f "$s" ] && pre=$s; } ;; absent|dir|fifo|other) ;; *) false ;; esac || die "$lost"
   done
@@ -1404,14 +1404,14 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # the command did. A pull or checkout that brought another config is put
   # back too, since nothing a shell command run as the same user can write
   # (a ref, an object, a git config) tells it from a forged one; the report
-  # names /coddy:config, which accepts it from HEAD with the user's say-so.
+  # names /hermy:config, which accepts it from HEAD with the user's say-so.
   # A link that was not there, or points elsewhere, or a directory in the
   # file's place is a change whatever it holds: a link reaches a file the
   # lock does not watch; a link the user keeps there, as it was, is not.
   # What is put back is a plain file. TMPDIR is the command's to write too,
   # so nothing there is opened unless it is a plain file: a FIFO planted at
   # a snapshot name would hang trip. The legacy file is let go once
-  # .coddy.yml is live, when the command began or now (settled first,
+  # .hermy.yml is live, when the command began or now (settled first,
   # above): it is ignored then and cannot change the effective config. The
   # default branch and the worktree tool are read from the snapshot's copy
   # of the config, as snap read it, not from what the command left. A copy
@@ -1420,15 +1420,15 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # it is.
   b=$(cfg default_branch "$pre" 2>/dev/null); b="${b:-main}" cap=""
   wtool "$pre" 2>/dev/null
-  for c in .coddy.yml "$legacy"; do
+  for c in .hermy.yml "$legacy"; do
     p="$root/$c" s="$file.${c//\//_}"
-    { [ "$c" = "$legacy" ] && { [ -f "$root/.coddy.yml" ] || [ "$pre" != "$s" ]; }; } && continue
+    { [ "$c" = "$legacy" ] && { [ -f "$root/.hermy.yml" ] || [ "$pre" != "$s" ]; }; } && continue
     # Unchanged: the same link target (none for a plain file), the same kind
     # and, for a file, the same content.
     was=""; [ ! -f "$s.link" ] || was=$(cat "$s.link")
     k=""; [ ! -f "$s.kind" ] || k=$(cat "$s.kind")
     { [ "$k" = file ] && [ "$(wc -c < "$s")" -gt 65536 ]; } &&
-      { cap="${cap}$c is over 64 KiB, more than coddy keeps a copy of, so whether that command changed it cannot be told, and it has been left as it is: bring it under 64 KiB with /coddy:config. "; continue; }
+      { cap="${cap}$c is over 64 KiB, more than hermy keeps a copy of, so whether that command changed it cannot be told, and it has been left as it is: bring it under 64 KiB with /hermy:config. "; continue; }
     [ "$(readlink "$p" 2>/dev/null)" = "$was" ] && [ "$(kind "$p")" = "$k" ] && { [ "$k" != file ] || cmp -s "$p" "$s"; } && continue
     rm -rf "$p"
     # A copy that cannot be written back is kept, and the report says so,
@@ -1437,9 +1437,9 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     elif mkdir -p "${p%/*}" && cp "$s" "$p"; then what=restored
     else what="removed, and could not be put back: restore it by hand from the copy at $s"; keep=1
     fi
-    msg="${msg}that command changed $c, which switches the coddy guardrails, so it has been $what. "
+    msg="${msg}that command changed $c, which switches the hermy guardrails, so it has been $what. "
   done
-  [ -z "$msg" ] || msg="${msg}If that came from git (a pull or checkout), accept it with /coddy:config; other settings change there too, and leaving the workflow is for the user to do by hand. "
+  [ -z "$msg" ] || msg="${msg}If that came from git (a pull or checkout), accept it with /hermy:config; other settings change there too, and leaving the workflow is for the user to do by hand. "
   msg=$msg$cap
   confpath
   [ -z "$odd" ] || { rm -f "$file"; [ -n "$keep" ] || rm -f "$file".*; oddly "$msg"; }
@@ -1456,8 +1456,8 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   # checked, and the one that puts it back: git worktree move for a git
   # worktree not made, jj workspace rename for a jj workspace at a path snap
   # recorded under another name (kept: its name is out's $2, its path $3).
-  # A new line labelled hooks is core.hooksPath's: coddy's git hooks are off,
-  # which no undo of the command fixes and /coddy:start does.
+  # A new line labelled hooks is core.hooksPath's: hermy's git hooks are off,
+  # which no undo of the command fixes and /hermy:start does.
   # Any other line is the main checkout's, its last word, a hash, gone or
   # big:..., dropped. A fingerprint over its budget, snap's (unchecked) or
   # this one, leaves nothing to compare: the command is reported unchecked,
@@ -1500,10 +1500,10 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   [ -n "$added" ] && msg="${msg}that command changed the main checkout: $added. Issue work belongs in .worktrees/<issue>/. Undo it. "
   if [ -n "$hk" ]; then
     w="that directory's hooks"; [ "$hk" != unset ] || w="the hooks in .git/hooks"
-    msg="${msg}core.hooksPath is now $hk, not coddy's hooks directory, so coddy's git hooks are off for everyone in this repository. A hook manager's install does that (husky's prepare script, on every npm install or npm ci, in a worktree too). /coddy:start <issue> puts them back, and they run $w after coddy's check. "
+    msg="${msg}core.hooksPath is now $hk, not hermy's hooks directory, so hermy's git hooks are off for everyone in this repository. A hook manager's install does that (husky's prepare script, on every npm install or npm ci, in a worktree too). /hermy:start <issue> puts them back, and they run $w after hermy's check. "
   fi
-  [ -z "$sg" ] || msg="${msg}that command changed $sg, the agent's settings for this project, where a change can turn coddy's hooks off or change what runs outside the sandbox. coddy does not put it back: ask the user to check that change. "
-  [ -n "$wts" ] && msg="${msg}that command made, moved or renamed a worktree outside .worktrees/<issue>/: $wts. Issue work belongs in .worktrees/<issue>/: run /coddy:start <issue>, which makes it."
+  [ -z "$sg" ] || msg="${msg}that command changed $sg, the agent's settings for this project, where a change can turn hermy's hooks off or change what runs outside the sandbox. hermy does not put it back: ask the user to check that change. "
+  [ -n "$wts" ] && msg="${msg}that command made, moved or renamed a worktree outside .worktrees/<issue>/: $wts. Issue work belongs in .worktrees/<issue>/: run /hermy:start <issue>, which makes it."
   [ -z "$msg" ] && exit 0
   die "$msg"
 fi
@@ -1523,8 +1523,8 @@ if [ "${1-}" = githook ]; then
   in=""; [ "$h" = pre-commit ] || { in=$(cat; echo x); in=${in%x}; }
   if [ -f "$conf" ]; then
     b=$(cfg default_branch); b="${b:-main}"
-    no="is refused: issue work belongs on a claimed issue's branch. Run /coddy:start <issue>, or ${h#pre-} with --no-verify."
-    claimed() { for r in "$root"/.git/coddy/*.branch; do [ "$(cat "$r" 2>/dev/null)" = "$1" ] && [ -e "${r%.branch}" ] && return 0; done; return 1; }
+    no="is refused: issue work belongs on a claimed issue's branch. Run /hermy:start <issue>, or ${h#pre-} with --no-verify."
+    claimed() { for r in "$root"/.git/hermy/*.branch; do [ "$(cat "$r" 2>/dev/null)" = "$1" ] && [ -e "${r%.branch}" ] && return 0; done; return 1; }
     if [ "$h" = pre-commit ]; then
       n=$(git symbolic-ref -q HEAD); n=${n#refs/heads/}
       [ -z "$n" ] || [ "$n" != "$b" ] || die "a commit on $b, the default branch, $no"
@@ -1540,14 +1540,14 @@ if [ "${1-}" = githook ]; then
   fi
   # The previous hook from .git/config alone, where start recorded it: like
   # .git/hooks, a sandbox keeps it out of an agent's reach, since git runs
-  # hooks outside the sandbox. .git/coddy is only data here.
-  p=$(git config --file "$root/.git/config" coddy.previousHooksPath); p="${p:-$root/.git/hooks}/$h"
-  # Never a hook coddy start wrote: a copy of coddy's own in .git/hooks, or another
-  # repository's .git/hooks/coddy as the previous path, would exec itself forever.
-  { [ -f "$p" ] && [ -x "$p" ] && ! head -c 4096 "$p" | grep -q '^# Written by coddy start: '; } || exit 0
-  # It is the project's own, and gets PATH as git gave the hook (CODDY_PATH),
-  # in-repository entries and all, which coddy's own lookups went without.
-  [ -z "${CODDY_PATH+x}" ] || { PATH=$CODDY_PATH; unset CODDY_PATH; }
+  # hooks outside the sandbox. .git/hermy is only data here.
+  p=$(git config --file "$root/.git/config" hermy.previousHooksPath); p="${p:-$root/.git/hooks}/$h"
+  # Never a hook hermy start wrote: a copy of hermy's own in .git/hooks, or another
+  # repository's .git/hooks/hermy as the previous path, would exec itself forever.
+  { [ -f "$p" ] && [ -x "$p" ] && ! head -c 4096 "$p" | grep -q '^# Written by hermy start: '; } || exit 0
+  # It is the project's own, and gets PATH as git gave the hook (HERMY_PATH),
+  # in-repository entries and all, which hermy's own lookups went without.
+  [ -z "${HERMY_PATH+x}" ] || { PATH=$HERMY_PATH; unset HERMY_PATH; }
   [ "$h" = pre-push ] || exec "$p" "$@"
   printf %s "$in" | "$p" "$@"; exit
 fi
@@ -1558,7 +1558,7 @@ if [ "${1-}" = doctor ]; then
   [ -z "$absorbed" ] || { gdmsg; exit 1; }
   # no git call below runs against a git dir that points at another repository
   [ -z "$odd" ] || { gdmsg; exit 1; }
-  [ -f "$conf" ] || { echo "config: none (fix: /coddy:onboard)"; exit 1; }
+  [ -f "$conf" ] || { echo "config: none (fix: /hermy:onboard)"; exit 1; }
 fi
 [ -z "$odd" ] || { [ "${1-}" = sweep ] && exit 0; oddly; }
 [ -f "$conf" ] || { [ "${1-}" = sweep ] && exit 0; die "NOT_ONBOARDED"; }
@@ -1571,8 +1571,8 @@ cd "$root" || die "cannot enter $root"
 # (above: NOT_ONBOARDED before); starting over is removing the file by hand.
 if [ "${1-}" = forget ]; then
   [ "${2-}" = answers ] || die "usage: $self forget answers"
-  [ -n "${CODDY_AGENT_DIR-}" ] || die "forget answers needs CODDY_AGENT_DIR"
-  f="$CODDY_AGENT_DIR/coddy/onboard-answers.json"
+  [ -n "${HERMY_AGENT_DIR-}" ] || die "forget answers needs HERMY_AGENT_DIR"
+  f="$HERMY_AGENT_DIR/hermy/onboard-answers.json"
   rm -f "$f" || die "could not remove $f"
   echo "removed: $f"; exit 0
 fi
@@ -1580,8 +1580,8 @@ fi
 # changed: line per change (tracked: after a move, legacy: file|link|dir|other
 # after a remove), then --- and the migrated file, every line and
 # comment kept; no --- block when the file itself needs no change. Read-only:
-# a shell write to the config is undone by trip, so /coddy:migrate writes it
-# with the Write tool. No version is 0, the layout from before .coddy.yml.
+# a shell write to the config is undone by trip, so /hermy:migrate writes it
+# with the Write tool. No version is 0, the layout from before .hermy.yml.
 # Step m<n> takes the file on stdin from version n-1 to n, d<n> says what it
 # changed; the next schema change is one more pair and cur+1.
 # m1 puts version after a leading --- marker and ends it as the file's first line ends (CRLF).
@@ -1595,19 +1595,19 @@ m2() { awk 'NR == 1 { e = /\r$/ ? "\r" : "" } { l[NR] = $0 } /^worktree:/ && !w 
 d2="add version: 2, and worktree: jj when no worktree key is set"
 if [ "${1-}" = migrate ]; then
   # The skill Reads and Writes these paths, which follow a link: only plain files.
-  { [ -L .coddy.yml ] || { [ -e .coddy.yml ] && [ ! -f .coddy.yml ]; }; } && die ".coddy.yml is a link or not a plain file: replace it with the config itself by hand"
+  { [ -L .hermy.yml ] || { [ -e .hermy.yml ] && [ ! -f .hermy.yml ]; }; } && die ".hermy.yml is a link or not a plain file: replace it with the config itself by hand"
   [ "$cname" != "$legacy" ] || [ ! -L "$legacy" ] || die "$legacy is a link: replace it with the config itself by hand"
   cur=2 v=$(cfg version | tr -d '[:space:]'); v=${v#"${v%%[!0]*}"}; v="${v:-0}"
   case "$v" in *[!0-9]*) die "version in $cname is not a whole number: $v" ;; esac
   # by length first, so a number too long for bash is refused without its error
-  { [ "${#v}" -le 9 ] && [ "$v" -le "$cur" ]; } || die "$cname is at version $v, newer than this coddy knows ($cur): update the coddy plugin"
+  { [ "${#v}" -le 9 ] && [ "$v" -le "$cur" ]; } || die "$cname is at version $v, newer than this hermy knows ($cur): update the hermy plugin"
   echo "from: $v"; echo "to: $cur"
   # the x keeps the file's trailing blank lines through each $(...)
   out=$(cat "$conf"; echo x) n=$v; out=${out%x}
   while [ "$n" -lt "$cur" ]; do n=$((n + 1)); out=$(printf '%s' "$out" | "m$n"; echo x); out=${out%x}; d="d$n"; echo "changed: ${!d}"; done
   # tracked: whether git tracks the legacy file, so the skill keeps a personal
   # config personal without a git rule of its own in allowed-tools.
-  if [ "$cname" = "$legacy" ]; then echo "changed: move $legacy -> .coddy.yml"
+  if [ "$cname" = "$legacy" ]; then echo "changed: move $legacy -> .hermy.yml"
     if git ls-files --error-unmatch -- "$legacy" >/dev/null 2>&1; then echo "tracked: yes"; else echo "tracked: no"; fi
   elif [ -e "$legacy" ] || [ -L "$legacy" ]; then echo "changed: remove $legacy"
     # legacy: its kind, so the skill backs up a file, removes a link unread and leaves the rest to the user
@@ -1618,7 +1618,7 @@ if [ "${1-}" = migrate ]; then
 fi
 cmd="${1-}" issue="${2-}"
 [ "$cmd" = sweep ] || [ "$cmd" = doctor ] || case "$issue" in ''|*[!A-Za-z0-9_-]*) die "issue id must look like 42 or ABC-123, got '$issue'" ;; esac
-wt=".worktrees/$issue" rec=".git/coddy/$issue.branch"
+wt=".worktrees/$issue" rec=".git/hermy/$issue.branch"
 wtool
 base=$(cfg default_branch); base="${base:-main}"
 
@@ -1629,27 +1629,27 @@ if [ "$cmd" = doctor ]; then
   # config, git and the hook files are the project's to write: no control character reaches the terminal
   say() { echo "$1: $(printf %s "$2" | tr -d '[:cntrl:]')"; case "$2" in ok*) ;; *) bad=1 ;; esac; }
   # the same test migrate uses: a changed: line
-  if mig=$(CODDY_ROOT="$root" bash "$src" migrate 2>&1); then
-    if printf '%s\n' "$mig" | grep -q '^changed:'; then say config "$cname is behind the schema (fix: /coddy:migrate)"; else say config "ok ($cname)"; fi
+  if mig=$(HERMY_ROOT="$root" bash "$src" migrate 2>&1); then
+    if printf '%s\n' "$mig" | grep -q '^changed:'; then say config "$cname is behind the schema (fix: /hermy:migrate)"; else say config "ok ($cname)"; fi
   else say config "$cname cannot be migrated: ${mig%%$'\n'*}"; fi
-  case "$tool" in git|jj) say worktree "ok ($tool)" ;; *) say worktree "unknown value '$tool' (fix: set it to git or jj with /coddy:config)" ;; esac
+  case "$tool" in git|jj) say worktree "ok ($tool)" ;; *) say worktree "unknown value '$tool' (fix: set it to git or jj with /hermy:config)" ;; esac
   # a root with no .git directory (jj alone) has no origin ref for git to see and no hooks path to set
   if [ ! -d "$root/.git" ]; then say default_branch "ok (not applicable: no .git at the root)"
-  elif git rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null 2>&1; then say default_branch "ok (origin/$base)"; else say default_branch "origin/$base is missing here (fix: fetch origin, or set default_branch with /coddy:config)"; fi
+  elif git rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null 2>&1; then say default_branch "ok (origin/$base)"; else say default_branch "origin/$base is missing here (fix: fetch origin, or set default_branch with /hermy:config)"; fi
   for x in jq git; do if command -v "$x" >/dev/null 2>&1; then say "$x" ok; else say "$x" "missing (fix: install $x)"; fi; done
-  if [ "$tool" = jj ]; then if command -v jj >/dev/null 2>&1; then say jj ok; else say jj "missing (fix: install jj, or set worktree to git with /coddy:config)"; fi; fi
-  hp=$(git config core.hooksPath) gd="$root/.git/hooks/coddy" e="" fx="/coddy:start <issue>"
+  if [ "$tool" = jj ]; then if command -v jj >/dev/null 2>&1; then say jj ok; else say jj "missing (fix: install jj, or set worktree to git with /hermy:config)"; fi; fi
+  hp=$(git config core.hooksPath) gd="$root/.git/hooks/hermy" e="" fx="/hermy:start <issue>"
   # what git runs outside the sandbox, which a sandboxed start cannot rewrite
-  tf="one run of coddy's start from your own terminal, with a coddy installed outside the project"
-  case "$hp" in /*) [ "$hp" -ef "$gd" ] || e="core.hooksPath is $hp, not coddy's directory" ;; *) if [ -n "$hp" ]; then e="core.hooksPath is $hp, not coddy's directory"; else e="core.hooksPath is not set"; fi ;; esac
+  tf="one run of hermy's start from your own terminal, with a hermy installed outside the project"
+  case "$hp" in /*) [ "$hp" -ef "$gd" ] || e="core.hooksPath is $hp, not hermy's directory" ;; *) if [ -n "$hp" ]; then e="core.hooksPath is $hp, not hermy's directory"; else e="core.hooksPath is not set"; fi ;; esac
   for h in pre-commit pre-push; do
     [ -z "$e" ] || break
     f="$gd/$h"
-    if ! { [ -f "$f" ] && [ ! -L "$f" ] && head -c 4096 "$f" | grep -q '^# Written by coddy start: '; }; then e="$h is missing or not one coddy start wrote"; break; fi
+    if ! { [ -f "$f" ] && [ ! -L "$f" ] && head -c 4096 "$f" | grep -q '^# Written by hermy start: '; }; then e="$h is missing or not one hermy start wrote"; break; fi
     [ -x "$f" ] || { e="$h is not executable, so git skips it"; break; }
     c=$(head -c 4096 "$f" | sed -n "s/^c='\(.*\)'\$/\1/p" | head -1); c=${c//"'\\''"/"'"}
     if ! { [ -f "$c" ] && [ -x "$c" ]; }; then e="$h runs $c, which is gone"
-    elif head -c 4096 "$f" | grep -q 'command -v coddy'; then e="$h falls back to a coddy on PATH, where a command in the project could plant one" fx=$tf
+    elif head -c 4096 "$f" | grep -q 'command -v hermy'; then e="$h falls back to a hermy on PATH, where a command in the project could plant one" fx=$tf
     elif ! { [ -n "${ins+x}" ] || wtroots; }; then e="$wf failed, so whether $h runs a file in a worktree of the project cannot be told" fx="repair what makes $wf fail here"
     else follow "$c" inproj; [ $? != 2 ] || e="$h runs $c, which lies in the project or a worktree of it, or is reached through a link there" fx=$tf; fi
   done
@@ -1660,28 +1660,28 @@ if [ "$cmd" = doctor ]; then
   # further than one more
   if [ ! -d "$root/.git" ]; then say worktrees "ok (not applicable: no .git at the root)"
   elif [ "$(find "$root/.git/worktrees/." ! -name . -prune -print 2>/dev/null | head -n 10001 | wc -l)" -gt 10000 ]; then
-    say worktrees ".git/worktrees holds more than 10000 entries, more than coddy can be sure to check before each shell command (fix: remove the entries there that no worktree uses, by hand)"
+    say worktrees ".git/worktrees holds more than 10000 entries, more than hermy can be sure to check before each shell command (fix: remove the entries there that no worktree uses, by hand)"
   else say worktrees ok; fi
   case "$(cfg tracker)" in
-    github) w=.github/workflows/coddy.yml tpl="$inst/templates/coddy.yml" ;;
-    gitlab) w=.gitlab/coddy.yml tpl="$inst/templates/coddy.gitlab-ci.yml" ;;
+    github) w=.github/workflows/hermy.yml tpl="$inst/templates/hermy.yml" ;;
+    gitlab) w=.gitlab/hermy.yml tpl="$inst/templates/hermy.gitlab-ci.yml" ;;
     *) w="" ;;
   esac
   if [ -n "$w" ]; then
     if [ -L "${w%%/*}" ] || [ -L "${w%/*}" ] || [ -L "$w" ] || [ ! -f "$w" ]; then say pr_check "$w is missing or not a plain file (fix: copy $tpl to $w)"
-    elif [ ! -f "$tpl" ]; then say pr_check "the install has no $tpl to compare $w with (fix: reinstall coddy)"
+    elif [ ! -f "$tpl" ]; then say pr_check "the install has no $tpl to compare $w with (fix: reinstall hermy)"
     elif ! cmp -s "$w" "$tpl"; then say pr_check "$w differs from $tpl (fix: copy it over $w)"
-    elif [ "$w" != .gitlab/coddy.yml ]; then say pr_check ok
+    elif [ "$w" != .gitlab/hermy.yml ]; then say pr_check ok
     elif [ -L .gitlab-ci.yml ] || [ ! -f .gitlab-ci.yml ]; then say pr_check ".gitlab-ci.yml is missing or not a plain file (fix: make it one that includes $w)"
     elif [ "$(wc -c < .gitlab-ci.yml)" -gt 1048576 ]; then say pr_check ".gitlab-ci.yml is over 1 MiB, not read (fix: check by hand that it includes $w)"
     # the file's top-level include: alone, comments dropped, by any of YAML's forms for a local path
-    elif awk '{ sub(/\r$/, ""); sub(/(^|[[:space:]])#.*/, "") } /^[^[:space:]-]/ { b = /^include:/ } b && /(^|[ \t"\047{[])\/?\.gitlab\/coddy\.yml([] \t"\047,}]|$)/ { f = 1 } END { exit !f }' <(head -c 1048576 .gitlab-ci.yml); then say pr_check ok
+    elif awk '{ sub(/\r$/, ""); sub(/(^|[[:space:]])#.*/, "") } /^[^[:space:]-]/ { b = /^include:/ } b && /(^|[ \t"\047{[])\/?\.gitlab\/hermy\.yml([] \t"\047,}]|$)/ { f = 1 } END { exit !f }' <(head -c 1048576 .gitlab-ci.yml); then say pr_check ok
     else say pr_check ".gitlab-ci.yml does not include $w (fix: add an entry local: $w under its include:)"; fi
   fi
   if [ ! -f AGENTS.md ]; then say agents_md "AGENTS.md is missing or not a plain file (fix: add the block in step 6 of $inst/skills/onboard/SKILL.md)"
-  elif [ "$(wc -c < AGENTS.md)" -gt 1048576 ]; then say agents_md "AGENTS.md is over 1 MiB, not read (fix: check the coddy block by hand)"
-  elif awk '/<!-- coddy:begin -->/ { b++; if (!bl) bl = NR } /<!-- coddy:end -->/ { e++; if (!el) el = NR } END { exit !(b == 1 && e == 1 && bl < el) }' <(head -c 1048576 AGENTS.md); then say agents_md ok
-  else say agents_md "AGENTS.md needs exactly one coddy:begin marker before one coddy:end (fix: replace the block with the one in step 6 of $inst/skills/onboard/SKILL.md)"; fi
+  elif [ "$(wc -c < AGENTS.md)" -gt 1048576 ]; then say agents_md "AGENTS.md is over 1 MiB, not read (fix: check the hermy block by hand)"
+  elif awk '/<!-- hermy:begin -->/ { b++; if (!bl) bl = NR } /<!-- hermy:end -->/ { e++; if (!el) el = NR } END { exit !(b == 1 && e == 1 && bl < el) }' <(head -c 1048576 AGENTS.md); then say agents_md ok
+  else say agents_md "AGENTS.md needs exactly one hermy:begin marker before one hermy:end (fix: replace the block with the one in step 6 of $inst/skills/onboard/SKILL.md)"; fi
   exit "$bad"
 fi
 
@@ -1708,7 +1708,7 @@ notrack() {
   [ "$tool" = jj ] || return 0
   # push lists the untracked files with --no-integrate-operation (jj 0.41), so
   # a jj without it is refused here, before the issue is claimed.
-  jj -R "$wt" --no-integrate-operation --ignore-working-copy log --no-graph -r @ -T '""' >/dev/null 2>&1 || die "coddy needs jj 0.41 or later in $wt, and $(jj --version 2>/dev/null || echo 'no jj') is installed"
+  jj -R "$wt" --no-integrate-operation --ignore-working-copy log --no-graph -r @ -T '""' >/dev/null 2>&1 || die "hermy needs jj 0.41 or later in $wt, and $(jj --version 2>/dev/null || echo 'no jj') is installed"
   # Written once: jj keeps it outside the project, so a re-run writes nothing.
   [ "$(jj -R "$wt" config get snapshot.auto-track 2>/dev/null)" != 'none()' ] || return 0
   local e; e=$(jj -R "$wt" config set --workspace snapshot.auto-track 'none()' 2>&1) || nowrite "could not turn off snapshot.auto-track in $wt" "$e" "jj keeps this workspace's settings outside the project. Set it once"
@@ -1718,7 +1718,7 @@ notrack() {
 # to the git hooks.
 nowrite() {
   case "$2" in
-    *'Operation not permitted'*) die "$1: $2. A sandbox blocks it, since ${3:-git runs these hooks outside the sandbox. Install them once} from your own terminal, not through an agent: in $root, run start for issue $issue on branch $branch with the coddy at $exe. A rerun then writes nothing, so it passes inside the sandbox, unless the previous hooks directory has gained a hook since, which needs that terminal run again." ;;
+    *'Operation not permitted'*) die "$1: $2. A sandbox blocks it, since ${3:-git runs these hooks outside the sandbox. Install them once} from your own terminal, not through an agent: in $root, run start for issue $issue on branch $branch with the hermy at $exe. A rerun then writes nothing, so it passes inside the sandbox, unless the previous hooks directory has gained a hook since, which needs that terminal run again." ;;
     *) die "$1: $2" ;;
   esac
 }
@@ -1733,25 +1733,25 @@ untracked() {
     git -C "$wt" ls-files -z --others --exclude-standard
   fi
 }
-record() { mkdir -p .git/coddy && echo "$branch" > "$rec" || die "could not record the branch"; }
+record() { mkdir -p .git/hermy && echo "$branch" > "$rec" || die "could not record the branch"; }
 has() { [ -n "$(jj log --no-graph -r "$1" -T '"x"' 2>/dev/null)" ]; } # a jj revset matches
 # from: the stacked base diff, log and mark measure from, while its branch
 # still resolves (a merged base is removed by sweep); else empty, for
 # default_branch on the remote.
 stacked() {
-  from=$(cat ".git/coddy/$issue.base" 2>/dev/null)
+  from=$(cat ".git/hermy/$issue.base" 2>/dev/null)
   [ -n "$from" ] || return 0
   if [ "$tool" = jj ]; then has "\"$from\"" || from=""; else git rev-parse -q --verify "refs/heads/$from" >/dev/null || from=""; fi
 }
 # The config's verify command, run in the worktree; its exit code is the result.
 verify() {
-  [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
+  [ -d "$wt" ] || die "no worktree for $issue. Run /hermy:start $issue."
   v=$(cfg verify); [ -n "$v" ] || die "no verify command in $cname"
   case $v in [\|\>]|[\|\>][-+1-9]|[\|\>][-+1-9][-+1-9]) die "verify: a block scalar (|, >) is not read; write the command on one line in $cname" ;; esac
   (cd "$wt" && sh -c "$v")
 }
-# The git hooks, .git/hooks/coddy/: pre-commit and pre-push run githook
-# through the coddy start embeds ($exe: CODDY_EXEC, the launcher an adapter
+# The git hooks, .git/hooks/hermy/: pre-commit and pre-push run githook
+# through the hermy start embeds ($exe: HERMY_EXEC, the launcher an adapter
 # keeps pointed at its current install, else this file), never one on PATH,
 # where a sandboxed command could plant one, and refuse when it is gone; they
 # run it under a bash -p from PATH (no BASH_ENV, no function from the
@@ -1759,7 +1759,7 @@ verify() {
 # lie in the repository. Their content is a function of that
 # path, the root and the previous directory alone, so behind a launcher it
 # stays the same across updates. Each other hook the
-# previous directory holds gets a pass-through in sh that never starts coddy,
+# previous directory holds gets a pass-through in sh that never starts hermy,
 # and a name it does not hold gets no file, so a hook git fires often
 # (reference-transaction, on every ref update) costs nothing the project did
 # not already pay. A pass-through whose hook has gone exits 0, so start
@@ -1767,8 +1767,8 @@ verify() {
 # into git's hooks path, which is this directory once start has run.
 # core.hooksPath names the directory by its absolute path
 # (git resolves a relative one per worktree); the one it named before, none
-# included, is recorded in .git/config as coddy.previousHooksPath whenever it
-# was not this one, nor a .git/hooks/coddy by another path (a moved
+# included, is recorded in .git/config as hermy.previousHooksPath whenever it
+# was not this one, nor a .git/hooks/hermy by another path (a moved
 # checkout's), so a rerun keeps the record, for githook to hand off to.
 # git runs hooks outside a sandbox, so Claude Code's keeps writes out of
 # .git/hooks and .git/config: what a hook runs is named in one or the other
@@ -1778,11 +1778,11 @@ verify() {
 # passes inside the sandbox.
 hooks() {
   local q="'\''" c d e f g h k n p o m s new=""
-  { [ -L .git/hooks ] || [ -L .git/hooks/coddy ]; } && die ".git/hooks or .git/hooks/coddy is a symlink: coddy writes its git hooks into .git/hooks/coddy, which a sandbox keeps out of an agent's reach. Replace the link with a directory (to keep hooks in the directory it links to, point core.hooksPath there instead), then run /coddy:start $issue again."
+  { [ -L .git/hooks ] || [ -L .git/hooks/hermy ]; } && die ".git/hooks or .git/hooks/hermy is a symlink: hermy writes its git hooks into .git/hooks/hermy, which a sandbox keeps out of an agent's reach. Replace the link with a directory (to keep hooks in the directory it links to, point core.hooksPath there instead), then run /hermy:start $issue again."
   # the root by its physical path, the same for every run of start, sandboxed or not
   c=$exe k=$(pwd -P) || die "cannot find $root"
-  [ -d .git/hooks/coddy ] || { e=$(mkdir -p .git/hooks/coddy 2>&1) || nowrite "could not make .git/hooks/coddy" "$e"; }
-  d=$(cd .git/hooks/coddy && pwd) || die "cannot enter .git/hooks/coddy"
+  [ -d .git/hooks/hermy ] || { e=$(mkdir -p .git/hooks/hermy 2>&1) || nowrite "could not make .git/hooks/hermy" "$e"; }
+  d=$(cd .git/hooks/hermy && pwd) || die "cannot enter .git/hooks/hermy"
   # Hook $1 holds $2 unless it does already: written aside under a dot name and
   # moved in, since a hook cut short, or read while it is rewritten, would run
   # as an empty script and pass.
@@ -1793,41 +1793,41 @@ hooks() {
   # This directory by any spelling of the root, and absolute: git resolves a
   # relative core.hooksPath per worktree.
   ours() { case "$1" in /*) [ "$1" -ef "$d" ] ;; *) return 1 ;; esac; }
-  p=$(git config --local coddy.previousHooksPath)
+  p=$(git config --local hermy.previousHooksPath)
   if ! ours "$(git config core.hooksPath)"; then
     new=1 o=$(git config --type=path core.hooksPath)
     # this directory by another spelling is not a hook to hand off to, and
-    # neither is coddy's by a path the checkout was moved from: the record stays
-    case "$o" in */.git/hooks/coddy|*/.git/hooks/coddy/) ;; *) { [ -n "$o" ] && [ "$o" -ef "$d" ]; } || p=$o ;; esac
+    # neither is hermy's by a path the checkout was moved from: the record stays
+    case "$o" in */.git/hooks/hermy|*/.git/hooks/hermy/) ;; *) { [ -n "$o" ] && [ "$o" -ef "$d" ]; } || p=$o ;; esac
   fi
-  g="${p:-${d%/coddy}}"
+  g="${p:-${d%/hermy}}"
   # Every name here is a plain file start wrote (its temps are dotfiles, which * skips).
   for f in "$d"/*; do
     { [ -e "$f" ] || [ -L "$f" ]; } || continue
-    { [ -f "$f" ] && [ ! -L "$f" ] && grep -q '^# Written by coddy start: ' "$f"; } || die "$f is not a hook coddy start wrote: a tool that installs into git's hooks path put it there. Move it to $g, where coddy runs it after its check, then run /coddy:start $issue again."
+    { [ -f "$f" ] && [ ! -L "$f" ] && grep -q '^# Written by hermy start: ' "$f"; } || die "$f is not a hook hermy start wrote: a tool that installs into git's hooks path put it there. Move it to $g, where hermy runs it after its check, then run /hermy:start $issue again."
   done
   # git hook names hold no dot (a .sample does) and are files (not this
   # directory, under .git/hooks); never this directory again, or it would loop;
-  # never coddy's own two by another name (PRE-COMMIT on a case-insensitive file system)
+  # never hermy's own two by another name (PRE-COMMIT on a case-insensitive file system)
   pass() { case "$1" in pre-commit|pre-push|*.*) return 1 ;; esac; [ -f "$g/$1" ] && [ -x "$g/$1" ] && [ ! "$g" -ef "$d" ] && [ ! "$d/$1" -ef "$d/pre-commit" ] && [ ! "$d/$1" -ef "$d/pre-push" ]; }
-  if [ -n "$p" ]; then o="set core.hooksPath in .git/config back to $p, the directory it named before coddy"; else o="unset core.hooksPath in .git/config, which named no directory before coddy"; fi
+  if [ -n "$p" ]; then o="set core.hooksPath in .git/config back to $p, the directory it named before hermy"; else o="unset core.hooksPath in .git/config, which named no directory before hermy"; fi
   for h in pre-commit pre-push; do
     # What puts it back, in no agent's name, and the same whether $c came from
-    # CODDY_EXEC or not: the terminal run nowrite names passes no CODDY_EXEC,
+    # HERMY_EXEC or not: the terminal run nowrite names passes no HERMY_EXEC,
     # and its hooks must match a sandboxed rerun's byte for byte.
-    m="coddy: $c, the coddy that checks this ${h#pre-}, is gone. When it is the launcher your agent points at its coddy install as a session starts, a new session puts it back; either way, one run of coddy's start from your own terminal, with a coddy installed outside the project, puts these hooks back. --no-verify skips the check. To turn these hooks off, $o."
-    n="coddy: no bash on PATH outside the repository at $k, so $c, the coddy that checks this ${h#pre-}, cannot run. An entry that is relative or lies in the repository is skipped, since a command in the project could plant a bash there. --no-verify skips the check. To turn these hooks off, $o."
+    m="hermy: $c, the hermy that checks this ${h#pre-}, is gone. When it is the launcher your agent points at its hermy install as a session starts, a new session puts it back; either way, one run of hermy's start from your own terminal, with a hermy installed outside the project, puts these hooks back. --no-verify skips the check. To turn these hooks off, $o."
+    n="hermy: no bash on PATH outside the repository at $k, so $c, the hermy that checks this ${h#pre-}, cannot run. An entry that is relative or lies in the repository is skipped, since a command in the project could plant a bash there. --no-verify skips the check. To turn these hooks off, $o."
     printf -v s '#!/bin/sh
-# Written by coddy start: coddy githook refuses a commit or push outside a claimed issue branch, then runs the hook core.hooksPath named before.
+# Written by hermy start: hermy githook refuses a commit or push outside a claimed issue branch, then runs the hook core.hooksPath named before.
 c=%s
 [ -x "$c" ] || { printf "%%s\\n" %s >&2; exit 1; }
-# git runs this at the top of the worktree, where coddy finds the root.
-unset CODDY_ROOT
-# coddy runs under the first bash on PATH and finds its tools there, past every
+# git runs this at the top of the worktree, where hermy finds the root.
+unset HERMY_ROOT
+# hermy runs under the first bash on PATH and finds its tools there, past every
 # entry that is relative or lies, physically, in the repository (the checkout
 # at r, this worktree), where a command in the project could plant one. Shell
 # builtins alone until then; the hook before gets PATH as git gave it. -p: no
-# BASH_ENV, and no function exported into the environment, reaches coddy.
+# BASH_ENV, and no function exported into the environment, reaches hermy.
 r=%s
 t=$(pwd -P) || exit 1
 o() { x=$1; while [ -n "$x" ]; do { [ "$x" -ef "$r" ] || [ "$x" -ef "$t" ]; } && return 0; x=${x%%/*}; done; return 1; }
@@ -1839,8 +1839,8 @@ while [ -n "$s" ]; do
   [ -n "$b" ] || [ ! -f "$d/bash" ] || [ ! -x "$d/bash" ] || b=$d/bash
 done
 [ -n "$b" ] || { printf "%%s\\n" %s >&2; exit 1; }
-CODDY_PATH=$PATH PATH=$n
-export CODDY_PATH PATH
+HERMY_PATH=$PATH PATH=$n
+export HERMY_PATH PATH
 exec "$b" -p "$c" githook %s "$@"
 ' "'${c//\'/$q}'" "'${m//\'/$q}'" "'${k//\'/$q}'" "'${n//\'/$q}'" "$h"
     put "$h" "$s"
@@ -1857,12 +1857,12 @@ exec "$b" -p "$c" githook %s "$@"
   fi
   if ! ours "$(git config core.hooksPath)" || ! ours "$(git -C "$wt" config core.hooksPath)"; then
     [ -z "$new" ] || if [ -n "$o" ]; then git config core.hooksPath "$o"; else git config --unset core.hooksPath; fi
-    die "core.hooksPath is set where it overrides .git/config, so git would not run the coddy git hooks. Find it with git config --show-origin core.hooksPath, at the root and in $wt, remove it, then run /coddy:start $issue again."
+    die "core.hooksPath is set where it overrides .git/config, so git would not run the hermy git hooks. Find it with git config --show-origin core.hooksPath, at the root and in $wt, remove it, then run /hermy:start $issue again."
   fi
-  [ -z "$new" ] || { e=$(git config coddy.previousHooksPath "$p" 2>&1) || nowrite "could not record the previous core.hooksPath in .git/config" "$e"; }
+  [ -z "$new" ] || { e=$(git config hermy.previousHooksPath "$p" 2>&1) || nowrite "could not record the previous core.hooksPath in .git/config" "$e"; }
   for f in "$g"/*; do
     h=${f##*/}; pass "$h" || continue; f="'${g//\'/$q}/${h//\'/$q}'"
-    printf -v s '#!/bin/sh\n# Written by coddy start: runs the hook of this name core.hooksPath named before.\n[ -x %s ] || exit 0\nexec %s "$@"\n' "$f" "$f"
+    printf -v s '#!/bin/sh\n# Written by hermy start: runs the hook of this name core.hooksPath named before.\n[ -x %s ] || exit 0\nexec %s "$@"\n' "$f" "$f"
     put "$h" "$s"
   done
 }
@@ -1917,17 +1917,17 @@ lines() { while IFS= read -r -d '' p; do printf '%q\n' "$p"; done; }
 # Issue $issue's worktree $wt goes, then its lock and its .branch and .base
 # records; never its branch, which sweep deletes and drop keeps. Files in no
 # commit (ignored ones: a .env, a local database; every file, with $1 set)
-# are never deleted: the worktree moves whole to .git/coddy/swept/<issue>
+# are never deleted: the worktree moves whole to .git/hermy/swept/<issue>
 # ($keep), as plain files, and stays there until the user deletes it, moved
 # set. git forgets that one worktree by its missing path (jj's git worktree
 # too), never another whose directory is away. Status 3 when a copy is at
 # $keep already, which is never touched; 1 when the worktree stays as it was,
-# as it always does while .git/coddy or .worktrees is a link, which every
-# removal below would go through, or .git/coddy no directory; 2 when the
+# as it always does while .git/hermy or .worktrees is a link, which every
+# removal below would go through, or .git/hermy no directory; 2 when the
 # worktree went but a record would not (those left are still there).
 release() {
-  keep=".git/coddy/swept/$issue" moved=
-  [ ! -L .git/coddy ] && [ ! -L .worktrees ] && [ -d .git/coddy ] || return 1
+  keep=".git/hermy/swept/$issue" moved=
+  [ ! -L .git/hermy ] && [ ! -L .worktrees ] && [ -d .git/hermy ] || return 1
   if [ -n "${1-}" ] || ignored; then
     if [ -e "$keep" ] || [ -L "$keep" ]; then return 3; fi
     # Submodules checked out in a git worktree keep their repositories in
@@ -1936,7 +1936,7 @@ release() {
     [ "$tool" = jj ] || [ ! -d "$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null)/modules" ] || return 1
     # A link is never moved, nor moved through, and only a worktree's .git
     # file and a workspace's .jj (its repo a file) are dropped, never a repository.
-    [ ! -L "$wt" ] && [ ! -L .git/coddy/swept ] && mkdir -p .git/coddy/swept 2>/dev/null && mv "$wt" "$keep" 2>/dev/null || return 1
+    [ ! -L "$wt" ] && [ ! -L .git/hermy/swept ] && mkdir -p .git/hermy/swept 2>/dev/null && mv "$wt" "$keep" 2>/dev/null || return 1
     # The record goes while the copy is still whole: one that will not go
     # (a locked worktree) gets its directory back and stays, as before.
     if [ "$tool" = jj ]; then jj workspace forget "$issue" >/dev/null 2>&1; else git worktree remove "$wt" >/dev/null 2>&1; fi || { mv "$keep" "$wt" 2>/dev/null; return 1; }
@@ -1950,27 +1950,27 @@ release() {
   else
     [ -n "$moved" ] || git worktree remove "$wt" >/dev/null 2>&1 || return 1
   fi
-  rm -rf ".git/coddy/$issue" ".git/coddy/$issue.branch" ".git/coddy/$issue.base" 2>/dev/null || return 2
+  rm -rf ".git/hermy/$issue" ".git/hermy/$issue.branch" ".git/hermy/$issue.base" 2>/dev/null || return 2
 }
 
 case "$cmd" in
   start|create)
     branch="${3-}"; [ -n "$branch" ] || die "usage: $self $cmd <issue> <branch> [base-issue]"
-    [ -n "$src" ] || die "$cmd needs to run from its file, not stdin: the git hooks it installs run coddy by that path"
+    [ -n "$src" ] || die "$cmd needs to run from its file, not stdin: the git hooks it installs run hermy by that path"
     [ "$branch" != "$base" ] || die "$base is the default branch, not an issue branch"
     hookson
-    # The coddy the git hooks run: CODDY_EXEC, the launcher an adapter keeps
+    # The hermy the git hooks run: HERMY_EXEC, the launcher an adapter keeps
     # pointed at its current install, else this file. git runs them outside
     # any sandbox, so neither it nor any link on the way to its file may lie
     # under the root, a worktree of the repository or where the call began,
     # where a sandboxed command could rewrite it.
-    exe=${CODDY_EXEC-}
+    exe=${HERMY_EXEC-}
     [ -n "$exe" ] || exe="$(cd "${src%/*}" && pwd)/${src##*/}" || die "could not find $src"
-    case "$exe" in /*) ;; *) die "CODDY_EXEC must be an absolute path, got $exe" ;; esac
+    case "$exe" in /*) ;; *) die "HERMY_EXEC must be an absolute path, got $exe" ;; esac
     wtroots || die "$wf failed, so start cannot tell whether $exe lies in a worktree of the repository, where a sandboxed command could rewrite it: repair what makes $wf fail in $root, then run start again."
     follow "$exe" inproj; case $? in
       0) { [ -f "$rp" ] && [ -x "$rp" ]; } || die "$exe is not an executable file, so the git hooks could not run it" ;;
-      2) die "$exe is inside the project at $root, a worktree of it or where this start began, or a link on the way to its file lies there. git runs its hooks outside any sandbox, so they must not run a file a command in the project can rewrite: run start from a coddy installed outside the project." ;;
+      2) die "$exe is inside the project at $root, a worktree of it or where this start began, or a link on the way to its file lies there. git runs its hooks outside any sandbox, so they must not run a file a command in the project can rewrite: run start from a hermy installed outside the project." ;;
       *) die "could not follow $exe to its file" ;;
     esac
     # A new branch starts from $base on the remote, or, given a base issue,
@@ -1979,9 +1979,9 @@ case "$cmd" in
     onto="${4-}" from=""
     if [ -n "$onto" ]; then
       case "$onto" in *[!A-Za-z0-9_-]*) die "base issue id must look like 42 or ABC-123, got '$onto'" ;; esac
-      from=$(cat ".git/coddy/$onto.branch" 2>/dev/null); [ -n "$from" ] || die "issue $onto has no worktree here to stack on. Run /coddy:start $onto first."
+      from=$(cat ".git/hermy/$onto.branch" 2>/dev/null); [ -n "$from" ] || die "issue $onto has no worktree here to stack on. Run /hermy:start $onto first."
     fi
-    other=$(grep -lxF -- "$branch" .git/coddy/*.branch 2>/dev/null | grep -vxF -- "$rec" | head -1)
+    other=$(grep -lxF -- "$branch" .git/hermy/*.branch 2>/dev/null | grep -vxF -- "$rec" | head -1)
     [ -z "$other" ] || die "branch $branch belongs to issue $(basename "$other" .branch)"
     if [ -d "$wt" ]; then
       if [ -s "$rec" ]; then
@@ -2023,14 +2023,14 @@ case "$cmd" in
       fi
     fi
     record
-    [ -z "$from" ] || echo "$from" > ".git/coddy/$issue.base" || die "could not record the base"
+    [ -z "$from" ] || echo "$from" > ".git/hermy/$issue.base" || die "could not record the base"
     hooks
     echo "created: $wt on $branch${from:+ onto $from}" ;;
 
   claim)
     [ -d "$wt" ] || die "create the worktree first: $self create $issue <branch>"
     hookson
-    lock=".git/coddy/$issue" me="${CODDY_SESSION-}" note="" own="" again=""
+    lock=".git/hermy/$issue" me="${HERMY_SESSION-}" note="" own="" again=""
     # A marker from before claims were locks is a plain file: nobody owns it;
     # the claim replaces it. rm -f never removes the lock another session
     # just made of it, a directory, so the race below stays exclusive.
@@ -2038,7 +2038,7 @@ case "$cmd" in
     # The owner line is built before the mkdir and the write, so the lock is
     # never left without one, or with an empty one, while ps runs.
     ml=$(myline)
-    mkdir -p .git/coddy || die "could not record the claim"
+    mkdir -p .git/hermy || die "could not record the claim"
     # ponytail: the tracker is reachable only through MCP tools, so this
     # records the transition the skill just made instead of verifying it.
     # Upgrade path: a PostToolUse hook on the tracker's write tool.
@@ -2082,12 +2082,12 @@ case "$cmd" in
     # files to commit; any other untracked file that is not ignored stops it.
     if [ "${3-}" = -- ]; then msg=""; shift 3
     else msg="${3-}"; [ $# -le 3 ] || [ "$4" = -- ] || die "usage: $self $cmd <issue> [message] [-- <path>...]"; shift $(($# < 4 ? $# : 4)); fi
-    [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
-    [ -e ".git/coddy/$issue" ] || die "issue $issue is not In Progress. Run /coddy:start $issue."
+    [ -d "$wt" ] || die "no worktree for $issue. Run /hermy:start $issue."
+    [ -e ".git/hermy/$issue" ] || die "issue $issue is not In Progress. Run /hermy:start $issue."
     # Held to the lock's owner as the guard is: a lock or a push that names
     # no session (a script run by hand) is not.
-    me="${CODDY_SESSION-}"; owner "$issue"
-    [ -z "$sid" ] || [ -z "$me" ] || mine || die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" "$tk" && echo running || echo "not running")). Ship it from that session, or run /coddy:start $issue to take it over."
+    me="${HERMY_SESSION-}"; owner "$issue"
+    [ -z "$sid" ] || [ -z "$me" ] || mine || die "the worktree of issue $issue belongs to session $sid (pid $pid, $(alive "$pid" "$start" "$tk" && echo running || echo "not running")). Ship it from that session, or run /hermy:start $issue to take it over."
     # The branch create recorded, never one read off the history: once $base
     # is merged in, the history holds the branches of merged issues too.
     branch=$(cat "$rec" 2>/dev/null)
@@ -2154,19 +2154,19 @@ $bad" ;;
     # started from $base with nothing of its own yet, which stays.
     git fetch -q origin "$base" >/dev/null 2>&1
     line=$(git rev-list --first-parent "origin/$base" 2>/dev/null)
-    me="${CODDY_SESSION-}"
-    for rec in .git/coddy/*.branch; do
+    me="${HERMY_SESSION-}"
+    for rec in .git/hermy/*.branch; do
       issue=$(basename "$rec" .branch); wt=".worktrees/$issue"; branch=$(cat "$rec" 2>/dev/null)
       # swept is where the copies live, never an issue's lock to remove.
       case "$issue" in ''|swept|*[!A-Za-z0-9_-]*) continue ;; esac
-      [ -n "$branch" ] && [ -e ".git/coddy/$issue" ] && [ -d "$wt" ] || continue
+      [ -n "$branch" ] && [ -e ".git/hermy/$issue" ] && [ -d "$wt" ] || continue
       # ponytail: compared as strings, so a session that reached its
       # worktree through a symlink is not recognised as being inside it.
-      case "${CODDY_ROOT-}/ ${OLDPWD-}/" in *"$root/$wt/"*) continue ;; esac
+      case "${HERMY_ROOT-}/ ${OLDPWD-}/" in *"$root/$wt/"*) continue ;; esac
       wtstate; [ -n "$tip" ] || continue
       owner "$issue"
       # An unmerged claim whose owner line names a session that is gone, and
-      # not this one, is named, for /coddy:drop; one a running session holds,
+      # not this one, is named, for /hermy:drop; one a running session holds,
       # this session's or one with no owner line is not.
       if ! landed; then
         [ -z "$sid" ] || mine || alive "$pid" "$start" "$tk" || echo "kept: $issue (not merged)"
@@ -2190,24 +2190,24 @@ $bad" ;;
     exit 0 ;;
 
   drop)
-    # Ends a claim here, never in the tracker (/coddy:drop does that): the
+    # Ends a claim here, never in the tracker (/hermy:drop does that): the
     # worktree, lock and records go as sweep removes them (release), the
-    # branch stays. Refused while .git/coddy or .worktrees is a link, which
+    # branch stays. Refused while .git/hermy or .worktrees is a link, which
     # every removal would go through, for a caller standing in the worktree, for
     # another running session's lock, unless the caller names no session (a
     # script run by hand), and, without --force, for work in no commit or on
     # no remote; with it, uncommitted files move whole under
-    # .git/coddy/swept/<issue>, git's staged changes saved there first as
-    # .coddy-staged.patch, since the index goes with the worktree, and
+    # .git/hermy/swept/<issue>, git's staged changes saved there first as
+    # .hermy-staged.patch, since the index goes with the worktree, and
     # commits stay on the local branch (jj: in its history, at the commit
     # dropped: names), so nothing is deleted.
     { [ $# -le 3 ] && case "${3-}" in ''|--force) ;; *) false ;; esac; } || die "usage: $self drop <issue> [--force]"
-    for l in .git/coddy .worktrees; do
+    for l in .git/hermy .worktrees; do
       [ ! -L "$l" ] || die "$l is a link, so issue $issue was not dropped: what drop removes under it would go where the link points, outside the project. Put the directory it stands for back in its place by hand."
     done
     [ -d "$wt" ] || die "no worktree for $issue, so there is nothing to drop."
     # swept is where the copies live, never an issue's lock to remove.
-    [ "$issue" != swept ] && [ -e ".git/coddy/$issue" ] || die "issue $issue has no claim here, so there is nothing to drop."
+    [ "$issue" != swept ] && [ -e ".git/hermy/$issue" ] || die "issue $issue has no claim here, so there is nothing to drop."
     # The caller stands in the worktree when where it began (its project
     # dir) or its working directory, read physically, is at or under it:
     # removing it would take that directory from under the session.
@@ -2215,11 +2215,11 @@ $bad" ;;
       [ -n "$p" ] && p=$(cd "$p" 2>/dev/null && pwd -P) || continue
       case "$p/" in "$w"/*) die "this session stands inside $wt (where it was opened, or its working directory), so issue $issue was not dropped: removing it would take that directory from under the session. Open a session in the main checkout at $root and drop it from there." ;; esac
     done
-    me="${CODDY_SESSION-}"; owner "$issue"
+    me="${HERMY_SESSION-}"; owner "$issue"
     if [ -n "$sid" ] && [ -n "$me" ] && ! mine && alive "$pid" "$start" "$tk"; then
       die "issue $issue is claimed by session $sid (pid $pid, running): drop it from that session, or once that session has ended."
     fi
-    branch=$(cat "$rec" 2>/dev/null); wtstate; keep=".git/coddy/swept/$issue"
+    branch=$(cat "$rec" 2>/dev/null); wtstate; keep=".git/hermy/swept/$issue"
     if [ "$tool" = jj ]; then stay="its commits stay in jj's history, at the commit the dropped: line names"; else stay="its commits stay on the local branch"; fi
     # A git commit no ref holds (a detached HEAD) would go with the worktree's
     # own HEAD; jj keeps every commit it shows. Refused first, so no
@@ -2249,7 +2249,7 @@ $bad" ;;
     # (plumbing, so no diff config shapes it), and moves with it.
     sp=""
     if [ -n "${3-}" ] && [ "$tool" = git ] && ! git -C "$wt" diff-index --cached --quiet HEAD -- 2>/dev/null; then
-      sp="$wt/.coddy-staged.patch"
+      sp="$wt/.hermy-staged.patch"
       { [ ! -e "$sp" ] && [ ! -L "$sp" ]; } || die "$sp exists already, so the staged changes in $wt could not be saved there and issue $issue was not dropped."
       (set -C; git -C "$wt" diff-index --cached -p --binary HEAD -- > "$sp") 2>/dev/null || { rm -f "$sp"; die "the staged changes in $wt could not be saved to $sp, so issue $issue was not dropped."; }
     fi
@@ -2259,9 +2259,9 @@ $bad" ;;
       *) [ -z "$sp" ] || rm -f "$sp"; die "$wt could not be removed (a locked worktree, submodules checked out in it, or a link), so issue $issue was not dropped and its claim stays." ;;
     esac
     s=${tip:0:7}
-    echo "dropped: $issue (${branch:+$branch }at ${s:-an unknown commit})${moved:+ (files kept under $keep${sp:+, staged changes in $keep/.coddy-staged.patch})}"
+    echo "dropped: $issue (${branch:+$branch }at ${s:-an unknown commit})${moved:+ (files kept under $keep${sp:+, staged changes in $keep/.hermy-staged.patch})}"
     # The worktree went but a record would not: named, never reported as kept.
-    [ "$r" = 0 ] || for f in ".git/coddy/$issue" "$rec" ".git/coddy/$issue.base"; do
+    [ "$r" = 0 ] || for f in ".git/hermy/$issue" "$rec" ".git/hermy/$issue.base"; do
       [ ! -e "$f" ] && [ ! -L "$f" ] || echo "left: $f (could not be removed: remove it by hand)"
     done ;;
 
@@ -2284,18 +2284,18 @@ $bad" ;;
     # update before verify runs, so a refresh cut off mid-verify stays
     # flagged, the flag cleared once verify passes.
     [ $# -le 2 ] || die "usage: $self refresh <issue>"
-    # Every write below goes under .git/coddy: a link there takes it elsewhere.
-    for l in .git/coddy ".git/coddy/$issue"; do
+    # Every write below goes under .git/hermy: a link there takes it elsewhere.
+    for l in .git/hermy ".git/hermy/$issue"; do
       [ ! -L "$l" ] || die "$l is a link, so $wt was not brought up to date: what refresh writes under it would go where the link points. Put the directory it stands for back in its place by hand."
     done
     # A directory that is no worktree (no .git file, no .jj) is refused: git
     # -C would find the main checkout above it and merge into that.
-    [ -d "$wt" ] && if [ "$tool" = jj ]; then [ -d "$wt/.jj" ]; else [ -f "$wt/.git" ]; fi || die "no worktree for $issue. Run /coddy:start $issue."
-    [ "$issue" != swept ] && [ -e ".git/coddy/$issue" ] || die "issue $issue is not In Progress. Run /coddy:start $issue."
+    [ -d "$wt" ] && if [ "$tool" = jj ]; then [ -d "$wt/.jj" ]; else [ -f "$wt/.git" ]; fi || die "no worktree for $issue. Run /hermy:start $issue."
+    [ "$issue" != swept ] && [ -e ".git/hermy/$issue" ] || die "issue $issue is not In Progress. Run /hermy:start $issue."
     # needs_rebase goes into the lock directory: a marker from before locks
     # is refused before anything moves, as state refuses it.
-    [ -d ".git/coddy/$issue" ] || die "issue $issue's claim is from before locks. Run /coddy:start $issue to re-claim it."
-    me="${CODDY_SESSION-}"; owner "$issue"
+    [ -d ".git/hermy/$issue" ] || die "issue $issue's claim is from before locks. Run /hermy:start $issue to re-claim it."
+    me="${HERMY_SESSION-}"; owner "$issue"
     if [ -n "$sid" ] && ! mine && alive "$pid" "$start" "$tk"; then echo "skipped: $issue (session $sid holds it)"; exit 0; fi
     # A git merge not yet concluded counts as uncommitted work, though status
     # shows none once nothing is left to stage: the merge below would fail on
@@ -2317,12 +2317,12 @@ $bad" ;;
     # whatever follows, current or conflict included, or ship would open the
     # PR against it. stacked reads a jj that fails as a base gone, so under jj
     # the record goes only once jj is seen to run here.
-    [ "$tool" != jj ] || [ ! -e ".git/coddy/$issue.base" ] || e=$(jj log --no-graph -r 'root()' -T '""' 2>&1) || die "jj does not run in $root, so $wt was not brought up to date and its base record stays: $e"
-    rm -f ".git/coddy/$issue.base"
+    [ "$tool" != jj ] || [ ! -e ".git/hermy/$issue.base" ] || e=$(jj log --no-graph -r 'root()' -T '""' 2>&1) || die "jj does not run in $root, so $wt was not brought up to date and its base record stays: $e"
+    rm -f ".git/hermy/$issue.base"
     git fetch -q origin "$base" >/dev/null 2>&1
     # by its full name: a local tag or branch named origin/$base comes first
-    d=$(git rev-parse -q --verify "refs/remotes/origin/$base^{commit}") || die "origin/$base is missing here, so $wt was not brought up to date: fetch origin, or set default_branch with /coddy:config"
-    f=".git/coddy/$issue/state"
+    d=$(git rev-parse -q --verify "refs/remotes/origin/$base^{commit}") || die "origin/$base is missing here, so $wt was not brought up to date: fetch origin, or set default_branch with /hermy:config"
+    f=".git/hermy/$issue/state"
     # flag sets needs_rebase=$d, flag "" clears it; a new file (set -C), so a
     # link planted at state.tmp is never written through
     flag() { rm -f "$f.tmp" && (set -C; { grep -v '^needs_rebase=' "$f" 2>/dev/null; [ -z "$1" ] || echo "needs_rebase=$1"; } > "$f.tmp") && mv "$f.tmp" "$f" || die "could not write needs_rebase to $f"; }
@@ -2376,7 +2376,7 @@ $bad" ;;
   verify) verify; exit $? ;;
 
   diff|log)
-    [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
+    [ -d "$wt" ] || die "no worktree for $issue. Run /hermy:start $issue."
     stacked
     if [ "$cmd" = log ]; then
       shift 2; git log --oneline -15 "${from:-origin/$base}" -- "$@"; exit $?
@@ -2403,7 +2403,7 @@ $bad" ;;
     # and the issue's state, base and branch records. Only a plain file is
     # read: any other hashes as -. Given a digest, it exits 1 when this one
     # differs.
-    [ -d "$wt" ] || die "no worktree for $issue. Run /coddy:start $issue."
+    [ -d "$wt" ] || die "no worktree for $issue. Run /hermy:start $issue."
     if [ $# -ge 3 ]; then
       case "$3" in *[!0123456789abcdef]*) n=0 ;; *) n=${#3} ;; esac
       [ "$n" = 40 ] || [ "$n" = 64 ] || die "a digest is 40 or 64 lower-case hex digits, got $(q "$3")"
@@ -2440,7 +2440,7 @@ $bad" ;;
       l=$(set -o pipefail; untracked | while IFS= read -r -d '' u; do echo "untracked $(q "$u") $(hof "$wt/$u")$([ -x "$wt/$u" ] && echo ' x')"; done) || die "could not list the untracked files in $wt"
       [ -z "$l" ] || printf '%s\n' "$l"
       for f in "state:$issue/state" "base:$issue.base" "branch:$issue.branch"; do
-        p=".git/coddy/${f#*:}"; if [ -e "$p" ]; then echo "${f%%:*} $(hof "$p")"; else echo "${f%%:*} none"; fi
+        p=".git/hermy/${f#*:}"; if [ -e "$p" ]; then echo "${f%%:*} $(hof "$p")"; else echo "${f%%:*} none"; fi
       done
     ) || exit
     d=$(printf '%s\n' "$o" | git hash-object --stdin) || die "could not hash the fingerprint of $wt"
@@ -2452,12 +2452,12 @@ $bad" ;;
     # start's phase state: key=value lines in the lock directory, so sweep
     # removes them with the lock. Anyone may read; only the lock's owner
     # writes, held as push is. Values are written, never evaluated.
-    lock=".git/coddy/$issue" f=".git/coddy/$issue/state"
-    [ -e "$lock" ] || die "issue $issue is not In Progress. Run /coddy:start $issue."
+    lock=".git/hermy/$issue" f=".git/hermy/$issue/state"
+    [ -e "$lock" ] || die "issue $issue is not In Progress. Run /hermy:start $issue."
     [ $# -gt 2 ] || { cat "$f" 2>/dev/null; exit 0; }
-    [ -d "$lock" ] || die "issue $issue's claim is from before locks. Run /coddy:start $issue to re-claim it."
-    me="${CODDY_SESSION-}"; owner "$issue"
-    [ -z "$sid" ] || [ -z "$me" ] || mine || die "the worktree of issue $issue belongs to session $sid. Run /coddy:start $issue to take it over."
+    [ -d "$lock" ] || die "issue $issue's claim is from before locks. Run /hermy:start $issue to re-claim it."
+    me="${HERMY_SESSION-}"; owner "$issue"
+    [ -z "$sid" ] || [ -z "$me" ] || mine || die "the worktree of issue $issue belongs to session $sid. Run /hermy:start $issue to take it over."
     shift 2
     for kv; do # validate everything first: a bad argument writes nothing
       case "$kv" in *=*) ;; *) die "state takes key=value or key+=value, got '$kv'" ;; esac
