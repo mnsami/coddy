@@ -19,7 +19,11 @@ Each layer has the same rows. A row is left out when it does not apply.
 - The hooks stop the common slips, such as editing in the main checkout or pushing to the default branch.
 - The hooks also report many shell writes after they happen.
 - They are not a sandbox. An agent that is set on getting round them can.
-- Two layers hold against that: branch protection and the required PR check. You set both by hand.
+- Two layers you set by hand make every change to the default branch go through a PR
+  that closes an open, assigned issue: branch protection and the required PR check.
+- A person stays in the merge only if the rule also requires an approving review from another account.
+- A PR can edit the check's own workflow. A code-owner (CODEOWNERS) review on the CI files is what holds that.
+- On Jira there is no PR check, so branch protection is the only hard layer.
 - Claims are cooperative. A shell command that writes to `.git/coddy` defeats
   "only the claiming session may edit or push".
 - `start`'s sub-agents run in the parent's session. Their edits count as the session's own.
@@ -53,6 +57,8 @@ Each layer has the same rows. A row is left out when it does not apply.
   An admin who wants managed hooks alone keeps coddy's by force-enabling `coddy@coddy` in the managed `enabledPlugins`.
 - With the hooks off, the edit guard, the tripwire and the config lock are off.
   Only the git hooks, branch protection and the PR check hold.
+- Those three are Claude Code hooks. Another agent that runs the skills from `~/.coddy` (Codex, Cursor, Copilot CLI,
+  Gemini CLI, Antigravity CLI) never has them. It gets only the git hooks, branch protection and the PR check.
 - Each shell hook leaves a mark for its session. `/coddy:start` looks for it before it creates or claims the worktree.
   With none, it prints `hooks: off` and the causes, and asks you before it claims the issue.
 - That check reads the session's own mark. A session with its hooks off is caught only when it runs `/coddy:start`
@@ -199,7 +205,8 @@ What it does with that:
   - the config is over 64 KiB (see Config lock);
   - `.git/worktrees` holds more entries than coddy can check in 10 seconds.
     Remove the ones no worktree uses. `git worktree prune` drops those whose worktree is gone.
-  - a file under `.git/worktrees` that is not a plain file, which git would wait on forever.
+  - a `gitdir`, `HEAD`, `locked` or `commondir` under `.git/worktrees/<id>/` that is not a plain file,
+    links followed, which git would wait on forever.
     Remove it, or replace it with a plain file, by hand.
   - the config was removed while a claim lock is still there.
 - **Doesn't catch:**
@@ -269,7 +276,8 @@ The long lists are on [Enforcement limits](enforcement-limits.md):
 It writes a `pre-commit` and a `pre-push` there.
 
 - **Stops:** a commit on the default branch, or a push to it.
-  A commit or push on any branch no claimed issue owns, whichever session claimed it.
+  A commit or push on a branch no claimed issue owns.
+  A branch a claimed issue owns passes, whichever session holds the claim.
   They refuse people too.
 - **Lets through:**
   - A commit on a detached `HEAD`, a tag, and deleting a branch other than the default one.
@@ -322,9 +330,10 @@ The only layer that holds when a command edits, commits and pushes to the defaul
 
 - **Stops:** a push to the default branch that skips a pull request, once you have set it.
 - **Doesn't catch:** anything, until you set it. coddy cannot set it: no MCP tool reads or writes protection.
-- **Needs:** you, by hand.
-  - GitHub: require a pull request on the default branch. `/coddy:onboard` asks and tells you what to set.
-  - GitLab: protect the default branch, and turn on Pipelines must succeed. `/coddy:onboard` names both.
+- **Needs:** you, by hand. `/coddy:onboard` asks and tells you what to set.
+  - GitHub: a rule on the default branch that requires a pull request and applies to administrators,
+    plus the required check `closes a claimed issue`.
+  - GitLab: the default branch protected with nobody allowed to push, and Pipelines must succeed.
 
 ## PR check
 
@@ -334,14 +343,16 @@ The `in progress` label comes off when the PR opens, and the check runs again on
 It goes by the closing reference, not the branch name.
 So it is the one layer that holds for a cloud agent, or for any branch coddy did not name.
 
-- **Stops:** a PR that closes no issue, or an issue that is closed or has no assignee.
+- **Stops:** a PR that closes no issue, or that closes one that is closed or has no assignee.
 - **Doesn't catch:**
+  - A PR that edits the check's own workflow or CI file. GitHub runs the check from the PR itself, and GitLab from
+    the source branch. Require a code-owner review on `.github/workflows/` (GitLab: `.gitlab/` and `.gitlab-ci.yml`).
   - A PR on a project that never requires the check. It blocks a merge only once
     `closes a claimed issue` is a required check on the default branch (GitHub), or Pipelines must succeed is on
     with the default branch protected (GitLab). You set both by hand.
   - GitHub or GitLab only. A Jira project gets the local guardrails alone.
     `/coddy:onboard` does not write the check, and a copied one fails every Jira PR, which carries no closing reference.
-- **Needs:** the workflow file, committed by you.
+- **Needs:** GitHub: the workflow file, committed by you. GitLab: the merge request onboard opens, merged by you.
 
 ### On GitHub
 

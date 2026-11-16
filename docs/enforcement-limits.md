@@ -46,6 +46,7 @@ It looks for a worktree add and for a push.
     the check reads the command's name, not what a function or alias runs;
   - a `cd -`, or a `cd` in a pipeline;
   - a quoted word such as `work"tree"`;
+  - a `case` pattern's `)` inside a `$(`, which it reads as closing the substitution early;
   - a path through a symlink that it resolves by name.
 - Push checks are also dodged by a here-string or a pipe into a shell, `env -S`, and a wrapper or wrapper option
   it does not know. Other `-c` keys are not read: `push.default=upstream`, `remote.<name>.mirror`,
@@ -68,4 +69,3 @@ How the push check reads a push:
   since only jj knows which bookmarks it moves. The git hooks never run under jj.
 - A target it cannot work out passes with a notice.
   After that only the git hooks and branch protection stand in the way, and under jj only branch protection.
-- Nothing stands behind it once the command has run. Branch protection and, for git, the git hooks do.
