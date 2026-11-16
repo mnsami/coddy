@@ -260,7 +260,8 @@ The long lists are on [Enforcement limits](enforcement-limits.md):
 
 - **Stops:** a shell command that removes or rewrites `.hermy.yml`. It is put back.
   So is one that creates `.hermy.yml` next to a config still at `.coddy.yml` or `.claude/coddy.yml`, or `.coddy.yml`
-  next to `.claude/coddy.yml`, which it would shadow.
+  next to `.claude/coddy.yml`, which it would shadow: the new file is removed.
+  When that removal fails, the message says so and names that file as now the live config.
   A change that came through git is undone too, a pull of a shared config or a checkout.
   Nothing on disk tells it from one a command forged.
   The message sends Claude to `/hermy:config`, which shows you the diff against `HEAD` and writes it only on your yes.

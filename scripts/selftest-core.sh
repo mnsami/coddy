@@ -449,6 +449,14 @@ t 0 "config: and it is restored" same .coddy.yml
 tripped 2 "config: a .hermy.yml created next to a live .coddy.yml trips" 'cp .coddy.yml .hermy.yml'
 t 1 "config: and is removed" test -e .hermy.yml
 t 0 "config: the .coddy.yml stands" same .coddy.yml
+# One the directory keeps from removal is reported as such, and as now live.
+if [ "$(id -u)" != 0 ]; then # root writes anywhere
+  wire snap w; cp .coddy.yml .hermy.yml; chmod a-w .; out=$(wire trip w 2>&1); r=$?; chmod u+w .
+  t 0 "config: a .hermy.yml the directory keeps from removal still trips" test "$r" = 2
+  t 0 "config: and says it could not be removed and is now the live config" grep -q 'changed .hermy.yml, which switches the hermy guardrails, and it could not be removed, so it is now the live config' <<<"$out"
+  t 1 "config: never that it has been removed" grep -q 'has been removed' <<<"$out"
+  rm .hermy.yml
+fi
 mv .coddy.yml .claude/coddy.yml
 tripped 2 "config: a .coddy.yml created next to the live legacy file trips" 'cp .claude/coddy.yml .coddy.yml'
 t 1 "config: and is removed" test -e .coddy.yml

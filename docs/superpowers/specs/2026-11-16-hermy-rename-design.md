@@ -16,6 +16,7 @@ The old name collides with Coddy Agent (same niche, same CLI name, same `~/.<nam
 - #464: migrate moving `.git/coddy`, the agent dir's answers and backups and the workflow file; the old `.git/hooks/coddy` directory and `coddy.previousHooksPath` key removed; `get.sh` moving the home; skills stopping on a legacy-only project; the final release under the old name.
 - The 0.8.0 version bump (its own PR).
 - Plugin evals, a `hermy:lint` marker and PR-body section markers: none exists today, so there is nothing to rename.
+- Keeping later commands refused until a higher config `trip` could not remove is gone: it needs a new mechanism, a record `trip` leaves for `snap`.
 
 ## Anti-goals
 
@@ -29,7 +30,7 @@ The old name collides with Coddy Agent (same niche, same CLI name, same `~/.<nam
 
 ## Decided
 
-- Config precedence: `.hermy.yml`, then `.coddy.yml`, then `.claude/coddy.yml`; the first present is live. `config`, `status` and `detect` print which. The config lock snapshots all three, puts back the live one, lets a lower one go while a higher one is live, and removes a higher one a command made next to a live lower one. The guard asks on all three. `exclude config` excludes `.hermy.yml`. Onboard stops when any of the three exists.
+- Config precedence: `.hermy.yml`, then `.coddy.yml`, then `.claude/coddy.yml`; the first present is live. `status` and `detect` print which. The config lock snapshots all three, puts back the live one, lets a lower one go while a higher one is live, and removes a higher one a command made next to a live lower one; when that removal fails, `trip` says so and names that file as now the live config. The guard asks on all three. `exclude config` excludes `.hermy.yml`. Onboard stops when any of the three exists.
 - `migrate` moves the live legacy config (either path) to `.hermy.yml`; the version step and the other moves are #464's.
 - Git hooks: `start`, `githook` and `doctor` treat the old header, a `core.hooksPath` naming `.git/hooks/coddy` and `coddy.previousHooksPath` as their own previous install: never recorded as the previous hooks path, never run as a previous hook; `coddy.previousHooksPath` is read when `hermy.previousHooksPath` is absent; `start` writes the hooks under `.git/hooks/hermy/` with the new header and records `hermy.previousHooksPath`. Before moving `core.hooksPath` off `.git/hooks/coddy`, `start` holds that directory to its own directory's rule: a symlink there, or a file not carrying the old header, makes it write nothing and stop, naming the file and the previous directory it belongs in.
 - `left` also sees `.git/hooks/coddy` and a claim under `.git/coddy`, so a project onboarded earlier whose config is removed is refused, not inert. A claim under `.git/coddy` is otherwise not read: its edits are refused until #464 moves it, which fails closed.

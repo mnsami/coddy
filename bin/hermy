@@ -1445,12 +1445,16 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     [ "$(readlink "$p" 2>/dev/null)" = "$was" ] && [ "$(kind "$p")" = "$k" ] && { [ "$k" != file ] || cmp -s "$p" "$s"; } && continue
     rm -rf "$p"
     # A copy that cannot be written back is kept, and the report says so,
-    # rather than claiming the file is back.
-    if [ ! -f "$s" ]; then what=removed
-    elif mkdir -p "${p%/*}" && cp "$s" "$p"; then what=restored
-    else what="removed, and could not be put back: restore it by hand from the copy at $s"; keep=1
+    # rather than claiming the file is back; so does a path made above the
+    # live one that cannot be removed, which is then live itself.
+    if [ ! -f "$s" ]; then what="so it has been removed"
+      if [ -e "$p" ] || [ -L "$p" ]; then
+        what="and it could not be removed"; [ ! -f "$p" ] || what="$what, so it is now the live config"; what="$what: remove it by hand"
+      fi
+    elif mkdir -p "${p%/*}" && cp "$s" "$p"; then what="so it has been restored"
+    else what="so it has been removed, and could not be put back: restore it by hand from the copy at $s"; keep=1
     fi
-    msg="${msg}that command changed $c, which switches the hermy guardrails, so it has been $what. "
+    msg="${msg}that command changed $c, which switches the hermy guardrails, $what. "
   done
   [ -z "$msg" ] || msg="${msg}If that came from git (a pull or checkout), accept it with /hermy:config; other settings change there too, and leaving the workflow is for the user to do by hand. "
   msg=$msg$cap
