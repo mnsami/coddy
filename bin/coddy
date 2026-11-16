@@ -176,9 +176,9 @@ if [ "${1-}" = link ]; then
   exit 0
 fi
 
-# Whether git dir $1 is a repository as git tests one, its HEAD read into l:
-# a HEAD git takes (a link read as the ref it names), and objects and refs,
-# found through a commondir file when there is one (relative to $1, line
+# Whether git dir $1 is a repository as git tests one: a HEAD git takes (a
+# link read as the ref it names), and objects and refs, found through a
+# commondir file when there is one (relative to $1, line
 # breaks trimmed from its end as git trims them; one that is not a plain
 # file, which git dies or hangs on, or is empty fails; objects and refs need
 # only be searchable, as git's access(X_OK) has it). Every file is read no
@@ -186,7 +186,7 @@ fi
 # hook, and a HEAD only as far as git reads one (255 bytes; a link's target
 # must itself start with refs/).
 isgit() {
-  local c=$1 m=""
+  local c=$1 m="" l
   l=""; if [ -L "$1/HEAD" ]; then l=$(readlink "$1/HEAD"); case "$l" in refs/*) l="ref: $l" ;; *) l="" ;; esac; elif [ -f "$1/HEAD" ]; then { IFS= read -r -d '' -n 1024 l < "$1/HEAD"; } 2>/dev/null; fi
   [[ ${l:0:255} =~ ^(ref:[$' \t\n\r']*refs/|[0-9a-fA-F]{40}) ]] || return 1
   if [ -e "$1/commondir" ]; then
