@@ -1967,7 +1967,7 @@ exec "$b" -p "$c" githook %s "$@"
   # is there is removed, so a rerun writes nothing.
   o="hermy's git hooks from before the rename are removed only outside it. Remove them once"
   if [ -d .git/hooks/coddy ] && [ ! -L .git/hooks/coddy ]; then
-    for f in .git/hooks/coddy/*; do
+    for f in .git/hooks/coddy/* .git/hooks/coddy/.[!.]* .git/hooks/coddy/..?*; do # a dot name: a temp an old start left
       { [ -f "$f" ] && [ ! -L "$f" ] && grep -q '^# Written by coddy start: ' "$f"; } || continue
       e=$(rm -f -- "$f" 2>&1) || nowrite "could not remove $PWD/$f" "$e" "$o"
     done

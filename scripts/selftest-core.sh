@@ -1562,8 +1562,9 @@ if [ "$(id -u)" != 0 ]; then # root writes anywhere
   chmod u+w "$lg/.git/hooks/coddy"; rm "$lg/.git/hooks/coddy/pre-push"
 fi
 rm "$lg/.git/hooks/coddy/post-merge"; git -C "$lg" config hermy.previousHooksPath "$tmp/lgprev"
+printf '#!/bin/sh\n# Written by coddy start: x\n' > "$lg/.git/hooks/coddy/.pre-push.123" # a temp an old start left
 lgr start 5 feat/5-old >/dev/null 2>&1
-t 0 "old name: the directory goes once empty, and the old record once hermy's is set" sh -c '! test -e "$1/.git/hooks/coddy" && ! git -C "$1" config --local coddy.previousHooksPath' - "$lg"
+t 0 "old name: the directory goes once empty, a temp an old start left included, and the old record once hermy's is set" sh -c '! test -e "$1/.git/hooks/coddy" && ! git -C "$1" config --local coddy.previousHooksPath' - "$lg"
 if [ "$(id -u)" != 0 ]; then
   chmod a-w "$lg/.git/hooks" "$lg/.git/hooks/hermy"; : > "$lg/.git/config.lock"
   t 0 "old name: a rerun then writes nothing, so it passes where neither the hooks nor .git/config can be written" lgr start 5 feat/5-old
