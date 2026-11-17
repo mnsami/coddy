@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Claude Code adapter for the config verb: the project's hermy config, or
-# NOT_ONBOARDED. Every skill except onboard injects this and stops on it.
+# Claude Code adapter for the config verb: the project's hermy config,
+# MIGRATE: <path> in place of one from before the rename, or NOT_ONBOARDED.
+# Every skill except onboard injects this and stops on it.
 for v in "${!GIT_@}"; do case $v in GIT_AUTHOR_*|GIT_COMMITTER_*|GIT_SSH*|GIT_ASKPASS|GIT_TERMINAL_PROMPT) ;; *) unset "$v" ;; esac; done
 real=$(case "${CLAUDE_PROJECT_DIR-}" in (/*) cd "$CLAUDE_PROJECT_DIR" 2>/dev/null && pwd -P ;; esac)
 case "$(pwd -P)/" in "${real:-//}"/*) ;; *) CLAUDE_PROJECT_DIR=$PWD ;; esac
