@@ -1,4 +1,4 @@
-# coddy refresh (#36)
+# hermy refresh (#36)
 
 ## Why
 
@@ -6,13 +6,13 @@ After a PR merges, every other open issue branch is behind `default_branch`. Bri
 
 ## Goals
 
-- One command, `/coddy:refresh`, brings every eligible issue worktree up to date with `origin/<default_branch>` and runs `verify` in each.
+- One command, `/hermy:refresh`, brings every eligible issue worktree up to date with `origin/<default_branch>` and runs `verify` in each.
 - A clean update with a passing verify needs nothing from the user.
 - A conflict, or a verify that fails after a clean update, is reported per issue and flagged. `start <n>` picks the flag up: the implementer resolves against the issue's acceptance criteria, then `verify`, then one review round.
 
 ## Non-goals
 
-- Pushing. `ship` stays the only landing path (#251). The skill names `/coddy:ship <n>` for an updated issue whose PR is already open.
+- Pushing. `ship` stays the only landing path (#251). The skill names `/hermy:ship <n>` for an updated issue whose PR is already open.
 - Updating a branch stacked on a base that is still open.
 - Running in `sweep`: `verify` takes minutes, and `sweep` runs at every `next` and `start` load.
 
@@ -24,12 +24,12 @@ After a PR merges, every other open issue branch is behind `default_branch`. Bri
 
 ## Approaches
 
-- **Trigger, chosen: all at once.** One skill, one verb call per issue, and one output line per issue. A clean sibling costs about 20 tokens, against 12-15k for each `/coddy:start <n>`, which would also start an unwanted review round on resume. A per-issue rebase inside `start` was rejected on cost.
+- **Trigger, chosen: all at once.** One skill, one verb call per issue, and one output line per issue. A clean sibling costs about 20 tokens, against 12-15k for each `/hermy:start <n>`, which would also start an unwanted review round on resume. A per-issue rebase inside `start` was rejected on cost.
 - **Pushed git branches, chosen: A, merge.** Under `worktree: git`, `origin/<default_branch>` is merged into the branch, so nothing is rewritten and `ship`'s normal push works. jj workspaces rebase, since `jj git push` already moves a rewritten bookmark with a lease. B, rebase plus `--force-with-lease` in `push`, was rejected because it reverses the force-push rule. C, rebase when unpushed and merge when pushed, was rejected for having two paths to test.
 
 ## Design
 
-**bin/coddy: `refresh <issue>`.** Prints one line and exits 0. It refuses, with exit 1, a missing lock or worktree and a `git_dir:` case, as the other verbs do.
+**bin/hermy: `refresh <issue>`.** Prints one line and exits 0. It refuses, with exit 1, a missing lock or worktree and a `git_dir:` case, as the other verbs do.
 - `skipped: <n> (<reason>)` covers:
   - another running session's lock (the `sweep` test: a gone owner, no owner line, or this session is eligible);
   - uncommitted work (`wtstate`'s `dirty`);
@@ -43,11 +43,11 @@ After a PR merges, every other open issue branch is behind `default_branch`. Bri
 - **After a clean update:** `verify` runs in the worktree, with its output to `/dev/null`. A pass prints `refreshed: <n>`. A fail prints `failed: <n>` and writes the same `needs_rebase` flag.
 - A stacked issue that was updated onto `default_branch` has its `.base` record removed.
 
-**skills/refresh/SKILL.md** (new, model-invocable, `when_to_use`: refresh, update or rebase the open issues or siblings after a merge). It injects config, sweep and status with their fallback line, and runs `issue.sh refresh <n>` once per issue listed under Worktrees, one Bash call each. It shows the lines as printed, then names `/coddy:start <n>` for each `conflict:` and `failed:`, and `/coddy:ship <n>` for each `refreshed:` that has an open PR. It never edits code.
+**skills/refresh/SKILL.md** (new, model-invocable, `when_to_use`: refresh, update or rebase the open issues or siblings after a merge). It injects config, sweep and status with their fallback line, and runs `issue.sh refresh <n>` once per issue listed under Worktrees, one Bash call each. It shows the lines as printed, then names `/hermy:start <n>` for each `conflict:` and `failed:`, and `/hermy:ship <n>` for each `refreshed:` that has an open PR. It never edits code.
 
 **Skills touched:**
 - `start` step 4 resume: `needs_rebase` in `state` comes before every other resume rule. The implementer runs in fix mode on the plan's tier with the step 8 inputs, and the finding is "bring the branch up to date with `origin/<default_branch>` (git: merge; jj: rebase) and resolve conflicts against the acceptance criteria". Then `state needs_rebase=` is cleared, and one round of step 10 runs.
-- `next` and `start`: a `cleaned:` line while other worktrees are listed adds "run `/coddy:refresh`".
+- `next` and `start`: a `cleaned:` line while other worktrees are listed adds "run `/hermy:refresh`".
 - `onboard`: the AGENTS.md block's skill list gains `refresh`.
 
 **Tests (selftest.sh, git and jj legs):**

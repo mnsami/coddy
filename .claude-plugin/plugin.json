@@ -1,9 +1,9 @@
 {
-  "name": "coddy",
+  "name": "hermy",
   "version": "0.7.3",
   "description": "Issue-driven development workflow: onboard a project, start an issue, ship a PR, triage findings, pick what's next. Works with GitHub Issues, GitLab and Jira.",
   "author": { "name": "Mina Sami" },
-  "icon": "assets/icon/coddy-512.png",
+  "icon": "assets/icon/hermy-512.png",
   "homepage": "https://github.com/mnsami/coddy",
   "repository": "https://github.com/mnsami/coddy",
   "license": "MIT"

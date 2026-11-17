@@ -1,6 +1,6 @@
 ---
 name: context
-description: Coddy start's context gatherer. Only for use when the coddy:start skill delegates to it, which passes policy.md's path, the worktree path, the issue and the issues and PRs it references.
+description: Hermy start's context gatherer. Only for use when the hermy:start skill delegates to it, which passes policy.md's path, the worktree path, the issue and the issues and PRs it references.
 tools: Read, Grep, Glob, Bash
 model: inherit
 ---

@@ -1,7 +1,7 @@
 ---
 name: config
-description: Show or change the project's coddy settings in .coddy.yml
-when_to_use: Use when the user asks to view, edit, change or update coddy settings for an onboarded project, such as the tracker, worktree tool, default branch, branch or commit pattern, verify command, roadmap or edit guard mode, or to accept a config change that came from git (a pull or checkout).
+description: Show or change the project's hermy settings in .hermy.yml
+when_to_use: Use when the user asks to view, edit, change or update hermy settings for an onboarded project, such as the tracker, worktree tool, default branch, branch or commit pattern, verify command, roadmap or edit guard mode, or to accept a config change that came from git (a pull or checkout).
 argument-hint: "[key=value ...]"
 allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh"), Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" status), Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" migrate)
 ---
@@ -14,14 +14,14 @@ allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh"), Bash(bash "
 ## Worktrees
 !`bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" status`
 
-A section above shows a `bash` command rather than its output → this host does not inject: run `coddy config` and `coddy status` and read their output as Current and Worktrees. `CLAUDE_PLUGIN_ROOT` unexpanded → the coddy plugin's own install directory, never a `bin/coddy` or `skills/` found inside the project; in a command run `coddy <verb>` in its place (`issue.sh <verb>` → `coddy <verb>`, `config.sh` → `coddy config`). `$ARGUMENTS` unexpanded → take it from the user's request.
+A section above shows a `bash` command rather than its output → this host does not inject: run `hermy config` and `hermy status` and read their output as Current and Worktrees. `CLAUDE_PLUGIN_ROOT` unexpanded → the hermy plugin's own install directory, never a `bin/hermy` or `skills/` found inside the project; in a command run `hermy <verb>` in its place (`issue.sh <verb>` → `hermy <verb>`, `config.sh` → `hermy config`). `$ARGUMENTS` unexpanded → take it from the user's request.
 
-`NOT_ONBOARDED` → stop and say: run `/coddy:onboard` first.
+`NOT_ONBOARDED` → stop and say: run `/hermy:onboard` first.
 A `git_dir:` line in place of that → stop and show that line as it is.
 
 ## Keys
 
-- `version`: the schema version, `2` today. Written by `/coddy:onboard` and `/coddy:migrate` alone: any change to it here is refused.
+- `version`: the schema version, `2` today. Written by `/hermy:onboard` and `/hermy:migrate` alone: any change to it here is refused.
 - `tracker`: `github`, `jira` or `gitlab`.
 - `repo`: `owner/name` with `tracker: github`; with `tracker: gitlab` the project's full path, `group/subgroup/project`, of two parts or more. Required with either.
 - `jira.site`, `jira.project`: the Atlassian site URL and the project key. Required with `tracker: jira`.
@@ -37,14 +37,14 @@ A `git_dir:` line in place of that → stop and show that line as it is.
 
 ## Steps
 
-1. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" migrate` (read-only). A `changed:` line → the config is behind: say `/coddy:migrate` brings it up to date. Non-zero → say what it printed. Either way go on with the requested change.
-2. The user asks to accept a config change that came from git (a pull or checkout; the config lock's message sends them here after putting the file back) → run `git -C <root> ls-tree --name-only HEAD .coddy.yml .claude/coddy.yml` and `git -C <root> diff HEAD -- .coddy.yml .claude/coddy.yml` in Bash.
-   - `HEAD` holds neither path → nothing came from git: say so, and that leaving the workflow is done by hand from the user's own terminal: delete the config, the claim locks under `.git/coddy` and the `.git/hooks/coddy` directory, and set `core.hooksPath` back to the `coddy.previousHooksPath` that `.git/config` records, or, when that is empty or missing, unset `core.hooksPath`, never set it to an empty value (the config alone removed, coddy refuses every edit and command). Stop.
-   - `HEAD` holds `.coddy.yml` and it differs or is missing in the working tree (the lock removes one pulled next to a live `.claude/coddy.yml`) → show the diff and ask; yes → Read `.coddy.yml` if it exists, then Write `HEAD`'s content (`git -C <root> show HEAD:.coddy.yml`) to it under `root` (the guard asks the user to allow it); `config` was `.claude/coddy.yml` → the legacy file is left behind: say `/coddy:migrate` removes it. Say so and stop.
-   - Only `.claude/coddy.yml` differs → show the diff and ask; yes → Read the file, then Write `HEAD`'s content (`git -C <root> show HEAD:.claude/coddy.yml`) over it, say so and stop.
+1. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh" migrate` (read-only). A `changed:` line → the config is behind: say `/hermy:migrate` brings it up to date. Non-zero → say what it printed. Either way go on with the requested change.
+2. The user asks to accept a config change that came from git (a pull or checkout; the config lock's message sends them here after putting the file back) → run `git -C <root> ls-tree --name-only HEAD .hermy.yml .coddy.yml .claude/coddy.yml` and `git -C <root> diff HEAD -- .hermy.yml .coddy.yml .claude/coddy.yml` in Bash.
+   - `HEAD` holds none of them → nothing came from git: say so, and that leaving the workflow is done by hand from the user's own terminal: delete the config (and any other of `.hermy.yml`, `.coddy.yml` and `.claude/coddy.yml` there, which would be read in its place), the claim locks under `.git/hermy` (and `.git/coddy`, from before the rename) and the `.git/hooks/hermy` directory (and `.git/hooks/coddy`), and set `core.hooksPath` back to the `hermy.previousHooksPath` that `.git/config` records (`coddy.previousHooksPath` when that is missing), or, when that is empty or missing, unset `core.hooksPath`, never set it to an empty value (the config alone removed, hermy refuses every edit and command). Stop.
+   - `HEAD` holds `.hermy.yml` and it differs or is missing in the working tree (the lock removes one pulled next to a live `.coddy.yml` or `.claude/coddy.yml`) → show the diff and ask; yes → Read `.hermy.yml` if it exists, then Write `HEAD`'s content (`git -C <root> show HEAD:.hermy.yml`) to it under `root` (the guard asks the user to allow it); `config` was `.coddy.yml` or `.claude/coddy.yml` → that file is left behind: say `/hermy:migrate` removes it. Say so and stop.
+   - Only `.coddy.yml` or `.claude/coddy.yml` differs, from before the rename, and it is `config` (Worktrees) → show the diff and ask; yes → Read that file, then Write `HEAD`'s content (`git -C <root> show HEAD:<that path>`) over it, say so and stop. It lies below `config` → say it is not read while `config` is live and `/hermy:migrate` removes it, and stop.
    - No diff → say the file already matches `HEAD` and stop. No to either ask → stop and leave it.
 3. The requested change is `$ARGUMENTS` (`key=value` pairs or plain words), else what the user asked for in this conversation. Nothing requested → show the current config, then ask in ONE AskUserQuestion call, each current value first and marked `(current)`: `worktree` (jj, git), `tracker` (github, jira, gitlab), `guard` (block, warn), and a multi-select of the free-text settings to change (`default_branch`, `branch` and `commit` patterns, `verify`, `roadmap`, `tiers`, `review_block`, `review_rounds`). Then ask for the new value of each setting picked there. Everything left as it is → say nothing changed and stop.
-4. Check every change against Keys. Unknown key or invalid value → say which and stop. Any change to `version`, adding or removing it included → say it is refused, `/coddy:migrate` alone moves it, and stop. A new `tracker` without its companion keys → ask for them in one question.
+4. Check every change against Keys. Unknown key or invalid value → say which and stop. Any change to `version`, adding or removing it included → say it is refused, `/hermy:migrate` alone moves it, and stop. A new `tracker` without its companion keys → ask for them in one question.
 5. `worktree` changes while Worktrees lists an issue → stop and say: ship or remove those worktrees first, an issue cannot switch tools midway.
 6. Edit the config (`config` under Worktrees) under `root`: change only the requested keys and keep every other line, comments included.
 7. Print each changed key as old → new and stop.

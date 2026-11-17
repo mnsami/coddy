@@ -1,4 +1,4 @@
-# What `verify` in .coddy.yml runs locally, plus shellcheck, on every push
+# What `verify` in .hermy.yml runs locally, plus shellcheck, on every push
 # to main and every PR. jj comes from its release binary, checked against a
 # pinned sha256, so the self-test runs both worktree legs; git, jq and node
 # are on the runner images already. The macos job runs both self-tests under
@@ -29,7 +29,7 @@ jobs:
       # the pinned one, not a shellcheck the image has earlier on PATH
       - run: |
           shellcheck --version | grep -x 'version: 0.11.0'
-          shellcheck -S warning bin/coddy scripts/*.sh get.sh
+          shellcheck -S warning bin/hermy scripts/*.sh get.sh
       - run: bash scripts/selftest.sh
       - run: bash scripts/selftest-core.sh
       - run: npm install -g @anthropic-ai/claude-code@2.1.317
@@ -42,7 +42,7 @@ jobs:
         with:
           persist-credentials: false
       - name: parse under /bin/bash
-        run: for f in bin/coddy scripts/*.sh get.sh; do /bin/bash -n "$f"; done
+        run: for f in bin/hermy scripts/*.sh get.sh; do /bin/bash -n "$f"; done
       - name: put /bin/bash first on PATH
         run: echo /bin >> "$GITHUB_PATH"
       - name: the bash on PATH

@@ -11,7 +11,7 @@ open at the time #261 was filed. The layers a steered agent cannot skip hold wit
 
 ## Goals
 
-- `bin/coddy` holds no command-text reader; snap does not read `tool_input.command`.
+- `bin/hermy` holds no command-text reader; snap does not read `tool_input.command`.
 - What holds instead is stated and tested: trip reports a stray worktree after it is made; pre-push and branch
   protection refuse a push to the default branch (jj: branch protection only).
 - triage and start file no issue for a finding that is another case of a limit the project's docs already record.

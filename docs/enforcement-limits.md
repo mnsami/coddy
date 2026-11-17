@@ -2,7 +2,7 @@
 
 This page holds the long lists of gaps in the shell tripwire.
 You rarely need them. Read them when you want the exact edge of a check.
-Back to [How coddy enforces its rules](enforcement.md#shell-tripwire).
+Back to [How hermy enforces its rules](enforcement.md#shell-tripwire).
 
 ## A check that fails is never read as a clean one
 
@@ -16,12 +16,12 @@ Back to [How coddy enforces its rules](enforcement.md#shell-tripwire).
   whatever changed meanwhile (a main-checkout edit, a worktree outside `.worktrees/`, a `core.hooksPath` change)
   is part of that starting state and is never named.
 - A main checkout too large to record in 20 seconds runs every command unchecked.
-- `/coddy:start` refuses, and `coddy doctor` reports it, when the listing it checks the coddy path against fails.
+- `/hermy:start` refuses, and `hermy doctor` reports it, when the listing it checks the hermy path against fails.
 
 ## Settings files
 
 The tripwire also compares `.claude/settings.json` and `.claude/settings.local.json`, git-ignored or not.
-A change there can turn coddy's hooks off or change what runs outside the sandbox.
+A change there can turn hermy's hooks off or change what runs outside the sandbox.
 A delete counts. A change only to a `permissions.allow` list of strings does not,
 because Claude Code writes that itself when you allow a command for good.
 

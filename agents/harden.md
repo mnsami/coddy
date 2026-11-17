@@ -1,6 +1,6 @@
 ---
 name: harden
-description: Coddy start's hardening pass. Only for use when the coddy:start skill delegates to it, which passes policy.md's path, the worktree path, the diff, the plan, verify, the commit pattern and the worktree tool.
+description: Hermy start's hardening pass. Only for use when the hermy:start skill delegates to it, which passes policy.md's path, the worktree path, the diff, the plan, verify, the commit pattern and the worktree tool.
 model: inherit
 ---
 

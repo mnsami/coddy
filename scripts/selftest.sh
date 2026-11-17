@@ -98,18 +98,18 @@ sed '1,/^# /!{/^Read `policy.md`/d;}' "$here/agents/review.md" > "$tmp/review.md
 t 1 "an agent whose body does not open with it fails it" opens "$tmp/review.md"
 t 0 "start stops on a brief's no policy path" grep -qF 'A brief that returns `no policy path` → stop: show the policy path passed to it and, when the file cannot be read at that path, say so; never go on with that step, and leave `phase` as it is.' "$here/skills/start/SKILL.md"
 # Each agent's frontmatter: its name, a description that keeps it inside
-# coddy:start, model: inherit for a call that passes none, and its tools. A
+# hermy:start, model: inherit for a call that passes none, and its tools. A
 # tools line is an allowlist and none inherits every tool, so the four that
 # must change nothing carry one without Write, Edit, NotebookEdit or Agent;
 # their Bash, which a build with no Grep or Glob tool needs to search, can
 # still write, which start's mark catches in the worktree.
 fm() { awk 'NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit } { print }' "$1"; }
 key() { fm "$1" | sed -n "s/^$2: *//p"; }
-named() { [ "$(key "$1" name)" = "$2" ] && key "$1" description | grep -qF coddy:start; }
+named() { [ "$(key "$1" name)" = "$2" ] && key "$1" description | grep -qF hermy:start; }
 hastools() { fm "$1" | grep -q '^tools:'; }
 lists() { key "$1" tools | tr , '\n' | sed 's/^ *//; s/ *$//' | grep -qxE "($2)(\(.*\))?"; }
 for b in context simplest implement harden review security; do
-  t 0 "agent $b has its name and a description naming coddy:start" named "$here/agents/$b.md" "$b"
+  t 0 "agent $b has its name and a description naming hermy:start" named "$here/agents/$b.md" "$b"
   t 0 "agent $b has model: inherit" test "$(key "$here/agents/$b.md" model)" = inherit
 done
 for b in context simplest review security; do
@@ -142,18 +142,18 @@ awk '{print} /^roadmap: /{print "extra: x"}' "$here/skills/onboard/SKILL.md" > "
 t 1 "schema: a key added to one copy only fails it" schema "$tmp/onboard.md" "$here/skills/config/SKILL.md" "$here/README.md"
 # A skill that injects a script's output says what to do on a host that does
 # not inject or expand. fallback <skill> <verb> [vars]: its fallback line names
-# coddy <verb> for reading the sections by hand, `CLAUDE_PLUGIN_ROOT`
-# unexpanded as never a `bin/coddy` inside the project, and each variable the
+# hermy <verb> for reading the sections by hand, `CLAUDE_PLUGIN_ROOT`
+# unexpanded as never a `bin/hermy` inside the project, and each variable the
 # skill takes; start's never-list also names `agents/`, where its briefs live.
 # A new skill goes in the table.
-fallback() { line=$(grep -F '`CLAUDE_PLUGIN_ROOT` unexpanded' "$1") && for w in "coddy $2" 'never a `bin/coddy`' ${3-}; do case "$line" in *"$w"*) ;; *) return 1;; esac; done; }
+fallback() { line=$(grep -F '`CLAUDE_PLUGIN_ROOT` unexpanded' "$1") && for w in "hermy $2" 'never a `bin/hermy`' ${3-}; do case "$line" in *"$w"*) ;; *) return 1;; esac; done; }
 for s in 'config status $ARGUMENTS' 'drop status $ARGUMENTS' 'migrate status' 'next status' 'onboard detect' 'refresh status' 'ship status $ARGUMENTS' 'start status $issue $onto $base `agents/`' 'triage status $ARGUMENTS'; do read -r n v a <<< "$s"; t 0 "skill $n carries the fallback for a host that does not inject" fallback "$here/skills/$n/SKILL.md" "$v" "$a"; done
 grep -vF '`CLAUDE_PLUGIN_ROOT` unexpanded' "$here/skills/next/SKILL.md" > "$tmp/next.md"
 t 1 "a skill that injects without the fallback fails it" fallback "$tmp/next.md" status
-sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s/coddy status/coddy stat/' "$here/skills/next/SKILL.md" > "$tmp/next.md"
+sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s/hermy status/hermy stat/' "$here/skills/next/SKILL.md" > "$tmp/next.md"
 t 1 "one whose fallback drops the read-by-hand command fails it" fallback "$tmp/next.md" status
-sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s|never a `bin/coddy`|never a copy|' "$here/skills/next/SKILL.md" > "$tmp/next.md"
-t 1 "one whose fallback drops the never-a-bin/coddy clause fails it" fallback "$tmp/next.md" status
+sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s|never a `bin/hermy`|never a copy|' "$here/skills/next/SKILL.md" > "$tmp/next.md"
+t 1 "one whose fallback drops the never-a-bin/hermy clause fails it" fallback "$tmp/next.md" status
 sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s| or `agents/`||' "$here/skills/start/SKILL.md" > "$tmp/start.md"
 t 1 "start's fallback that takes an agents/ inside the project, where a brief could be planted, fails it" fallback "$tmp/start.md" status '$issue $onto $base `agents/`'
 sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s/\$ARGUMENTS/$ARGS/' "$here/skills/triage/SKILL.md" > "$tmp/triage.md"
@@ -161,17 +161,63 @@ t 1 "one whose fallback drops its variable fails it" fallback "$tmp/triage.md" s
 # Every skill stops on a git_dir: line, which config, status and detect print in place of their output.
 for f in "$here"/skills/*/SKILL.md; do t 0 "skill $(basename "$(dirname "$f")") stops on a git_dir: line" grep -q 'git_dir:` line.*stop and show that line as it is' "$f"; done
 t 1 "no skill carries the injection syntax inside a line, which Claude Code would run" grep -qE '.!`' "$here"/skills/*/SKILL.md
-t 0 "onboard names the AGENTS.md begin marker" grep -qF '<!-- coddy:begin -->' "$here/skills/onboard/SKILL.md"
-t 0 "onboard names the AGENTS.md end marker" grep -qF '<!-- coddy:end -->' "$here/skills/onboard/SKILL.md"
+t 0 "onboard names the AGENTS.md begin marker" grep -qF '<!-- hermy:begin -->' "$here/skills/onboard/SKILL.md"
+t 0 "onboard names the AGENTS.md end marker" grep -qF '<!-- hermy:end -->' "$here/skills/onboard/SKILL.md"
+# The name from before the rename (#463): no tracked path holds it, nor any
+# line of a tracked file once the spellings hermy still reads for a project
+# onboarded before it, and the names outside this repository it keeps, are
+# removed: the design doc's list
+# (docs/superpowers/specs/2026-11-16-hermy-rename-design.md), matched in any
+# case. Tracked files alone, git's in a checkout with a .git, jj's in a jj
+# workspace, so no untracked or ignored file, nor another worktree under
+# .worktrees/, is read; a listing that fails or is empty fails the check.
+# Binary files are skipped. The pattern is written as a class, so no line
+# here holds the name.
+oldok='.coddy.yml|.claude/coddy.yml|.git/coddy|.git/hooks/coddy|coddy.previousHooksPath|Written by coddy start|coddy:plan|coddy:questions|coddy:begin|coddy:end|workflows/coddy.yml|mnsami/coddy|coddy-spike|coddy-probe|formerly coddy|Coddy Agent|Coddy, Inc.'
+oldname() (
+  cd "$1" || exit 2 # paths below it alone: the checkout's own may hold the name
+  if [ -e .git ]; then git ls-files -z; elif [ -d .jj ]; then jj file list -T 'path ++ "\0"'; else exit 2; fi > "$tmp/tracked" && [ -s "$tmp/tracked" ] || exit 2
+  tr '\0' '\n' < "$tmp/tracked" | grep -i 'c[o]ddy' && exit 0
+  xargs -0 grep -IiH -e 'c[o]ddy' -- < "$tmp/tracked" 2>/dev/null | awk -v ok="$oldok" '
+    { l = tolower($0); sub(/^[^:]*:/, "", l); n = split(tolower(ok), a, "|")
+      for (i = 1; i <= n; i++) while ((p = index(l, a[i])) > 0) l = substr(l, 1, p - 1) substr(l, p + length(a[i]))
+      if (index(l, "c" "oddy")) { print; f = 1 } } END { exit !f }'
+)
+t 1 "no path or line in the tree holds the name from before the rename" oldname "$here"
+git init -q "$tmp/old"; printf 'see .coddy.yml and mnsami/coddy\n' > "$tmp/old/ok.md"; git -C "$tmp/old" add ok.md
+t 1 "the old-name check passes the spellings it allows" oldname "$tmp/old"
+mkdir "$tmp/old/.worktrees"; printf 'run %s\n' "$(printf 'c%sddy' o)" > "$tmp/old/.worktrees/$(printf 'c%sddy' o).md"
+t 1 "and reads no untracked file, by path or by line" oldname "$tmp/old"
+printf 'run %s\n' "$(printf 'c%sddy' o)" >> "$tmp/old/ok.md"
+t 0 "and finds a line with any other in a tracked file" oldname "$tmp/old"
+git -C "$tmp/old" rm -qf ok.md; : > "$tmp/old/$(printf 'C%sDDY' O).txt"; git -C "$tmp/old" add "$(printf 'C%sDDY' O).txt"
+t 0 "and a tracked path holding it in any case" oldname "$tmp/old"
+git -C "$tmp/old" rm -qf "$(printf 'C%sDDY' O).txt"
+t 2 "and fails where nothing is tracked" oldname "$tmp/old"
+: > "$tmp/old/-l"; printf 'run %s\n' "$(printf 'c%sddy' o)" > "$tmp/old/ok.md"; git -C "$tmp/old" add -- -l ok.md
+t 0 "and a tracked file named like an option is read as a file" oldname "$tmp/old"
+rm -rf "$tmp/old"
+# The jj leg: a jj workspace with no .git, its files tracked by hand.
+if command -v jj >/dev/null; then
+  jj git init --no-colocate "$tmp/old" >/dev/null 2>&1; jj -R "$tmp/old" config set --repo snapshot.auto-track 'none()' >/dev/null 2>&1
+  printf 'see .coddy.yml and mnsami/coddy\n' > "$tmp/old/ok.md"; jj -R "$tmp/old" file track 'root-file:"ok.md"' >/dev/null 2>&1
+  t 1 "jj: a workspace with no .git" test -e "$tmp/old/.git"
+  t 1 "jj: the old-name check passes the spellings it allows" oldname "$tmp/old"
+  printf 'run %s\n' "$(printf 'c%sddy' o)" > "$tmp/old/$(printf 'c%sddy' o).md"
+  t 1 "jj: and reads no untracked file, by path or by line" oldname "$tmp/old"
+  printf 'run %s\n' "$(printf 'c%sddy' o)" >> "$tmp/old/ok.md"
+  t 0 "jj: and finds a line with any other in a tracked file" oldname "$tmp/old"
+  rm -rf "$tmp/old"
+fi
 # onboard is a resumable wizard: the agenda in order, answers saved under the
 # agent dir, a stop on native Windows and on an existing config that names
-# /coddy:config, and no install command for gh (the PR check runs it inside
+# /hermy:config, and no install command for gh (the PR check runs it inside
 # GitHub Actions alone), while each package manager detect can name gets one
 # for jq.
 t 0 "onboard names the seven wizard steps in order" grep -qF 'checks → tracker → branch → verify → tiers → AGENTS.md → review' "$here/skills/onboard/SKILL.md"
-t 0 "onboard saves its answers under the agent dir" grep -qF '.claude/coddy/onboard-answers.json' "$here/skills/onboard/SKILL.md"
-t 0 "onboard backs up what it replaces under the agent dir" grep -qF '.claude/coddy/backup/' "$here/skills/onboard/SKILL.md"
-t 0 "onboard stops on an existing config and names /coddy:config" sh -c "grep -F 'config: present' '$here/skills/onboard/SKILL.md' | grep -qF '/coddy:config'"
+t 0 "onboard saves its answers under the agent dir" grep -qF '.claude/hermy/onboard-answers.json' "$here/skills/onboard/SKILL.md"
+t 0 "onboard backs up what it replaces under the agent dir" grep -qF '.claude/hermy/backup/' "$here/skills/onboard/SKILL.md"
+t 0 "onboard stops on an existing config and names /hermy:config" sh -c "grep -F 'naming a path, not' '$here/skills/onboard/SKILL.md' | grep -qF '/hermy:config'"
 t 0 "onboard stops on native Windows, writing nothing" grep -qF '`os: windows` → stop and write nothing' "$here/skills/onboard/SKILL.md"
 t 1 "onboard carries no install command for gh" grep -qiE 'install (-y )?(gh|github\.cli)( |$|`)' "$here/skills/onboard/SKILL.md"
 # No hook is live during onboard, so its pre-approved shell is the core's
@@ -192,7 +238,7 @@ leg() {
   t 2 "$tool: guard blocks the worktree before the claim" guard "$repo/.worktrees/$n/a.txt"
   t 1 "$tool: push refused before the claim" run push "$n" "feat($n): thing"
   t 0 "$tool: claim" run claim "$n"
-  t 0 "$tool: the lock names this session and its pid" holds "sess-a $$" ".git/coddy/$n/owner"
+  t 0 "$tool: the lock names this session and its pid" holds "sess-a $$" ".git/hermy/$n/owner"
   t 0 "$tool: guard allows the owner's edit" guard "$repo/.worktrees/$n/a.txt"
   t 2 "$tool: guard blocks another session's edit in that worktree" guard "$repo/.worktrees/$n/a.txt" sess-b
   t 0 "$tool: that rejection names the issue and the owner" says "issue $n belongs to session sess-a (pid $$, running)" guard "$repo/.worktrees/$n/a.txt" sess-b
@@ -200,33 +246,33 @@ leg() {
   t 2 "$tool: and so is one in any case of worktrees/" guard "$repo/.claude/WorkTrees/$n/a.txt" sess-b
   t 0 "$tool: a hook payload without session_id is not held to it" guard "$repo/.worktrees/$n/a.txt" ""
   t 0 "$tool: guard allows the owner's process under a new session id (/clear)" guard "$repo/.worktrees/$n/a.txt" sess-b $$
-  t 0 "$tool: and moves the lock to that session id" holds "sess-b $$" ".git/coddy/$n/owner"
+  t 0 "$tool: and moves the lock to that session id" holds "sess-b $$" ".git/hermy/$n/owner"
   t 0 "$tool: and back on this session's edit" guard "$repo/.worktrees/$n/a.txt"
   t 0 "$tool: guard allows the owner's session from a new process (--resume)" guard "$repo/.worktrees/$n/a.txt" sess-a 1
-  t 0 "$tool: and moves the lock to that process" holds "sess-a 1" ".git/coddy/$n/owner"
+  t 0 "$tool: and moves the lock to that process" holds "sess-a 1" ".git/hermy/$n/owner"
   t 0 "$tool: and back on this session's edit" guard "$repo/.worktrees/$n/a.txt"
-  t 0 "$tool: the lock names this session and its pid again" holds "sess-a $$" ".git/coddy/$n/owner"
+  t 0 "$tool: the lock names this session and its pid again" holds "sess-a $$" ".git/hermy/$n/owner"
   t 1 "$tool: a running session's claim is refused" as sess-b 1 claim "$n"
   t 0 "$tool: that refusal names the owner" says "session sess-a" as sess-b 1 claim "$n"
   PATH="$tmp/nops:$PATH" t 1 "$tool: a running session's claim is refused with no ps on PATH" as sess-b 1 claim "$n"
   t 0 "$tool: a re-claim by the owner is a no-op" run claim "$n"
   t 0 "$tool: so is one by the owner's process under a new session id (/clear)" as sess-b $$ claim "$n"
-  t 0 "$tool: and the lock followed it to that session id" holds "sess-b $$" ".git/coddy/$n/owner"
+  t 0 "$tool: and the lock followed it to that session id" holds "sess-b $$" ".git/hermy/$n/owner"
   t 0 "$tool: and back to this one" run claim "$n"
   t 0 "$tool: so is one by the owner's session from a new process (--resume)" as sess-a 1 claim "$n"
-  t 0 "$tool: and the lock followed it to that process" holds "sess-a 1" ".git/coddy/$n/owner"
+  t 0 "$tool: and the lock followed it to that process" holds "sess-a 1" ".git/hermy/$n/owner"
   t 0 "$tool: and back to this one" run claim "$n"
-  t 0 "$tool: the lock names this session and its pid again" holds "sess-a $$" ".git/coddy/$n/owner"
+  t 0 "$tool: the lock names this session and its pid again" holds "sess-a $$" ".git/hermy/$n/owner"
   t 0 "$tool: a --take by the owner is a no-op too" run claim "$n" --take
-  t 0 "$tool: the lock still names this session" holds "sess-a $$" ".git/coddy/$n/owner"
+  t 0 "$tool: the lock still names this session" holds "sess-a $$" ".git/hermy/$n/owner"
   t 0 "$tool: --take hands the claim to another session and says so" says "taken over: $n from session sess-a (--take)" as sess-b 1 claim "$n" --take
-  t 0 "$tool: the lock now names that session" holds "sess-b 1" ".git/coddy/$n/owner"
+  t 0 "$tool: the lock now names that session" holds "sess-b 1" ".git/hermy/$n/owner"
   t 2 "$tool: guard now blocks the previous owner" guard "$repo/.worktrees/$n/a.txt"
   t 0 "$tool: guard allows the taker" guard "$repo/.worktrees/$n/a.txt" sess-b
   dead=$(sh -c 'echo $$') # that shell has exited
   as sess-c "$dead" claim "$n" --take >/dev/null 2>&1
   t 0 "$tool: a lock whose owner is gone is taken over" says "not running" run claim "$n"
-  t 0 "$tool: the lock names the taker" holds "sess-a $$" ".git/coddy/$n/owner"
+  t 0 "$tool: the lock names the taker" holds "sess-a $$" ".git/hermy/$n/owner"
   t 0 "$tool: guard allows the worktree after the claim" guard "$repo/.worktrees/$n/a.txt"
   t 0 "$tool: guard allows a Claude Code worktree named for the claimed issue" guard "$repo/.claude/worktrees/$n/a.txt"
   t 0 "$tool: and one in any case of worktrees/" guard "$repo/.claude/WORKTREES/$n/a.txt"
@@ -298,7 +344,7 @@ leg() {
     jj -R ".worktrees/$n" config unset --workspace snapshot.auto-track
     mkdir -p "$tmp/epjj"; printf '#!/bin/sh\ncase " $* " in *" config set "*) printf "Error: Failed to write config file\\nCaused by: Operation not permitted (os error 1)\\n" >&2; exit 1 ;; esac\nexec %s "$@"\n' "$(command -v jj)" > "$tmp/epjj/jj"; chmod +x "$tmp/epjj/jj"
     PATH="$tmp/epjj:$PATH" t 1 "jj: create that a sandbox keeps out of jj's config fails" run create "$n" "feat/$n-thing"
-    PATH="$tmp/epjj:$PATH" t 0 "jj: naming the sandbox and the user's one run from their own terminal" says "sandbox.*from your own terminal, not through an agent: in .*, run start for issue $n on branch feat/$n-thing with the coddy at .*/coddy\. A rerun then writes nothing" run create "$n" "feat/$n-thing"
+    PATH="$tmp/epjj:$PATH" t 0 "jj: naming the sandbox and the user's one run from their own terminal" says "sandbox.*from your own terminal, not through an agent: in .*, run start for issue $n on branch feat/$n-thing with the hermy at .*/hermy\. A rerun then writes nothing" run create "$n" "feat/$n-thing"
     run create "$n" "feat/$n-thing" >/dev/null 2>&1
     head -c 2097152 /dev/zero > ".worktrees/$n/big.bin"; was=$(git ls-remote origin "refs/heads/feat/$n-thing")
     t 0 "jj: a new file over snapshot.max-new-file-size is listed as untracked" says "^'big\.bin'\$" run push "$n" "feat($n): big"
@@ -310,7 +356,7 @@ leg() {
     t 0 "jj: and that file is left untracked" says "^'small\.txt'\$" run push "$n" "feat($n): big" -- big.bin
     rm ".worktrees/$n/big.bin" ".worktrees/$n/small.txt"
   fi
-  rm -f ".git/coddy/$n.branch" # a worktree made before create recorded the branch
+  rm -f ".git/hermy/$n.branch" # a worktree made before create recorded the branch
   t 1 "$tool: push refuses a worktree with no recorded branch" run push "$n"
   t 0 "$tool: that refusal names the command that records it" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' push $n 2>&1 | grep -q 'issue.sh create $n'"
   t 1 "$tool: create refuses to record a branch the worktree is not on" run create "$n" "feat/$n-other"
@@ -334,7 +380,7 @@ leg() {
     t 0 "$tool: $1" test "$xr$yr" = 01 -o "$xr$yr" = 10
     [ "$xr$yr" = 01 ] || [ "$xr$yr" = 10 ] || { echo "     xr=$xr yr=$yr"; sed 's/^/     x: /' "$tmp/race.x"; sed 's/^/     y: /' "$tmp/race.y"; }
     [ "$xr" = 0 ] && w="sess-x $$" || w="sess-y $live"
-    t 0 "$tool: $1: the lock names the winner" holds "$w" ".git/coddy/$p/owner"
+    t 0 "$tool: $1: the lock names the winner" holds "$w" ".git/hermy/$p/owner"
   }
   race "of two claims at once exactly one wins"
   # A mkdir that is not exclusive, as uutils coreutils' (Ubuntu 26.04's
@@ -342,7 +388,7 @@ leg() {
   # waits before making a new one, so both claims get past any check before it.
   mkdir -p "$tmp/mkdirx"
   printf '#!/bin/sh\nfor a; do :; done\n[ -e "$a" ] || sleep 0.5\n%s "$@" 2>/dev/null || [ -d "$a" ] || exec %s "$@"\n' "$(command -v mkdir)" "$(command -v mkdir)" > "$tmp/mkdirx/mkdir"; chmod +x "$tmp/mkdirx/mkdir"
-  rm -rf ".git/coddy/$p"
+  rm -rf ".git/hermy/$p"
   race "with a mkdir that is not exclusive, still exactly one wins" "$tmp/mkdirx"
   kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
   echo "more $p" > ".worktrees/$p/more.txt" # per leg: the other leg's is in main by now
@@ -359,11 +405,11 @@ leg() {
   # stands here, records the base for ship, and its push moves only its own branch.
   q=$((n + 20))
   t 1 "$tool: create refuses to stack on an issue with no worktree" run create "$q" "feat/$q-stack" 98
-  t 0 "$tool: that refusal says how to make one" says "/coddy:start 98" run create "$q" "feat/$q-stack" 98
+  t 0 "$tool: that refusal says how to make one" says "/hermy:start 98" run create "$q" "feat/$q-stack" 98
   t 0 "$tool: create stacks a worktree on another issue's branch" says "onto feat/$n-thing" run create "$q" "feat/$q-stack" "$n"
   t 0 "$tool: that worktree starts at the base branch's tip" test -f ".worktrees/$q/a.txt"
-  t 0 "$tool: and records the base" grep -qx "feat/$n-thing" ".git/coddy/$q.base"
-  t 0 "$tool: a worktree started from the default branch records no base" test ! -e ".git/coddy/$n.base"
+  t 0 "$tool: and records the base" grep -qx "feat/$n-thing" ".git/hermy/$q.base"
+  t 0 "$tool: a worktree started from the default branch records no base" test ! -e ".git/hermy/$n.base"
   t 0 "$tool: claim the stacked issue" run claim "$q"
   t 0 "$tool: issue.sh status lists the base" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' status | grep -q '^bases: .*$q=feat/$n-thing'"
   echo s > ".worktrees/$q/s.txt"; was=$(git ls-remote origin "refs/heads/feat/$n-thing")
@@ -375,15 +421,15 @@ leg() {
   t 0 "$tool: verify passes when the command passes" run verify "$q"
   t 3 "$tool: verify passes its command's exit code through" run verify "$n"
   t 1 "$tool: verify refuses an issue with no worktree" run verify 97
-  t 0 "$tool: that refusal says how to make one" says "/coddy:start 97" run verify 97
+  t 0 "$tool: that refusal says how to make one" says "/hermy:start 97" run verify 97
   t 0 "$tool: diff shows the issue's changed file" says "a.txt" run diff "$n"
   t 0 "$tool: the stacked diff shows its own change" says "s.txt" run diff "$q"
   t 1 "$tool: and not its base's" says "a.txt" run diff "$q"
   t 1 "$tool: diff refuses an issue with no worktree" run diff 97
-  mv ".git/coddy/$q.base" "$tmp/q.base"; echo feat/gone > ".git/coddy/$q.base"
+  mv ".git/hermy/$q.base" "$tmp/q.base"; echo feat/gone > ".git/hermy/$q.base"
   t 0 "$tool: diff falls back to the default branch when the base no longer resolves" run diff "$q"
   t 0 "$tool: and so does log" run log "$q" README.md
-  mv "$tmp/q.base" ".git/coddy/$q.base"
+  mv "$tmp/q.base" ".git/hermy/$q.base"
   t 0 "$tool: log shows the commits on a path" says init run log "$n" README.md
   t 0 "$tool: log treats a path starting with - as a path" test -z "$(run log "$n" --stat 2>&1)"
   t 1 "$tool: log refuses an issue with no worktree" run log 97 a.txt
@@ -392,27 +438,27 @@ leg() {
   # commit and nothing is uncommitted.
   # A marker from before claims were locks is a plain file: it still counts,
   # and a claim on one replaces it with a lock.
-  rm -rf ".git/coddy/$p"; ln -s nowhere ".git/coddy/$p"
+  rm -rf ".git/hermy/$p"; ln -s nowhere ".git/hermy/$p"
   t 1 "$tool: a lock that cannot be written is a failed claim" run claim "$p"
-  rm -rf ".git/coddy/$p"; : > ".git/coddy/$p"
+  rm -rf ".git/hermy/$p"; : > ".git/hermy/$p"
   t 0 "$tool: an old marker still allows edits from any session" guard "$repo/.worktrees/$p/a.txt" sess-b
   t 0 "$tool: claim turns an old marker into a lock" run claim "$p"
-  t 0 "$tool: that lock names this session" holds "sess-a $$" ".git/coddy/$p/owner"
-  : > ".git/coddy/$p/owner" # a kill between the owner file's open and its write, or a full disk
+  t 0 "$tool: that lock names this session" holds "sess-a $$" ".git/hermy/$p/owner"
+  : > ".git/hermy/$p/owner" # a kill between the owner file's open and its write, or a full disk
   t 1 "$tool: an empty owner line is a claim that died halfway" run claim "$p"
   t 0 "$tool: that refusal says so" says "died halfway" run claim "$p"
   t 0 "$tool: --take adopts a lock with an empty owner line" run claim "$p" --take
   # A lock with no owner line is a claim in flight, or one that died halfway.
-  rm -rf ".git/coddy/$p"; mkdir ".git/coddy/$p"
+  rm -rf ".git/hermy/$p"; mkdir ".git/hermy/$p"
   t 1 "$tool: a lock with no owner is refused" run claim "$p"
   t 2 "$tool: guard blocks a lock with no owner" guard "$repo/.worktrees/$p/a.txt"
   t 0 "$tool: that refusal says how to take it" says "take it over" run claim "$p"
   t 0 "$tool: --take adopts a lock with no owner" run claim "$p" --take
-  rm -rf ".git/coddy/$p"; : > ".git/coddy/$p"
+  rm -rf ".git/hermy/$p"; : > ".git/hermy/$p"
   t 1 "$tool: state refuses a plain-file marker" run state "$p" phase=x
-  t 0 "$tool: and says to re-claim" says "/coddy:start $p" run state "$p" phase=x
-  rm -f ".git/coddy/$p"
-  rm -rf ".git/coddy/$p"
+  t 0 "$tool: and says to re-claim" says "/hermy:start $p" run state "$p" phase=x
+  rm -f ".git/hermy/$p"
+  rm -rf ".git/hermy/$p"
   t 0 "$tool: claim" run claim "$p"
   t 0 "$tool: that claim allows edits" guard "$repo/.worktrees/$p/a.txt"
   kept "a branch that is not merged"
@@ -424,45 +470,45 @@ leg() {
   rm ".worktrees/$p/wip.txt"
   (cd ".worktrees/$p" && CLAUDE_PROJECT_DIR="$repo/.worktrees/$p" bash "$here/scripts/issue.sh" sweep) >/dev/null 2>&1
   t 0 "$tool: sweep keeps the worktree the session is in" test -d ".worktrees/$p"
-  echo "sess-b 1" > ".git/coddy/$p/owner" # claimed by another session whose process runs
+  echo "sess-b 1" > ".git/hermy/$p/owner" # claimed by another session whose process runs
   kept "a merged worktree another running session holds"
   t 0 "$tool: and names that session" says "kept: $p (merged into main, session sess-b still holds it)" run sweep
-  echo "sess-b $(sh -c 'echo $$')" > ".git/coddy/$p/owner" # that process has exited
-  mkdir -p ".git/coddy/$p" && echo "phase=done" > ".git/coddy/$p/state"
+  echo "sess-b $(sh -c 'echo $$')" > ".git/hermy/$p/owner" # that process has exited
+  mkdir -p ".git/hermy/$p" && echo "phase=done" > ".git/hermy/$p/state"
   t 0 "$tool: sweep reports a merged, clean worktree as cleaned" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
   t 1 "$tool: sweep removed that worktree" test -e ".worktrees/$p"
-  t 1 "$tool: and kept no copy of a worktree with no ignored files" test -e ".git/coddy/swept/$p"
-  t 1 "$tool: sweep removed its lock and branch record" test -e ".git/coddy/$p" -o -e ".git/coddy/$p.branch"
-  t 1 "$tool: sweep removed its state" test -e ".git/coddy/$p/state"
+  t 1 "$tool: and kept no copy of a worktree with no ignored files" test -e ".git/hermy/swept/$p"
+  t 1 "$tool: sweep removed its lock and branch record" test -e ".git/hermy/$p" -o -e ".git/hermy/$p.branch"
+  t 1 "$tool: sweep removed its state" test -e ".git/hermy/$p/state"
   t 1 "$tool: sweep removed its local branch" git show-ref -q "refs/heads/ext/pr-$p"
   t 0 "$tool: sweep left the other worktree alone" test -d ".worktrees/$n"
   # The same worktree back, held by this session: swept as before.
-  run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
-  # Never through a link at .git/coddy or .worktrees: every removal would go where it points.
-  for l in .git/coddy .worktrees; do
+  run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/hermy/$p" && echo "sess-a $$" > ".git/hermy/$p/owner"
+  # Never through a link at .git/hermy or .worktrees: every removal would go where it points.
+  for l in .git/hermy .worktrees; do
     mv "$l" "$tmp/ln$n"; ln -s "$tmp/ln$n" "$l"; run sweep >/dev/null 2>&1
-    t 0 "$tool: sweep leaves a merged claim alone while $l is a link" test -d "$tmp/ln$n/$p" -a -d ".worktrees/$p" -a -d ".git/coddy/$p"
+    t 0 "$tool: sweep leaves a merged claim alone while $l is a link" test -d "$tmp/ln$n/$p" -a -d ".worktrees/$p" -a -d ".git/hermy/$p"
     rm "$l"; mv "$tmp/ln$n" "$l"
   done
   t 0 "$tool: sweep cleans a merged worktree this session holds" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
   # A lock that will not go once the worktree has gone: cleaned all the same, its branch deleted.
-  run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"; chmod 500 ".git/coddy/$p"
+  run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/hermy/$p" && echo "sess-a $$" > ".git/hermy/$p/owner"; chmod 500 ".git/hermy/$p"
   t 0 "$tool: sweep cleans a merged worktree whose lock will not go" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p'"
   t 1 "$tool: and deletes its local branch" git show-ref -q "refs/heads/ext/pr-$p"
-  chmod 700 ".git/coddy/$p"; rm -rf ".git/coddy/$p"
+  chmod 700 ".git/hermy/$p"; rm -rf ".git/hermy/$p"
   # Ignored files (a .env) are in no commit: the worktree moves whole under
-  # .git/coddy/swept/<issue>, its .git and .jj dropped, unless a copy is there.
-  run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
-  echo .env >> .git/info/exclude; echo secret > ".worktrees/$p/.env"; mkdir -p ".git/coddy/swept/$p"
+  # .git/hermy/swept/<issue>, its .git and .jj dropped, unless a copy is there.
+  run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/hermy/$p" && echo "sess-a $$" > ".git/hermy/$p/owner"
+  echo .env >> .git/info/exclude; echo secret > ".worktrees/$p/.env"; mkdir -p ".git/hermy/swept/$p"
   kept "a merged worktree holding ignored files while an earlier copy is kept"
-  t 0 "$tool: and names that copy" says "kept: $p (merged into main, but .git/coddy/swept/$p already holds an earlier copy)" run sweep
-  t 0 "$tool: and leaves the copy as it was" test -z "$(ls -A ".git/coddy/swept/$p")"
-  rmdir ".git/coddy/swept/$p"
+  t 0 "$tool: and names that copy" says "kept: $p (merged into main, but .git/hermy/swept/$p already holds an earlier copy)" run sweep
+  t 0 "$tool: and leaves the copy as it was" test -z "$(ls -A ".git/hermy/swept/$p")"
+  rmdir ".git/hermy/swept/$p"
   # Never through a link: the worktree stays, and nothing lands where it points.
-  mv .git/coddy/swept "$tmp/swept$n"; mkdir "$tmp/out$n"; ln -s "$tmp/out$n" .git/coddy/swept
-  kept "a merged worktree holding ignored files while .git/coddy/swept is a link"
+  mv .git/hermy/swept "$tmp/swept$n"; mkdir "$tmp/out$n"; ln -s "$tmp/out$n" .git/hermy/swept
+  kept "a merged worktree holding ignored files while .git/hermy/swept is a link"
   t 0 "$tool: and moves nothing through that link" test -z "$(ls -A "$tmp/out$n")"
-  rm .git/coddy/swept; mv "$tmp/swept$n" .git/coddy/swept
+  rm .git/hermy/swept; mv "$tmp/swept$n" .git/hermy/swept
   # A record that will not go (a locked git worktree, a jj forget that
   # fails) gets its directory back, whole: kept as it was.
   stub="$tmp/noforget$n"; mkdir -p "$stub"
@@ -471,55 +517,55 @@ leg() {
   PATH="$stub:$PATH" kept "a merged worktree holding ignored files whose record will not go"
   t 0 "$tool: and leaves it whole" test -e ".worktrees/$p/.$tool" -a -f ".worktrees/$p/.env"
   t 0 "$tool: and still a worktree" sh -c "if [ $tool = git ]; then git worktree list --porcelain | grep -q '/\.worktrees/$p\$'; else jj workspace list --ignore-working-copy | grep -q '^$p:'; fi"
-  t 1 "$tool: and keeps no copy" test -e ".git/coddy/swept/$p"
+  t 1 "$tool: and keeps no copy" test -e ".git/hermy/swept/$p"
   [ "$tool" = jj ] || git worktree unlock ".worktrees/$p"
   # Another worktree whose directory is away (moved by hand, on a drive not
   # mounted) keeps its admin data: only the swept one is forgotten.
   git worktree add -q --detach "$tmp/aside$n" >/dev/null 2>&1; mv "$tmp/aside$n" "$tmp/away$n"
-  t 0 "$tool: sweep cleans a merged worktree holding ignored files, keeping them" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p (ignored files kept under .git/coddy/swept/$p)'"
-  t 0 "$tool: the ignored file is in the swept copy" grep -qx secret ".git/coddy/swept/$p/.env"
-  t 1 "$tool: which holds no .git" test -e ".git/coddy/swept/$p/.git"
-  t 1 "$tool: and no .jj" test -e ".git/coddy/swept/$p/.jj"
+  t 0 "$tool: sweep cleans a merged worktree holding ignored files, keeping them" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p (ignored files kept under .git/hermy/swept/$p)'"
+  t 0 "$tool: the ignored file is in the swept copy" grep -qx secret ".git/hermy/swept/$p/.env"
+  t 1 "$tool: which holds no .git" test -e ".git/hermy/swept/$p/.git"
+  t 1 "$tool: and no .jj" test -e ".git/hermy/swept/$p/.jj"
   t 1 "$tool: the worktree is gone" test -e ".worktrees/$p"
   t 1 "$tool: git lists it no longer" sh -c "git worktree list --porcelain | grep -qx 'worktree .*/\.worktrees/$p'"
   [ "$tool" = git ] || t 1 "jj: jj lists it no longer" sh -c "jj workspace list --ignore-working-copy | grep -q '^$p:'"
-  t 1 "$tool: its lock and branch record are gone" test -e ".git/coddy/$p" -o -e ".git/coddy/$p.branch"
+  t 1 "$tool: its lock and branch record are gone" test -e ".git/hermy/$p" -o -e ".git/hermy/$p.branch"
   t 1 "$tool: and its local branch" git show-ref -q "refs/heads/ext/pr-$p"
   t 0 "$tool: and leaves git another worktree whose directory is away" sh -c "git worktree list --porcelain | grep -q '/aside$n\$'"
   mv "$tmp/away$n" "$tmp/aside$n"; git worktree remove --force "$tmp/aside$n" >/dev/null 2>&1
   # A record named swept is no issue: the directory its lock would be holds the copies.
   run create swept "ext/pr-$p" >/dev/null 2>&1; run sweep >/dev/null 2>&1
-  t 0 "$tool: sweep never takes .git/coddy/swept for an issue's lock" grep -qx secret ".git/coddy/swept/$p/.env"
+  t 0 "$tool: sweep never takes .git/hermy/swept for an issue's lock" grep -qx secret ".git/hermy/swept/$p/.env"
   if [ "$tool" = jj ]; then jj workspace forget swept >/dev/null 2>&1; rm -rf .worktrees/swept; jj bookmark forget "ext/pr-$p" >/dev/null 2>&1
   else git worktree remove --force .worktrees/swept >/dev/null 2>&1; git branch -qD "ext/pr-$p" >/dev/null 2>&1; fi
-  rm -f .git/coddy/swept.branch .git/coddy/swept.base
+  rm -f .git/hermy/swept.branch .git/hermy/swept.base
   # Ignored files find cannot list (in a directory it may not read, a
   # database another user owns) count as some: the worktree moves whole.
-  rm -rf ".git/coddy/swept/$p"
-  run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
+  rm -rf ".git/hermy/swept/$p"
+  run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/hermy/$p" && echo "sess-a $$" > ".git/hermy/$p/owner"
   echo locked/ >> .git/info/exclude; mkdir ".worktrees/$p/locked"; echo db > ".worktrees/$p/locked/db"; chmod 000 ".worktrees/$p/locked"
-  t 0 "$tool: sweep moves a merged worktree whose ignored files cannot be listed" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p (ignored files kept under .git/coddy/swept/$p)'"
-  chmod 755 ".git/coddy/swept/$p/locked" ".worktrees/$p/locked" 2>/dev/null
-  t 0 "$tool: and keeps them" grep -qx db ".git/coddy/swept/$p/locked/db"
+  t 0 "$tool: sweep moves a merged worktree whose ignored files cannot be listed" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p (ignored files kept under .git/hermy/swept/$p)'"
+  chmod 755 ".git/hermy/swept/$p/locked" ".worktrees/$p/locked" 2>/dev/null
+  t 0 "$tool: and keeps them" grep -qx db ".git/hermy/swept/$p/locked/db"
   # jj names paths it never writes to disk (one outside the sparse patterns, a
   # submodule's gitlink): the ignored files are the ones on disk it does not
   # name, however few. The gitlink goes from main again once merged.
   if [ "$tool" = jj ]; then
     for k in sparse submodule; do
       [ "$k" = sparse ] || (cd "$tmp/merge$p" && git fetch -q origin && git checkout -q -b "sub$p" "origin/ext/pr-$p" && git update-index --add --cacheinfo "160000,$(git rev-parse HEAD),sub" && git commit -q -m "sub $p" && git push -q origin "HEAD:ext/pr-$p" && git checkout -q main && git merge -q --no-ff -m "merge sub $p" "sub$p" && git rm -q --cached sub && git commit -q -m "drop sub $p" && git push -q origin main) >/dev/null 2>&1
-      rm -rf ".git/coddy/swept/$p"
-      run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
+      rm -rf ".git/hermy/swept/$p"
+      run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/hermy/$p" && echo "sess-a $$" > ".git/hermy/$p/owner"
       [ "$k" = submodule ] || jj -R ".worktrees/$p" sparse set --clear --add nothing >/dev/null 2>&1
       echo secret > ".worktrees/$p/.env"
-      t 0 "jj: sweep moves a merged $k workspace holding ignored files" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p (ignored files kept under .git/coddy/swept/$p)'"
-      t 0 "jj: and keeps them in the $k workspace's copy" grep -qx secret ".git/coddy/swept/$p/.env"
+      t 0 "jj: sweep moves a merged $k workspace holding ignored files" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep | grep -qx 'cleaned: $p (ignored files kept under .git/hermy/swept/$p)'"
+      t 0 "jj: and keeps them in the $k workspace's copy" grep -qx secret ".git/hermy/swept/$p/.env"
     done
   fi
   # Submodules checked out in a git worktree keep their repositories in its
   # git dir, which git refuses to remove: the worktree stays, as before.
   if [ "$tool" = git ]; then
-    rm -rf ".git/coddy/swept/$p"
-    run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/coddy/$p" && echo "sess-a $$" > ".git/coddy/$p/owner"
+    rm -rf ".git/hermy/swept/$p"
+    run create "$p" "ext/pr-$p" >/dev/null 2>&1 && mkdir ".git/hermy/$p" && echo "sess-a $$" > ".git/hermy/$p/owner"
     echo secret > ".worktrees/$p/.env"; gd=$(git -C ".worktrees/$p" rev-parse --absolute-git-dir); mkdir -p "$gd/modules/sub"
     kept "a merged worktree whose submodules' repositories live in its git dir"
     t 0 "git: and keeps those repositories" test -d "$gd/modules/sub"
@@ -550,43 +596,43 @@ leg() {
   r=$((n + 30)); run create "$r" "feat/$r-fresh" >/dev/null 2>&1; run claim "$r" >/dev/null 2>&1
   t 0 "$tool: sweep leaves a fresh worktree alone" sh -c "CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' sweep >/dev/null; test -d .worktrees/$r"
   # drop ends a claim here: the worktree, lock and records go, the branch
-  # stays, and a file in no commit is moved under .git/coddy/swept, never deleted.
+  # stays, and a file in no commit is moved under .git/hermy/swept, never deleted.
   d=$((n + 70)); run create "$d" "feat/$d-drop" "$n" >/dev/null 2>&1; run claim "$d" >/dev/null 2>&1
   t 0 "$tool: drop drops a claim stacked on another issue's branch, naming its branch and commit" says "^dropped: $d (feat/$d-drop at [0-9a-f]\{7\})\$" run drop "$d"
   t 1 "$tool: drop removed the worktree" test -e ".worktrees/$d"
-  t 1 "$tool: and the lock and the branch and base records" test -e ".git/coddy/$d" -o -e ".git/coddy/$d.branch" -o -e ".git/coddy/$d.base"
+  t 1 "$tool: and the lock and the branch and base records" test -e ".git/hermy/$d" -o -e ".git/hermy/$d.branch" -o -e ".git/hermy/$d.base"
   t 1 "$tool: status lists it no longer" says "^worktrees:.*[ :]$d=" run status
   t 0 "$tool: and the local branch stays" branched "feat/$d-drop"
   t 1 "$tool: drop refuses an issue with no worktree" run drop "$d"
   d=$((n + 80)); claimdrop "$d"; echo .env >> .git/info/exclude; echo secret > ".worktrees/$d/.env"
-  t 0 "$tool: drop moves a worktree holding ignored files under .git/coddy/swept" says "^dropped: $d (feat/$d-drop at [0-9a-f]\{7\}) (files kept under \.git/coddy/swept/$d)\$" run drop "$d"
-  t 0 "$tool: the ignored file is in the swept copy" grep -qx secret ".git/coddy/swept/$d/.env"
-  t 1 "$tool: which holds no .git" test -e ".git/coddy/swept/$d/.git"
-  t 1 "$tool: and no .jj" test -e ".git/coddy/swept/$d/.jj"
-  t 1 "$tool: and the worktree and its lock are gone" test -e ".worktrees/$d" -o -e ".git/coddy/$d"
+  t 0 "$tool: drop moves a worktree holding ignored files under .git/hermy/swept" says "^dropped: $d (feat/$d-drop at [0-9a-f]\{7\}) (files kept under \.git/hermy/swept/$d)\$" run drop "$d"
+  t 0 "$tool: the ignored file is in the swept copy" grep -qx secret ".git/hermy/swept/$d/.env"
+  t 1 "$tool: which holds no .git" test -e ".git/hermy/swept/$d/.git"
+  t 1 "$tool: and no .jj" test -e ".git/hermy/swept/$d/.jj"
+  t 1 "$tool: and the worktree and its lock are gone" test -e ".worktrees/$d" -o -e ".git/hermy/$d"
   t 0 "$tool: and the local branch stays" branched "feat/$d-drop"
   mkdir .worktrees/swept
   t 0 "$tool: drop refuses swept, where the copies live, as no claim" says "issue swept has no claim here" run drop swept
-  t 0 "$tool: and leaves the copies there" grep -qx secret ".git/coddy/swept/$d/.env"
+  t 0 "$tool: and leaves the copies there" grep -qx secret ".git/hermy/swept/$d/.env"
   rmdir .worktrees/swept
   d=$((n + 90)); claimdrop "$d"; echo wip > ".worktrees/$d/wip.txt"; echo mod >> ".worktrees/$d/README.md"
   t 1 "$tool: drop refuses uncommitted work" run drop "$d"
   t 0 "$tool: naming --force" says "uncommitted work.*--force" run drop "$d"
-  t 0 "$tool: and leaves the worktree and its claim" test -f ".worktrees/$d/wip.txt" -a -d ".git/coddy/$d"
-  t 0 "$tool: drop --force moves uncommitted work under .git/coddy/swept" says "^dropped: $d (.*) (files kept under \.git/coddy/swept/$d)\$" run drop "$d" --force
-  t 0 "$tool: keeping the untracked file" grep -qx wip ".git/coddy/swept/$d/wip.txt"
-  t 0 "$tool: and the changed one" grep -qx mod ".git/coddy/swept/$d/README.md"
-  t 1 "$tool: and the worktree and its lock are gone" test -e ".worktrees/$d" -o -e ".git/coddy/$d"
+  t 0 "$tool: and leaves the worktree and its claim" test -f ".worktrees/$d/wip.txt" -a -d ".git/hermy/$d"
+  t 0 "$tool: drop --force moves uncommitted work under .git/hermy/swept" says "^dropped: $d (.*) (files kept under \.git/hermy/swept/$d)\$" run drop "$d" --force
+  t 0 "$tool: keeping the untracked file" grep -qx wip ".git/hermy/swept/$d/wip.txt"
+  t 0 "$tool: and the changed one" grep -qx mod ".git/hermy/swept/$d/README.md"
+  t 1 "$tool: and the worktree and its lock are gone" test -e ".worktrees/$d" -o -e ".git/hermy/$d"
   # git worktree remove deletes the untracked files status.showUntrackedFiles hides.
   d=$((n + 140)); claimdrop "$d"; echo wip > ".worktrees/$d/wip.txt"; git config status.showUntrackedFiles no
   t 1 "$tool: drop refuses an untracked file status.showUntrackedFiles=no hides" run drop "$d"
   t 0 "$tool: and leaves it" grep -qx wip ".worktrees/$d/wip.txt"
   git config --unset status.showUntrackedFiles; run drop "$d" --force >/dev/null 2>&1
-  d=$((n + 100)); claimdrop "$d"; echo secret > ".worktrees/$d/.env"; mkdir -p ".git/coddy/swept/$d"
-  t 1 "$tool: drop refuses when .git/coddy/swept holds an earlier copy" run drop "$d"
-  t 0 "$tool: naming that copy" says "\.git/coddy/swept/$d already holds an earlier copy" run drop "$d"
-  t 0 "$tool: and leaves the worktree, its claim and the copy as they were" test -f ".worktrees/$d/.env" -a -d ".git/coddy/$d" -a -z "$(ls -A ".git/coddy/swept/$d")"
-  rmdir ".git/coddy/swept/$d"; run drop "$d" >/dev/null 2>&1
+  d=$((n + 100)); claimdrop "$d"; echo secret > ".worktrees/$d/.env"; mkdir -p ".git/hermy/swept/$d"
+  t 1 "$tool: drop refuses when .git/hermy/swept holds an earlier copy" run drop "$d"
+  t 0 "$tool: naming that copy" says "\.git/hermy/swept/$d already holds an earlier copy" run drop "$d"
+  t 0 "$tool: and leaves the worktree, its claim and the copy as they were" test -f ".worktrees/$d/.env" -a -d ".git/hermy/$d" -a -z "$(ls -A ".git/hermy/swept/$d")"
+  rmdir ".git/hermy/swept/$d"; run drop "$d" >/dev/null 2>&1
   sed -i.bak '/^\.env$/d' .git/info/exclude && rm -f .git/info/exclude.bak
   # Commits on no remote: past origin/<branch>, or, with none there, past the base.
   d=$((n + 110)); claimdrop "$d"; echo v > ".worktrees/$d/v.txt"; wcommit "$d" v.txt
@@ -604,7 +650,7 @@ leg() {
     d=$((n + 130)); claimdrop "$d"; git -C ".worktrees/$d" checkout -q --detach; echo x > ".worktrees/$d/x.txt"; wcommit "$d" x.txt
     t 1 "git: drop --force refuses a commit no branch holds" run drop "$d" --force
     t 0 "git: naming it" says "which no branch holds" run drop "$d" --force
-    t 0 "git: and leaves the worktree and its claim" test -d ".worktrees/$d" -a -d ".git/coddy/$d"
+    t 0 "git: and leaves the worktree and its claim" test -d ".worktrees/$d" -a -d ".git/hermy/$d"
     t 0 "git: refused before the commits on no remote, without --force too" says "which no branch holds" run drop "$d"
     t 1 "git: never offering --force" says "[-]-force" run drop "$d"
     git -C ".worktrees/$d" checkout -q "feat/$d-drop"; run drop "$d" --force >/dev/null 2>&1
@@ -612,16 +658,16 @@ leg() {
     d=$((n + 160)); claimdrop "$d"; w=".worktrees/$d"
     echo a > "$w/s.txt"; git -C "$w" add s.txt; echo b > "$w/s.txt"
     echo staged >> "$w/README.md"; git -C "$w" add README.md; echo unstaged >> "$w/README.md"
-    git config diff.noprefix true; git config color.diff always; : > "$w/.coddy-staged.patch" # neither shapes the patch
+    git config diff.noprefix true; git config color.diff always; : > "$w/.hermy-staged.patch" # neither shapes the patch
     t 1 "git: drop --force refuses when the staged changes cannot be saved" run drop "$d" --force
-    t 0 "git: naming that file" says "\.coddy-staged\.patch exists already" run drop "$d" --force
-    t 0 "git: and leaves the worktree, its index, that file and its claim" sh -c "test -d '.git/coddy/$d' && test -f '$w/.coddy-staged.patch' && test ! -s '$w/.coddy-staged.patch' && git -C '$w' diff --cached --name-only | grep -qx s.txt"
-    rm "$w/.coddy-staged.patch"
-    t 0 "git: drop --force saves the staged changes beside the moved files" says "^dropped: $d (.*) (files kept under \.git/coddy/swept/$d, staged changes in \.git/coddy/swept/$d/\.coddy-staged\.patch)\$" run drop "$d" --force
-    sp=".git/coddy/swept/$d/.coddy-staged.patch"
+    t 0 "git: naming that file" says "\.hermy-staged\.patch exists already" run drop "$d" --force
+    t 0 "git: and leaves the worktree, its index, that file and its claim" sh -c "test -d '.git/hermy/$d' && test -f '$w/.hermy-staged.patch' && test ! -s '$w/.hermy-staged.patch' && git -C '$w' diff --cached --name-only | grep -qx s.txt"
+    rm "$w/.hermy-staged.patch"
+    t 0 "git: drop --force saves the staged changes beside the moved files" says "^dropped: $d (.*) (files kept under \.git/hermy/swept/$d, staged changes in \.git/hermy/swept/$d/\.hermy-staged\.patch)\$" run drop "$d" --force
+    sp=".git/hermy/swept/$d/.hermy-staged.patch"
     t 0 "git: the patch holds the staged content alone" sh -c "grep -qx '+a' '$sp' && grep -qx '+staged' '$sp' && ! grep -q unstaged '$sp'"
     t 0 "git: and applies to the base as plain git output" sh -c "git apply --check '$sp'"
-    t 0 "git: the copy holds the unstaged content" grep -qx b ".git/coddy/swept/$d/s.txt"
+    t 0 "git: the copy holds the unstaged content" grep -qx b ".git/hermy/swept/$d/s.txt"
     git config --unset diff.noprefix; git config --unset color.diff
   fi
   # A session standing in the worktree, where it was opened or its working
@@ -632,35 +678,35 @@ leg() {
   t 1 "$tool: or standing in it through a link" sh -c "cd '$tmp/in$d' && CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' drop $d"
   t 0 "$tool: naming it" says "this session stands inside \.worktrees/$d" sh -c "cd '$tmp/in$d' && CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' drop $d"
   t 0 "$tool: and saying to open a session in the main checkout" says "Open a session in the main checkout at .* and drop it from there" sh -c "cd '$tmp/in$d' && CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' drop $d"
-  t 0 "$tool: and leaves the worktree and its claim" test -d ".worktrees/$d/sub" -a -d ".git/coddy/$d"
+  t 0 "$tool: and leaves the worktree and its claim" test -d ".worktrees/$d/sub" -a -d ".git/hermy/$d"
   rm "$tmp/in$d"; rmdir ".worktrees/$d/sub"
   t 0 "$tool: and drops it from the main checkout" run drop "$d"
-  # A link at .git/coddy or .worktrees: refused, nothing removed where it points.
+  # A link at .git/hermy or .worktrees: refused, nothing removed where it points.
   d=$((n + 180)); claimdrop "$d"
-  for l in .git/coddy .worktrees; do
+  for l in .git/hermy .worktrees; do
     mv "$l" "$tmp/ln$d"; ln -s "$tmp/ln$d" "$l"; echo x > "$tmp/ln$d/$d/data.txt"
     t 1 "$tool: drop refuses while $l is a link" run drop "$d"
     t 0 "$tool: naming it" says "${l//./\\.} is a link, so issue $d was not dropped" run drop "$d"
     t 0 "$tool: and leaves where it points as it was" grep -qx x "$tmp/ln$d/$d/data.txt"
     rm "$l" "$tmp/ln$d/$d/data.txt"; mv "$tmp/ln$d" "$l"
   done
-  t 0 "$tool: and leaves the worktree and its claim" test -d ".worktrees/$d" -a -d ".git/coddy/$d"
+  t 0 "$tool: and leaves the worktree and its claim" test -d ".worktrees/$d" -a -d ".git/hermy/$d"
   run drop "$d" >/dev/null 2>&1
   # A lock that will not go once the worktree has gone: dropped, the lock named as left.
-  d=$((n + 170)); claimdrop "$d"; chmod 500 ".git/coddy/$d"
-  t 0 "$tool: drop drops a claim whose lock will not go, naming it as left" says "^left: \.git/coddy/$d (could not be removed" run drop "$d"
+  d=$((n + 170)); claimdrop "$d"; chmod 500 ".git/hermy/$d"
+  t 0 "$tool: drop drops a claim whose lock will not go, naming it as left" says "^left: \.git/hermy/$d (could not be removed" run drop "$d"
   t 1 "$tool: and the worktree is gone" test -e ".worktrees/$d"
-  t 1 "$tool: and only the lock is left" test -e ".git/coddy/$d.branch"
-  chmod 700 ".git/coddy/$d"; rm -rf ".git/coddy/$d"
+  t 1 "$tool: and only the lock is left" test -e ".git/hermy/$d.branch"
+  chmod 700 ".git/hermy/$d"; rm -rf ".git/hermy/$d"
   # Another session's claim: drop refuses it while that session runs, and
   # sweep names it as not merged once that session is gone.
-  d=$((n + 120)); claimdrop "$d"; echo "sess-b 1" > ".git/coddy/$d/owner"
+  d=$((n + 120)); claimdrop "$d"; echo "sess-b 1" > ".git/hermy/$d/owner"
   t 1 "$tool: drop refuses another running session's claim" run drop "$d"
   t 0 "$tool: naming that session" says "claimed by session sess-b" run drop "$d"
   t 1 "$tool: sweep names no unmerged claim a running session holds" says "^kept: $d " run sweep
-  echo "sess-a $$" > ".git/coddy/$d/owner"
+  echo "sess-a $$" > ".git/hermy/$d/owner"
   t 1 "$tool: nor one this session holds" says "^kept: $d " run sweep
-  echo "sess-b $(sh -c 'echo $$')" > ".git/coddy/$d/owner" # that process has exited
+  echo "sess-b $(sh -c 'echo $$')" > ".git/hermy/$d/owner" # that process has exited
   t 0 "$tool: sweep names an unmerged claim whose session is gone" says "^kept: $d (not merged)\$" run sweep
   t 0 "$tool: and keeps it" test -d ".worktrees/$d"
   t 0 "$tool: drop drops a claim whose session is gone" run drop "$d"
@@ -709,7 +755,7 @@ leg() {
   echo s > ".worktrees/$f/s.txt"; wcommit "$f" s.txt; upmain "fa$f.txt"
   t 0 "$tool: refresh: one flagged by an earlier failed run is refreshed once verify passes" says "^refreshed: $f\$" run refresh "$f"
   t 1 "$tool: refresh: and its flag is cleared" says needs_rebase run state "$f"
-  cp .claude/coddy.yml "$tmp/leg.yml"; printf 'tracker: github\nworktree: %s\ndefault_branch: main\nverify: grep -q ^needs_rebase= ../../.git/coddy/%s/state\n' "$tool" "$f" > .claude/coddy.yml; upmain "fb$f.txt"
+  cp .claude/coddy.yml "$tmp/leg.yml"; printf 'tracker: github\nworktree: %s\ndefault_branch: main\nverify: grep -q ^needs_rebase= ../../.git/hermy/%s/state\n' "$tool" "$f" > .claude/coddy.yml; upmain "fb$f.txt"
   t 0 "$tool: refresh: the flag is there while verify runs" says "^refreshed: $f\$" run refresh "$f"
   printf 'tracker: github\nworktree: %s\ndefault_branch: main\n' "$tool" > .claude/coddy.yml; upmain "fn$f.txt"; w=$(wtip "$f")
   t 0 "$tool: refresh: with no verify command it is skipped" says "^skipped: $f (no verify command)\$" run refresh "$f"
@@ -727,7 +773,7 @@ leg() {
   t 0 "$tool: refresh: and leaves the worktree at its tip" test "$(wtip "$c")" = "$w"
   t 0 "$tool: refresh: neither mid-merge nor holding a conflict" sh -c "if [ $tool = jj ]; then test -z \"\$(jj -R .worktrees/$c log --no-graph -r 'conflicts()' -T '\"x\"' 2>/dev/null)\"; else ! git -C .worktrees/$c rev-parse -q --verify MERGE_HEAD; fi && grep -qx mine .worktrees/$c/c$c.txt"
   t 0 "$tool: refresh: and flags needs_rebase at origin/main" says "^needs_rebase=$(git rev-parse origin/main)\$" run state "$c"
-  for l in .git/coddy ".git/coddy/$c"; do
+  for l in .git/hermy ".git/hermy/$c"; do
     mv "$l" "$tmp/rl$c"; ln -s "$tmp/rl$c" "$l"
     t 1 "$tool: refresh refuses while $l is a link" run refresh "$c"
     t 0 "$tool: naming it" says "${l//./\\.} is a link, so" run refresh "$c"
@@ -735,24 +781,24 @@ leg() {
   done
   echo wip > ".worktrees/$r/wip.txt"; upmain "v$r.txt"
   t 0 "$tool: refresh: uncommitted work is skipped" says "^skipped: $r (uncommitted work)\$" run refresh "$r"
-  rm ".worktrees/$r/wip.txt"; echo "sess-b 1" > ".git/coddy/$r/owner"
+  rm ".worktrees/$r/wip.txt"; echo "sess-b 1" > ".git/hermy/$r/owner"
   t 0 "$tool: refresh: another running session's claim is skipped" says "^skipped: $r (session sess-b holds it)\$" run refresh "$r"
-  echo "sess-a $$" > ".git/coddy/$r/owner"
+  echo "sess-a $$" > ".git/hermy/$r/owner"
   s=$((n + 230)); run create "$s" "feat/$s-drop" "$r" >/dev/null 2>&1; run claim "$s" >/dev/null 2>&1
   t 0 "$tool: refresh: one stacked on a base that still resolves is skipped" says "^skipped: $s (stacked on feat/$r-drop)\$" run refresh "$s"
   if [ "$tool" = jj ]; then # a broken working copy at the root fails every jj call there alone
     mv .jj/working_copy/checkout "$tmp/checkout"; echo junk > .jj/working_copy/checkout
     t 1 "jj: refresh: a jj that fails at the root is never read as the base gone" run refresh "$s"
-    t 0 "jj: refresh: and the base record stays" test -e ".git/coddy/$s.base"
+    t 0 "jj: refresh: and the base record stays" test -e ".git/hermy/$s.base"
     mv "$tmp/checkout" .jj/working_copy/checkout
   fi
   [ "$tool" = git ] || t 0 "jj: refresh: a branch another workspace builds on is skipped, so the rebase moves none of its commits" says "^skipped: $r (other commits build on its branch)\$" run refresh "$r"
   run drop "$r" --force >/dev/null 2>&1; if [ "$tool" = jj ]; then jj bookmark forget "feat/$r-drop" >/dev/null 2>&1; else git branch -qD "feat/$r-drop"; fi
   t 0 "$tool: refresh: once its base is gone it is updated like any other" says "^refreshed: $s\$" run refresh "$s"
-  t 1 "$tool: refresh: and its base record is removed" test -e ".git/coddy/$s.base"
-  echo "feat/$r-drop" > ".git/coddy/$s.base"
+  t 1 "$tool: refresh: and its base record is removed" test -e ".git/hermy/$s.base"
+  echo "feat/$r-drop" > ".git/hermy/$s.base"
   t 0 "$tool: refresh: a current one whose base is gone" says "^current: $s\$" run refresh "$s"
-  t 1 "$tool: refresh: loses its base record too" test -e ".git/coddy/$s.base"
+  t 1 "$tool: refresh: loses its base record too" test -e ".git/hermy/$s.base"
   # A base pushed, squash merged and swept leaves its remote branch (jj: an
   # untracked remote bookmark, its commits immutable): the issue stacked on
   # it is updated all the same.
@@ -765,16 +811,25 @@ leg() {
   t 1 "$tool: refresh refuses an issue with no worktree" run refresh "$r"
   mkdir ".worktrees/$r"
   t 1 "$tool: refresh refuses a worktree with no claim" run refresh "$r"
-  mkdir ".git/coddy/$r"
+  mkdir ".git/hermy/$r"
   t 1 "$tool: refresh refuses a claimed directory that is no worktree, never merging into the main checkout above it" run refresh "$r"
-  rmdir ".git/coddy/$r" ".worktrees/$r"
+  rmdir ".git/hermy/$r" ".worktrees/$r"
   for x in "$f" "$c" "$s" "$k" "$e"; do run drop "$x" --force >/dev/null 2>&1; done
   t 0 "$tool: the whole flow left the main checkout alone" wire trip "leg$n"
 }
 
 printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml
 t 2 "guard blocks the main checkout" guard "$repo/README.md"
-t 0 "guard allows .claude/" guard "$repo/.claude/coddy.yml"
+t 0 "guard allows .claude/" quiet guard "$repo/.claude/notes.md"
+legask() { guard "$repo/.claude/coddy.yml" | jq -e '.hookSpecificOutput.permissionDecision == "ask"'; }
+t 0 "guard asks on the legacy config there" legask
+# Below a live .coddy.yml it is let go, so free like any path in .claude/, and
+# one that is a link to .git/config is refused, never asked.
+cp .claude/coddy.yml .coddy.yml
+t 0 "guard does not ask on the legacy config below a live .coddy.yml" quiet guard "$repo/.claude/coddy.yml"
+mv .claude/coddy.yml "$tmp/leg.live"; ln -s ../.git/config .claude/coddy.yml
+t 2 "guard refuses a legacy config below a live .coddy.yml that is a link to .git/config" guard "$repo/.claude/coddy.yml"
+rm .claude/coddy.yml .coddy.yml; mv "$tmp/leg.live" .claude/coddy.yml
 t 0 "guard allows .claude/settings.json" guard "$repo/.claude/settings.json"
 t 2 "guard blocks a Claude Code worktree under .claude/ without a claim" guard "$repo/.claude/worktrees/55/a.txt"
 t 2 "guard blocks one in any case of worktrees/" guard "$repo/.claude/WORKTREES/55/a.txt"
@@ -785,9 +840,9 @@ ln -s "$repo" "$tmp/alias"
 t 2 "guard blocks the main checkout through a link to the project" sh -c "printf '{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"%s\"}}' '$tmp/alias/README.md' | CLAUDE_PROJECT_DIR='$(cd "$repo" && pwd -P)' bash '$here/scripts/issue.sh' guard"
 t 2 "guard rejects .. paths" guard "$repo/.worktrees/../README.md"
 t 2 "guard rejects .. paths hidden behind a newline" guard "$repo/.claude/x\\n/../../README.md"
-mkdir -p .git/coddy/66 && echo "sess-f " > .git/coddy/66/owner # a claim run without CLAUDE_PID
+mkdir -p .git/hermy/66 && echo "sess-f " > .git/hermy/66/owner # a claim run without CLAUDE_PID
 t 0 "guard reads an owner without a pid as running, as claim does" says "(pid , running)" guard "$repo/.worktrees/66/a.txt" sess-b
-rm -r .git/coddy/66
+rm -r .git/hermy/66
 # hook <verb> <payload> <NAME=value...>: the first entry in hooks/hooks.json
 # naming that verb, run as Claude Code runs exec form (no shell,
 # ${CLAUDE_PLUGIN_ROOT} substituted), with the variables a .claude/settings.json
@@ -890,8 +945,8 @@ sk() { rm -rf "$tmp/sk"; cp -R "$here/skills" "$tmp/sk"; }
 skadd() { sk; printf '%s\n' "$2" >> "$tmp/sk/$1/SKILL.md"; "${@:3}" "$tmp/sk"; }
 skrule() { sk; sed "s|^allowed-tools: .*|&, $2|" "$here/skills/$1/SKILL.md" > "$tmp/sk/$1/SKILL.md"; "${@:3}" "$tmp/sk"; }
 gatedlist() { sk; sed 's|^allowed-tools: .*|allowed-tools:\n  - Bash|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; gated "$tmp/sk"; }
-skcont() { sk; sed 's|^allowed-tools: .*|&\n  Bash(coddy take *)|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; "$@" "$tmp/sk"; }
-skblank() { sk; sed 's|^allowed-tools: .*|&\n\n  Bash(coddy take *)|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; "$@" "$tmp/sk"; }
+skcont() { sk; sed 's|^allowed-tools: .*|&\n  Bash(hermy take *)|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; "$@" "$tmp/sk"; }
+skblank() { sk; sed 's|^allowed-tools: .*|&\n\n  Bash(hermy take *)|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; "$@" "$tmp/sk"; }
 skquote() { sk; sed 's|^allowed-tools: \(.*\)|allowed-tools: "\1"|' "$here/skills/next/SKILL.md" > "$tmp/sk/next/SKILL.md"; "$@" "$tmp/sk"; }
 R='bash "${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh"'
 t 0 "skills: every body and allowed-tools agree, both ways" mirror "$here/skills"
@@ -908,11 +963,11 @@ t 1 "skills: a body calling dropall without a rule fails" skadd next "\`$R dropa
 t 1 "skills: a take rule fails" skrule next "Bash($R take *)" gated
 t 1 "skills: a drop rule fails" skrule next "Bash($R drop 7 --force)" gated
 t 1 "skills: a broad issue.sh rule fails" skrule next "Bash($R *)" gated
-t 1 "skills: a rule on the core path fails" skrule next 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/bin/coddy" status)' gated
+t 1 "skills: a rule on the core path fails" skrule next 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/bin/hermy" status)' gated
 t 1 "skills: an unquoted shim path rule fails" skrule next 'Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh status)' gated
 t 1 "skills: a single-quoted shim path rule fails" skrule next "Bash(bash '\${CLAUDE_PLUGIN_ROOT}/scripts/issue.sh' status)" gated
 t 1 "skills: a form outside the list fails" skrule next "Bash($R frobnicate *)" gated
-t 1 "skills: a coddy rule fails" skrule next "Bash(coddy status)" gated
+t 1 "skills: a hermy rule fails" skrule next "Bash(hermy status)" gated
 t 1 "skills: a bare Bash fails" skrule next "Bash" gated
 t 1 "skills: Bash(*) fails" skrule next 'Bash(*)' gated
 t 1 "skills: Bash(bash *) fails" skrule next 'Bash(bash *)' gated
@@ -930,7 +985,7 @@ skopen() { sk; sed "s#^allowed-tools: \\(.*\\)#allowed-tools: $1#" "$here/skills
 for op in "single-quoted:'\\1'" "> block scalar:>"$'\\\n'"  \\1" "| block scalar:|"$'\\\n'"  \\1" "flow sequence:[\\1]" "flow mapping:{\\1}" "alias:*\\1" "anchor:\\&\\1"; do
   for ck in gated mirror; do t 1 "skills: a ${op%%:*} allowed-tools value fails the $ck" skopen "${op#*:}" "$ck"; done
 done
-t 1 "skills: a take rule cut at a comma inside its parentheses fails" skrule next "Bash(x, coddy take *)" gated
+t 1 "skills: a take rule cut at a comma inside its parentheses fails" skrule next "Bash(x, hermy take *)" gated
 # Claude Code also splits on spaces outside parentheses and trims tabs: no fragment is skipped.
 M=mcp__plugin_github_github__get_me
 t 1 "skills: a take rule between two mcp names, space-separated, fails the gate" skrule next "mcp__plugin_github_github__search_issues Bash($R take *) $M" gated
@@ -938,23 +993,23 @@ t 1 "skills: a lone * on ship fails the gate" skrule ship '*' gated
 t 1 "skills: a lone * on triage fails the gate" skrule triage '*' gated
 t 1 "skills: a tab before a take rule fails the gate" skrule next "$(printf '\t')Bash($R take *)" gated
 t 1 "skills: a !!str tag fails the gate" skopen '!!str \1' gated
-t 1 "skills: a comment after the key, then a list, fails the gate" skopen '# note\n  - Bash(coddy take *)' gated
+t 1 "skills: a comment after the key, then a list, fails the gate" skopen '# note\n  - Bash(hermy take *)' gated
 # A hook blocks only on exit 2, so the shim makes every other exit of guard
-# or snap a 2 with a message, a core it cannot read included, and a coddy
+# or snap a 2 with a message, a core it cannot read included, and a hermy
 # crash blocks the call; trip keeps its own.
 mkdir -p "$tmp/fk/scripts" "$tmp/fk/bin"; cp "$here/scripts/issue.sh" "$tmp/fk/scripts/"
 fk() { printf '{}' | "$1" -p "$tmp/fk/scripts/issue.sh" "$2" 2>"$tmp/fk.err"; }
 for sh in bash /bin/bash; do
   for c in 'exit 1' 'set -u; echo "$nope"' missing; do
-    rm -f "$tmp/fk/bin/coddy"; [ "$c" = missing ] || echo "$c" > "$tmp/fk/bin/coddy"
+    rm -f "$tmp/fk/bin/hermy"; [ "$c" = missing ] || echo "$c" > "$tmp/fk/bin/hermy"
     for v in guard snap; do
       t 2 "hooks: $v exits 2 on a core that ends $c, under $sh" fk "$sh" "$v"
-      t 0 "hooks: and says so: $v, $c, under $sh" grep -q "coddy: the $v hook failed (exit [0-9]*), so the call is refused" "$tmp/fk.err"
-      t 0 "hooks: and names what to do, in plain text: $v, $c, under $sh" grep -q "until the user updates or reinstalls the coddy plugin, or disables it\.$" "$tmp/fk.err"
+      t 0 "hooks: and says so: $v, $c, under $sh" grep -q "hermy: the $v hook failed (exit [0-9]*), so the call is refused" "$tmp/fk.err"
+      t 0 "hooks: and names what to do, in plain text: $v, $c, under $sh" grep -q "until the user updates or reinstalls the hermy plugin, or disables it\.$" "$tmp/fk.err"
     done
     t 1 "hooks: trip keeps its own exit on a core that ends $c, under $sh" sh -c 'fk() { printf "{}" | "$1" -p "$2" trip; }; fk "$1" "$2"; r=$?; [ "$r" = 0 ] || [ "$r" = 2 ]' - "$sh" "$tmp/fk/scripts/issue.sh"
   done
-  for c in 0 2; do echo "exit $c" > "$tmp/fk/bin/coddy"; for v in guard snap; do t "$c" "hooks: $v keeps exit $c, under $sh" fk "$sh" "$v"; t 0 "hooks: and adds nothing: $v $c, under $sh" test ! -s "$tmp/fk.err"; done; done
+  for c in 0 2; do echo "exit $c" > "$tmp/fk/bin/hermy"; for v in guard snap; do t "$c" "hooks: $v keeps exit $c, under $sh" fk "$sh" "$v"; t 0 "hooks: and adds nothing: $v $c, under $sh" test ! -s "$tmp/fk.err"; done; done
 done
 rm -rf "$tmp/fk"
 # Each under the bash on PATH and under /bin/bash (3.2 on macOS) first on PATH.
@@ -1028,7 +1083,7 @@ done
 rm -r sub/.git; ln -s "$repo/.git" sub/.git; rm -f "$tmp/planted"
 t 2 "launcher: snap refuses from a subdirectory whose .git is a link" from sub hook snap "$(payload true "$repo/sub")" "CLAUDE_PROJECT_DIR=$repo/sub" "PATH=$repo/nm:$PATH"
 t 1 "launcher: and ran nothing planted past it" test -e "$tmp/planted"
-rm sub/.git; mkdir -p "$tmp/jo/.worktrees/x"; cp -R nm "$tmp/jo/nm"; echo 'tracker: github' > "$tmp/jo/.coddy.yml"
+rm sub/.git; mkdir -p "$tmp/jo/.worktrees/x"; cp -R nm "$tmp/jo/nm"; echo 'tracker: github' > "$tmp/jo/.hermy.yml"
 from "$tmp/jo/.worktrees/x" hook guard "$agent" "CLAUDE_PROJECT_DIR=$tmp/jo/.worktrees/x" "PATH=$tmp/jo/nm:$PATH" >/dev/null 2>&1
 t 1 "launcher: from a worktree of a project outside git, ran nothing planted in the project" test -e "$tmp/planted"
 rm -r "$tmp/jo"
@@ -1068,7 +1123,7 @@ mkdir "$tmp/badint" "$tmp/badbin"; printf '#!/nonexistent/sh\n' > "$tmp/badint/b
 for d in badint badbin; do
   t 2 "launcher: guard refuses when the bash it picks cannot run ($d)" hook guard "$agent" PATH="$tmp/$d:$PATH"
   t 2 "launcher: snap refuses when the bash it picks cannot run ($d)" hook snap "$(payload true)" PATH="$tmp/$d:$PATH"
-  t 0 "launcher: and says so ($d)" says 'cannot run, so the coddy guard hook' hook guard "$agent" PATH="$tmp/$d:$PATH"
+  t 0 "launcher: and says so ($d)" says 'cannot run, so the hermy guard hook' hook guard "$agent" PATH="$tmp/$d:$PATH"
 done
 rm -r nm nl sub bash git sed jq "$tmp/lo" "$tmp/via" "$tmp/nobash" "$tmp/badint" "$tmp/badbin"
 # git and jj read the user's config from HOME and XDG_CONFIG_HOME: one in the
@@ -1083,7 +1138,7 @@ for v in block warn; do
   for h in "HOME=$repo" "XDG_CONFIG_HOME=$repo/.claude/xdg" "HOME=$repo/.claude/none"; do
     w="${h%%=*}=${h#*="$repo"}"; w=${w/=/=<root>}
     t 2 "home: $v, snap refuses $w" hook snap "$(payload true)" "$h"
-    t 0 "home: $v, and names ${h%%=*}: $w" says "^coddy: ${h%%=*} ('$repo" hook snap "$(payload true)" "$h"
+    t 0 "home: $v, and names ${h%%=*}: $w" says "^hermy: ${h%%=*} ('$repo" hook snap "$(payload true)" "$h"
     t 0 "home: $v, guard lets the agent dir through under $w" hook guard "$agent" "$h"
   done
   w=2; [ "$v" = block ] || w=0
@@ -1128,11 +1183,11 @@ p=$(command -v jj) && ln -s "$p" nm/jj; printf '/nm/\n' >> .git/info/exclude
 for v in block warn; do
   printf 'tracker: github\ndefault_branch: main\nguard: %s\n' "$v" > .claude/coddy.yml
   t 2 "tools: $v, snap refuses with git in the project alone" hook snap "$(payload true)" PATH="$repo/nm:$tmp/nogit"
-  t 0 "tools: $v, and names it" says '^coddy: no git is on PATH outside the project' hook snap "$(payload true)" PATH="$repo/nm:$tmp/nogit"
+  t 0 "tools: $v, and names it" says '^hermy: no git is on PATH outside the project' hook snap "$(payload true)" PATH="$repo/nm:$tmp/nogit"
   t 0 "tools: $v, snap needs no jj where the root holds no .jj" hook snap "$(payload true)" PATH="$repo/nm:$tmp/gitonly:$tmp/nogit"
   mkdir .jj
   t 2 "tools: $v, snap refuses with jj in the project alone where the root holds a .jj" hook snap "$(payload true)" PATH="$repo/nm:$tmp/gitonly:$tmp/nogit"
-  t 0 "tools: $v, and names it" says '^coddy: no jj is on PATH outside the project' hook snap "$(payload true)" PATH="$repo/nm:$tmp/gitonly:$tmp/nogit"
+  t 0 "tools: $v, and names it" says '^hermy: no jj is on PATH outside the project' hook snap "$(payload true)" PATH="$repo/nm:$tmp/gitonly:$tmp/nogit"
   rmdir .jj
 done
 printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml; cp .claude/coddy.yml "$tmp/conf.tools"
@@ -1154,14 +1209,14 @@ t 1 "claim needs a worktree first" run claim 99
 # the tripwire and the config lock are the same in both modes.
 # warned <path> [session] [text]: guard exits 0 and prints that message, with
 # the text (default: the command to run), as hook JSON
-warned() { out=$(guard "$1" "${2-sess-a}") && printf %s "$out" | jq -e --arg s "${3-/coddy:start}" '.hookSpecificOutput | .hookEventName == "PreToolUse" and (.additionalContext | contains($s))'; }
+warned() { out=$(guard "$1" "${2-sess-a}") && printf %s "$out" | jq -e --arg s "${3-/hermy:start}" '.hookSpecificOutput | .hookEventName == "PreToolUse" and (.additionalContext | contains($s))'; }
 printf 'tracker: github\ndefault_branch: main\nguard: warn\n' > .claude/coddy.yml
 t 0 "warn: guard lets the main checkout through with the message" warned "$repo/README.md"
 t 0 "warn: guard lets an unclaimed worktree through with the message" warned "$repo/.worktrees/77/a.txt"
-mkdir -p .git/coddy/77 && echo "sess-z 1" > .git/coddy/77/owner # claimed by another session, in another process
+mkdir -p .git/hermy/77 && echo "sess-z 1" > .git/hermy/77/owner # claimed by another session, in another process
 t 0 "warn: guard lets another session's worktree through, naming the owner" warned "$repo/.worktrees/77/a.txt" sess-a "belongs to session sess-z"
-rm -r .git/coddy/77
-t 0 "warn: guard says nothing about .claude/" test -z "$(guard "$repo/.claude/coddy.yml")"
+rm -r .git/hermy/77
+t 0 "warn: guard says nothing about .claude/" test -z "$(guard "$repo/.claude/notes.md")"
 tripped 2 "warn: the tripwire still trips" 'echo x > stray.txt'; rm -f stray.txt
 tripped 2 "warn: the config lock still holds" 'rm .claude/coddy.yml'
 t 0 "warn: the config came back as it was" grep -qx 'guard: warn' .claude/coddy.yml
@@ -1199,7 +1254,7 @@ for v in block warn; do
   # Where bash itself runs on native Windows ($OSTYPE msys or cygwin), every
   # edit is refused, in warn mode too: a claimed worktree's own, which the
   # guard allows elsewhere, included.
-  mkdir -p .git/coddy/88 && echo "sess-a $$" > .git/coddy/88/owner
+  mkdir -p .git/hermy/88 && echo "sess-a $$" > .git/hermy/88/owner
   t 0 "guard: $v allows a claimed worktree outside native Windows" test -z "$(guard "$repo/.worktrees/88/a.txt" 2>&1 || echo refused)"
   for o in msys cygwin; do
     OSTYPE=$o t 2 "guard: $v blocks every edit under OSTYPE=$o" saying 'refuses every edit on native Windows' guard "$repo/.worktrees/88/a.txt"
@@ -1278,7 +1333,7 @@ for v in block warn; do
       kill "$k" "$w"; wait "$k" "$w" 2>/dev/null; rm -r "$tmp/n" "$tmp/y"
     else echo "skip guard through /proc/<pid>/cwd in another mount namespace: unshare -Urm is not allowed here"; fi
   else echo "skip guard through /proc/self/root: no /proc here (Linux only)"; fi
-  rm -r .git/coddy/88 .worktrees .claude/up .claude/g src
+  rm -r .git/hermy/88 .worktrees .claude/up .claude/g src
   for p in '{"cwd":{"a":1},"tool_input":{"file_path":"x"}}' '{"cwd":["/x"],"tool_input":{"file_path":"x"}}' '{"cwd":"proj","tool_input":{"file_path":"x"}}'; do
     t 2 "guard: $v blocks a cwd that is not absolute: $p" saying 'refuses a cwd that is not an absolute path' raw "$p"
   done
@@ -1295,39 +1350,39 @@ git -C .worktrees/43 checkout -q feat/43-thing
 cp .claude/coddy.yml "$tmp/conf.yml"; printf 'version: 2\ntracker: github\ndefault_branch: main\n' > .claude/coddy.yml
 t 0 "no worktree key at version 2: create makes a worktree" run create 44 feat/44-thing
 t 0 "no worktree key at version 2: and it is git's, not jj's" sh -c 'test -e .worktrees/44/.git && ! test -e .worktrees/44/.jj'
-git worktree remove --force .worktrees/44; git branch -qD feat/44-thing; rm -f .git/coddy/44.branch
+git worktree remove --force .worktrees/44; git branch -qD feat/44-thing; rm -f .git/hermy/44.branch
 # Claude Code keeps an install at <P>/plugins/cache/<marketplace>/<plugin>/<version>
 # and its data at <P>/plugins/data/<plugin>-<marketplace>: link points the
-# launcher there at the install's bin/coddy, given that dir alone, and create
-# has the git hooks run it, whatever CODDY_EXEC the shell holds.
-fake="$tmp/plugins/cache/mkt/coddy/9.9.9" data="$tmp/plugins/data/coddy-mkt"
-mkdir -p "$fake/bin" "$fake/scripts" "$data" "$tmp/plugins/data/other"; cp "$here/bin/coddy" "$fake/bin/"; cp "$here/scripts/issue.sh" "$fake/scripts/"
+# launcher there at the install's bin/hermy, given that dir alone, and create
+# has the git hooks run it, whatever HERMY_EXEC the shell holds.
+fake="$tmp/plugins/cache/mkt/hermy/9.9.9" data="$tmp/plugins/data/hermy-mkt"
+mkdir -p "$fake/bin" "$fake/scripts" "$data" "$tmp/plugins/data/other"; cp "$here/bin/hermy" "$fake/bin/"; cp "$here/scripts/issue.sh" "$fake/scripts/"
 frun() { CLAUDE_PROJECT_DIR="$repo" bash "$fake/scripts/issue.sh" "$@"; }
 t 0 "link: from an install in no cache layout, nothing and exit 0" quiet run link "$data"
 t 0 "link: and no launcher" test -z "$(ls -A "$data")"
 t 0 "link: given another dir, nothing and exit 0" quiet frun link "$tmp/plugins/data/other"
 t 0 "link: and no launcher there" test -z "$(ls -A "$tmp/plugins/data/other")"
 t 0 "link: given its own data dir, nothing and exit 0" quiet frun link "$data"
-t 0 "link: and the launcher points at the install's bin/coddy" test "$(readlink "$data/coddy")" = "$(cd "$fake/bin" && pwd -P)/coddy"
-CODDY_EXEC=/elsewhere/coddy frun create 46 feat/46-thing >/dev/null 2>&1
-t 0 "create: from that install, the hooks run the launcher, an inherited CODDY_EXEC ignored" grep -qxF "c='$(cd "$data" && pwd -P)/coddy'" .git/hooks/coddy/pre-commit
-CODDY_EXEC="$data/coddy" run create 46 feat/46-thing >/dev/null 2>&1
-t 0 "create: from an install in no cache layout, its own path, an inherited CODDY_EXEC ignored" grep -qxF "c='$here/bin/coddy'" .git/hooks/coddy/pre-commit
-git worktree remove --force .worktrees/46; git branch -qD feat/46-thing; rm -f .git/coddy/46.branch; cp "$tmp/conf.yml" .claude/coddy.yml
+t 0 "link: and the launcher points at the install's bin/hermy" test "$(readlink "$data/hermy")" = "$(cd "$fake/bin" && pwd -P)/hermy"
+HERMY_EXEC=/elsewhere/hermy frun create 46 feat/46-thing >/dev/null 2>&1
+t 0 "create: from that install, the hooks run the launcher, an inherited HERMY_EXEC ignored" grep -qxF "c='$(cd "$data" && pwd -P)/hermy'" .git/hooks/hermy/pre-commit
+HERMY_EXEC="$data/hermy" run create 46 feat/46-thing >/dev/null 2>&1
+t 0 "create: from an install in no cache layout, its own path, an inherited HERMY_EXEC ignored" grep -qxF "c='$here/bin/hermy'" .git/hooks/hermy/pre-commit
+git worktree remove --force .worktrees/46; git branch -qD feat/46-thing; rm -f .git/hermy/46.branch; cp "$tmp/conf.yml" .claude/coddy.yml
 if command -v jj >/dev/null; then
   printf 'tracker: github\nworktree: jj\ndefault_branch: main\n' > .claude/coddy.yml
   t 1 "jj: create refuses a repo that is not jj-backed" run create 41 feat/41-thing
   jj git init --colocate >/dev/null 2>&1; echo '.jj/' >> .git/info/exclude
   leg jj 42
   # A session's sandbox writes its own directory, which may be a jj workspace
-  # outside the checkout: create refuses a coddy installed there.
+  # outside the checkout: create refuses a hermy installed there.
   jj workspace add --name jw "$tmp/jw" >/dev/null 2>&1; mkdir "$tmp/jw/plug"; cp -R "$here/bin" "$here/scripts" "$tmp/jw/plug/"
-  t 0 "jj: create refuses a coddy in a jj workspace outside the checkout" says 'is inside the project at .*, a worktree of it or where this start began' env CLAUDE_PROJECT_DIR="$repo" bash "$tmp/jw/plug/scripts/issue.sh" create 42 feat/42-thing
+  t 0 "jj: create refuses a hermy in a jj workspace outside the checkout" says 'is inside the project at .*, a worktree of it or where this start began' env CLAUDE_PROJECT_DIR="$repo" bash "$tmp/jw/plug/scripts/issue.sh" create 42 feat/42-thing
   jj workspace forget jw >/dev/null 2>&1; rm -rf "$tmp/jw"
   printf 'tracker: github\ndefault_branch: main\n' > .claude/coddy.yml
   t 0 "no worktree key, no version: create makes a worktree" run create 45 feat/45-thing
   t 0 "no worktree key, no version: and it is jj's, until migrated" test -d .worktrees/45/.jj
-  jj workspace forget 45 >/dev/null 2>&1; rm -rf .worktrees/45; jj bookmark delete feat/45-thing >/dev/null 2>&1; rm -f .git/coddy/45.branch
+  jj workspace forget 45 >/dev/null 2>&1; rm -rf .worktrees/45; jj bookmark delete feat/45-thing >/dev/null 2>&1; rm -f .git/hermy/45.branch
   printf 'tracker: github\nworktree: jj\ndefault_branch: main\n' > .claude/coddy.yml
 else
   echo "skip jj leg (jj not installed)"
@@ -1355,7 +1410,7 @@ printf '#!/bin/sh\ncase " $* " in *" hash-object "*) echo x >> "%s" ;; esac\nexe
 for i in $(seq 1000); do echo "$i" > "many/$i.txt"; done
 : > "$tmp/hashes"; PATH="$tmp/gitshim:$PATH" wire snap many
 t 0 "tripwire: 1000 dirty files are hashed by one hash-object" test "$(wc -l < "$tmp/hashes" | tr -d ' ')" = 1
-t 0 "tripwire: and each is in the snapshot" test "$(grep -c '^many/.* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/coddy-snap-*-many)" = 1000
+t 0 "tripwire: and each is in the snapshot" test "$(grep -c '^many/.* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/hermy-snap-*-many)" = 1000
 wire trip many 2>/dev/null; rm -r many
 # A dirty file over 1 MiB is not read: its line holds its size, ctime and
 # inode, so a sparse 14 GiB one costs what a small one does, and one
@@ -1363,7 +1418,7 @@ wire trip many 2>/dev/null; rm -r many
 dd if=/dev/null of=huge.bin bs=1048576 seek=14336 count=0 2>/dev/null
 SECONDS=0; wire snap big
 t 0 "tripwire: a sparse 14 GiB untracked file is fingerprinted within seconds" test "$SECONDS" -le 5
-t 0 "tripwire: as its size, ctime and inode, unread" grep -q '^huge\.bin big:15032385536:[0-9.]*:[0-9]*$' "${TMPDIR:-/tmp}"/coddy-snap-*-big
+t 0 "tripwire: as its size, ctime and inode, unread" grep -q '^huge\.bin big:15032385536:[0-9.]*:[0-9]*$' "${TMPDIR:-/tmp}"/hermy-snap-*-big
 SECONDS=0; wire trip big; got=$?
 t 0 "tripwire: and trip, quiet while it stands, within seconds too" test "$got:$((SECONDS <= 5))" = 0:1
 rm huge.bin; dd if=/dev/zero of=two.bin bs=1048576 count=2 2>/dev/null
@@ -1375,33 +1430,33 @@ t 0 "tripwire: and the report names its path alone" grep -q 'main checkout: two\
 rm two.bin
 # Exactly 1 MiB is hashed; a byte more is not read.
 head -c 1048576 /dev/zero > mib.bin; head -c 1048577 /dev/zero > mib1.bin; wire snap big
-t 0 "tripwire: a file of exactly 1 MiB is hashed" grep -q '^mib\.bin [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/coddy-snap-*-big
-t 0 "tripwire: one a byte over is not read" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}"/coddy-snap-*-big
+t 0 "tripwire: a file of exactly 1 MiB is hashed" grep -q '^mib\.bin [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/hermy-snap-*-big
+t 0 "tripwire: one a byte over is not read" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}"/hermy-snap-*-big
 wire trip big 2>/dev/null; rm mib.bin mib1.bin
 # A file named %Fc in the root, which GNU's stat reads after its -f as a
 # path, does not pass it off as BSD's, which would read every big file.
 head -c 1048577 /dev/zero > mib1.bin; : > %Fc; wire snap big
-t 0 "tripwire: a file named %Fc in the root leaves a big file unread" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}"/coddy-snap-*-big
+t 0 "tripwire: a file named %Fc in the root leaves a big file unread" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}"/hermy-snap-*-big
 wire trip big 2>/dev/null; rm mib1.bin %Fc
 # Past 32 MiB hashed in all a file up to 1 MiB is recorded as a big one, so
 # 8000 sparse 1 MiB untracked files cost what their paths do, not 8 GiB
 # read, and one recorded so, rewritten in place to the same size, still trips.
 mkdir sp; seq -f 'sp/f%04g' 0 7999 | xargs perl -e 'for (@ARGV) { open my $f, ">", $_ or die; truncate $f, 1048576 or die }'
 wire snap big
-t 1 "tripwire: 8000 sparse 1 MiB untracked files are fingerprinted within the budget" grep -qx unchecked "${TMPDIR:-/tmp}"/coddy-snap-*-big
-got=$(grep -c '^sp/f[0-9]* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/coddy-snap-*-big)
+t 1 "tripwire: 8000 sparse 1 MiB untracked files are fingerprinted within the budget" grep -qx unchecked "${TMPDIR:-/tmp}"/hermy-snap-*-big
+got=$(grep -c '^sp/f[0-9]* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/hermy-snap-*-big)
 t 0 "tripwire: no more than 32 MiB of them hashed" test "$got" -ge 1 -a "$got" -le 32
-t 0 "tripwire: the rest by size, ctime and inode" grep -q '^sp/f7999 big:1048576:' "${TMPDIR:-/tmp}"/coddy-snap-*-big
+t 0 "tripwire: the rest by size, ctime and inode" grep -q '^sp/f7999 big:1048576:' "${TMPDIR:-/tmp}"/hermy-snap-*-big
 wire trip big 2>/dev/null
 wire snap w; printf x | dd of=sp/f7999 bs=1 seek=4096 conv=notrunc 2>/dev/null
 wire trip w 2>"$tmp/trip.err"; got=$?
 t 0 "tripwire: one of those rewritten in place to the same size trips" test "$got" = 2
 t 0 "tripwire: and the report names its path alone" grep -q 'main checkout: sp/f7999\.' "$tmp/trip.err"
 rm -r sp
-# The fingerprint's budget is the core's alone: a CODDY_BUDGET a settings env
+# The fingerprint's budget is the core's alone: a HERMY_BUDGET a settings env
 # hands the hook is dropped, so 0 runs no command unchecked.
-CODDY_BUDGET=0 wire snap w >/dev/null
-t 1 "tripwire: an inherited CODDY_BUDGET is ignored" grep -qx unchecked "${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-w"
+HERMY_BUDGET=0 wire snap w >/dev/null
+t 1 "tripwire: an inherited HERMY_BUDGET is ignored" grep -qx unchecked "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-w"
 wire trip w 2>/dev/null
 # A path holding a newline is left out of the stat, where its second line
 # would read as another path's stat line and hide that path's change.
@@ -1491,7 +1546,7 @@ prompt() { ( set -m; "$@" >/dev/null 2>&1 & p=$!; for _ in $(seq 50); do kill -0
 # timed <command...>: its own exit, when it ends within five seconds; 124
 # when it is killed.
 timed() { ( set -m; "$@" >/dev/null 2>&1 & p=$!; for _ in $(seq 50); do kill -0 "$p" 2>/dev/null || { wait "$p"; exit; }; sleep 0.1; done; kill -9 -- -"$p"; exit 124 ); }
-# After the command: a worktree outside coddy's, made by any spelling, trips;
+# After the command: a worktree outside hermy's, made by any spelling, trips;
 # one inside, or one that was there before, does not.
 wo=$(cd "$tmp" && pwd -P)/out
 tripped 0 "tripwire: a git worktree in .worktrees/<id>/ is quiet" 'git worktree add -q --detach .worktrees/88'
@@ -1528,7 +1583,7 @@ t 0 "tripwire: and is reported quoted" grep -qF "git worktree at '$wo/it'\\''s',
 t 1 "tripwire: and gives no command line" cmdline
 git worktree remove --force "$sq"; rm -rf "$wo"
 # A worktree made in .worktrees/<id>/ and moved out, or reached there through
-# a link, is no longer coddy's: it trips, and only once.
+# a link, is no longer hermy's: it trips, and only once.
 tripped 2 "tripwire: a git worktree made in .worktrees/<id>/ and moved out trips" 'git worktree add -q -b evil .worktrees/87 && mv .worktrees/87 "$tmp/mv87"'
 tripped 0 "tripwire: and is quiet on the next command" 'true'
 tripped 2 "tripwire: one moved out with a link put back trips" 'git worktree add -q --detach .worktrees/86 && mv .worktrees/86 "$tmp/mv86" && ln -s "$tmp/mv86" .worktrees/86'
@@ -1566,7 +1621,7 @@ rm -rf sm .git/modules; git update-index --force-remove sm
 # main checkout or a linked worktree, until it is removed by hand. A linked
 # worktree's own commondir is by design: the hooks work from it.
 git worktree add -q --detach .worktrees/82; cp -R .git .evilgit; git --git-dir=.evilgit config core.fsmonitor "$tmp/fsm.sh"
-printf 'tracker: github\nworktree: git\n' > "$tmp/evil/.coddy.yml"
+printf 'tracker: github\nworktree: git\n' > "$tmp/evil/.hermy.yml"
 lw() { printf '{"tool_use_id":"%s"}' "$2" | CLAUDE_PROJECT_DIR="$repo/.worktrees/82" bash "$here/scripts/issue.sh" "$1"; }
 lw snap w; t 0 "commondir: a linked worktree's own leaves the hooks working from it" lw trip w
 for cd in ../.evilgit "$tmp/evil/.git"; do
@@ -1584,7 +1639,7 @@ for cd in ../.evilgit "$tmp/evil/.git"; do
   rm -rf .worktrees/85
   rm .git/commondir
 done
-rm -rf .evilgit "$tmp/evil/.coddy.yml"; git worktree remove --force .worktrees/82
+rm -rf .evilgit "$tmp/evil/.hermy.yml"; git worktree remove --force .worktrees/82
 tripped 0 "commondir: removed, the hooks are back" 'true'
 # git worktree list, which the fingerprint runs, reads gitdir, HEAD, locked
 # and commondir in every admin dir under .git/worktrees/, a dot-named one
@@ -1688,13 +1743,13 @@ rm -f "$tmp/adm.fifo" "$tmp/adm.why"; git worktree remove --force "$wo"
 # follow), refusing a .git that is a link, and putting the root back at the
 # checkout when the root's .git is a gitdir: file naming one elsewhere.
 hk() { printf '{"tool_use_id":"w","tool_input":{"file_path":"%s"}}' "${3-/x}" | CLAUDE_PROJECT_DIR="$1" bash "$here/scripts/issue.sh" "$2"; }
-printf 'tracker: github\nworktree: git\n' > "$tmp/evil/.coddy.yml"; echo "$tmp/evil/.git" > .git/commondir
+printf 'tracker: github\nworktree: git\n' > "$tmp/evil/.hermy.yml"; echo "$tmp/evil/.git" > .git/commondir
 mkdir -p .worktrees/87/.git src/deep/.git; rm -f "$tmp/fsm"
 t 2 "root: snap refuses from a worktree holding an empty .git dir" hk "$repo/.worktrees/87" snap
 t 2 "root: and from a subdirectory holding one" hk "$repo/src/deep" snap
 t 1 "root: and git ran none of its programs" test -e "$tmp/fsm"
-rm -rf .worktrees/87 src .git/commondir "$tmp/evil/.coddy.yml"
-rm -f "$tmp/fsm"; mkdir src; ln -s "$tmp/evil/.git" src/.git; printf 'tracker: github\nworktree: git\n' > src/.coddy.yml
+rm -rf .worktrees/87 src .git/commondir "$tmp/evil/.hermy.yml"
+rm -f "$tmp/fsm"; mkdir src; ln -s "$tmp/evil/.git" src/.git; printf 'tracker: github\nworktree: git\n' > src/.hermy.yml
 t 2 "root: snap refuses a .git that is a link, in a subdirectory" hk "$repo/src" snap
 t 2 "root: and guard" hk "$repo/src" guard "$repo/src/x"
 t 1 "root: and git ran none of its programs" test -e "$tmp/fsm"
@@ -1716,7 +1771,7 @@ rm -rf src
 # a HEAD git rejects (ref: then \v or \f) is no repository: a project holding one, below a repository, with a fatal .git between the start and it, runs no git in that repository
 git init -q "$tmp/vA"; git -C "$tmp/vA" config core.fsmonitor "$tmp/fsm.sh"
 for ws in $'\v' $'\f'; do
-  rm -rf "$tmp/vA/P"; mkdir -p "$tmp/vA/P/src/deep" "$tmp/vA/P/.git/objects" "$tmp/vA/P/.git/refs"; printf 'ref:%srefs/heads/main\n' "$ws" > "$tmp/vA/P/.git/HEAD"; echo garbage > "$tmp/vA/P/src/.git"; printf 'tracker: github\nworktree: git\n' > "$tmp/vA/P/.coddy.yml"
+  rm -rf "$tmp/vA/P"; mkdir -p "$tmp/vA/P/src/deep" "$tmp/vA/P/.git/objects" "$tmp/vA/P/.git/refs"; printf 'ref:%srefs/heads/main\n' "$ws" > "$tmp/vA/P/.git/HEAD"; echo garbage > "$tmp/vA/P/src/.git"; printf 'tracker: github\nworktree: git\n' > "$tmp/vA/P/.hermy.yml"
   for h in snap trip; do rm -f "$tmp/fsm"; hk "$tmp/vA/P/src/deep" "$h" >/dev/null 2>&1; t 1 "root: a HEAD of ref: then $(printf %s "$ws" | od -An -c | tr -d ' ') is no repository, so $h runs no program of the one above" test -e "$tmp/fsm"; done
 done
 rm -rf "$tmp/vA"
@@ -1732,18 +1787,18 @@ t 2 "root: and snap" hk "$repo/src" snap
 rm -rf src "$tmp/cd"
 # a session in a linked git worktree, the checkout's .git swapped for a link
 mkdir -p "$tmp/f6"; git init -q "$tmp/f6"; git -C "$tmp/f6" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
-printf 'tracker: github\nworktree: git\n' > "$tmp/f6/.coddy.yml"; git -C "$tmp/f6" worktree add -q --detach .worktrees/5
+printf 'tracker: github\nworktree: git\n' > "$tmp/f6/.hermy.yml"; git -C "$tmp/f6" worktree add -q --detach .worktrees/5
 mv "$tmp/f6/.git" "$tmp/f6/.gitx"; ln -s .gitx "$tmp/f6/.git"
 t 2 "root: a session in a linked worktree, the checkout's .git a link, refuses guard" hk "$tmp/f6/.worktrees/5" guard "$tmp/f6/x"
 t 2 "root: and snap" hk "$tmp/f6/.worktrees/5" snap
 t 0 "root: and the message says the link is to be removed" sh -c "hk() { printf '{\"tool_input\":{\"file_path\":\"/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/f6/.worktrees/5' bash '$here/scripts/issue.sh' guard 2>&1; }; hk | grep -qF '$tmp/f6/.git is a link'"
 rm -rf "$tmp/f6"
-mkdir -p "$tmp/f4"; git init -q "$tmp/f4"; printf 'tracker: github\nworktree: git\n' > "$tmp/f4/.coddy.yml"
+mkdir -p "$tmp/f4"; git init -q "$tmp/f4"; printf 'tracker: github\nworktree: git\n' > "$tmp/f4/.hermy.yml"
 mv "$tmp/f4/.git" "$tmp/f4git"; echo "gitdir: $tmp/f4git" > "$tmp/f4/.git"
 t 2 "root: a root .git that is a gitdir: file elsewhere refuses snap" hk "$tmp/f4" snap
 t 2 "root: and guard" hk "$tmp/f4" guard "$tmp/f4/x"
 t 0 "root: and the message names the file and says to open the session in the main checkout" sh -c "hk() { printf '{\"tool_input\":{\"file_path\":\"/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/f4' bash '$here/scripts/issue.sh' guard 2>&1; }; hk | grep -F '$tmp/f4/.git is a file naming a git dir elsewhere' | grep -qF 'open the session in the main checkout, or remove the file by hand'"
-mkdir -p "$tmp/f5/.claude"; printf 'tracker: github\nworktree: git\n' > "$tmp/f5/.coddy.yml"
+mkdir -p "$tmp/f5/.claude"; printf 'tracker: github\nworktree: git\n' > "$tmp/f5/.hermy.yml"
 t 0 "root: a plain root with no .git passes guard with proj set in the environment" env proj=1 bash -c "printf '{\"tool_input\":{\"file_path\":\"$tmp/f5/.claude/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/f5' bash '$here/scripts/issue.sh' guard"
 t 0 "root: and snap" env proj=1 bash -c "printf '{\"tool_use_id\":\"w\"}' | CLAUDE_PROJECT_DIR='$tmp/f5' bash '$here/scripts/issue.sh' snap"
 rm -rf "$tmp/f4" "$tmp/f4git" "$tmp/f5"
@@ -1754,7 +1809,7 @@ t 2 "root: and snap" env groot="$repo/src" bash -c "printf '{\"tool_use_id\":\"w
 rm -rf src
 # a session in an absorbed submodule of an onboarded project: git's root there is .git/modules/, which holds no config, so the hooks are inert as ever
 mkdir -p "$tmp/f7/.claude"; git init -q "$tmp/f7"; git -C "$tmp/f7" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
-printf 'tracker: github\nworktree: git\n' > "$tmp/f7/.coddy.yml"; git init -q "$tmp/f7sub"; git -C "$tmp/f7sub" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
+printf 'tracker: github\nworktree: git\n' > "$tmp/f7/.hermy.yml"; git init -q "$tmp/f7sub"; git -C "$tmp/f7sub" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
 git -C "$tmp/f7" -c protocol.file.allow=always submodule add -q "$tmp/f7sub" vendor/sub >/dev/null 2>&1
 t 0 "root: a session in an absorbed submodule of an onboarded project passes guard" hk "$tmp/f7/vendor/sub" guard "$tmp/f7/README.md"
 t 0 "root: and snap" hk "$tmp/f7/vendor/sub" snap
@@ -1764,13 +1819,13 @@ rm -rf "$tmp/f7" "$tmp/f7sub"
 mkdir -p "$tmp/f9"; git init -q "$tmp/f9"; git -C "$tmp/f9" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
 git init -q "$tmp/f9sub"; git -C "$tmp/f9sub" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
 git -C "$tmp/f9" -c protocol.file.allow=always submodule add -q "$tmp/f9sub" vendor/sub >/dev/null 2>&1
-printf 'tracker: github\nworktree: git\n' > "$tmp/f9/vendor/sub/.coddy.yml"
+printf 'tracker: github\nworktree: git\n' > "$tmp/f9/vendor/sub/.hermy.yml"
 t 2 "root: a session in a submodule holding its own config refuses guard" hk "$tmp/f9/vendor/sub" guard "$tmp/f9/vendor/sub/x"
 t 2 "root: and snap" hk "$tmp/f9/vendor/sub" snap
 t 0 "root: and the message names its .git, a git dir elsewhere, a submodule and the main checkout" sh -c "hk() { printf '{\"tool_input\":{\"file_path\":\"/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/f9/vendor/sub' bash '$here/scripts/issue.sh' guard 2>&1; }; hk | grep -F '$tmp/f9/vendor/sub/.git is a file naming a git dir elsewhere' | grep -F 'a submodule or a bare repository' | grep -qF 'open the session in the main checkout'"
 rm -rf "$tmp/f9" "$tmp/f9sub"
 # a git-less onboarded root (a jj project outside git) keeps its own root whatever .git sits above it, as it always did
-mkdir -p "$tmp/g1/proj"; printf 'tracker: github\nworktree: jj\n' > "$tmp/g1/proj/.coddy.yml"
+mkdir -p "$tmp/g1/proj"; printf 'tracker: github\nworktree: jj\n' > "$tmp/g1/proj/.hermy.yml"
 for lk in /nowhere /etc/hosts; do
   rm -rf "$tmp/g1/.git"; ln -s "$lk" "$tmp/g1/.git"
   t 0 "root: a git-less onboarded root under a .git link to $lk allows an agent-dir edit" hk "$tmp/g1/proj" guard "$tmp/g1/proj/.claude/x"
@@ -1781,7 +1836,7 @@ t 0 "root: a git-less onboarded root under a commondir to nowhere allows an agen
 t 0 "root: and from .worktrees/<id>" hk "$tmp/g1/proj/.worktrees/5" guard "$tmp/g1/proj/.claude/x"
 # an uppercased detached HEAD is a repository to git: the walk stops at git's root, so a link or commondir above the project moves nothing
 mkdir -p "$tmp/g3"; git init -q "$tmp/g3/proj"; git -C "$tmp/g3/proj" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
-printf 'tracker: github\nworktree: git\n' > "$tmp/g3/proj/.coddy.yml"
+printf 'tracker: github\nworktree: git\n' > "$tmp/g3/proj/.hermy.yml"
 git -C "$tmp/g3/proj" rev-parse HEAD | tr a-f A-F > "$tmp/g3/proj/.git/HEAD"
 ln -s /nowhere "$tmp/g3/.git"
 t 2 "root: an uppercase HEAD under a dangling .git link above still refuses guard on a main-checkout edit" hk "$tmp/g3/proj" guard "$tmp/g3/proj/x"
@@ -1792,14 +1847,14 @@ t 0 "root: and the agent dir is allowed" hk "$tmp/g3/proj" guard "$tmp/g3/proj/.
 rm -rf "$tmp/g3"
 rm -rf "$tmp/g1"
 # a project with no config nested in an onboarded repository, its .git renamed, a session in .worktrees/<id> whose .git is a link: the config above is no config of the project's
-mkdir -p "$tmp/g2/p/.worktrees/5/.gitdirx"; git init -q "$tmp/g2"; printf 'tracker: github\nworktree: git\n' > "$tmp/g2/.coddy.yml"
+mkdir -p "$tmp/g2/p/.worktrees/5/.gitdirx"; git init -q "$tmp/g2"; printf 'tracker: github\nworktree: git\n' > "$tmp/g2/.hermy.yml"
 git init -q "$tmp/g2/p"; mv "$tmp/g2/p/.git" "$tmp/g2/p/.gitx"; rmdir "$tmp/g2/p/.worktrees/5/.gitdirx"; ln -s /etc/hosts "$tmp/g2/p/.worktrees/5/.git"
 t 0 "root: a project with no config nested in an onboarded one stays inert from .worktrees/<id>, guard" hk "$tmp/g2/p/.worktrees/5" guard "$tmp/g2/p/x"
 t 0 "root: and snap" hk "$tmp/g2/p/.worktrees/5" snap
 rm -rf "$tmp/g2"
 # the root's .git a link and the session's own directory holding the config: the message names the link
 mkdir -p "$tmp/g3"; git init -q "$tmp/g3"; git -C "$tmp/g3" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
-git -C "$tmp/g3" worktree add -q --detach .worktrees/5; printf 'tracker: github\nworktree: git\n' > "$tmp/g3/.worktrees/5/.coddy.yml"
+git -C "$tmp/g3" worktree add -q --detach .worktrees/5; printf 'tracker: github\nworktree: git\n' > "$tmp/g3/.worktrees/5/.hermy.yml"
 mv "$tmp/g3/.git" "$tmp/g3/.gitx"; ln -s .gitx "$tmp/g3/.git"
 t 2 "root: a root with no config whose .git is a link, a worktree holding one, refuses guard" hk "$tmp/g3/.worktrees/5" guard "$tmp/g3/x"
 t 0 "root: and the message names the root's .git, the link" sh -c "hk() { printf '{\"tool_input\":{\"file_path\":\"/x\"}}' | CLAUDE_PROJECT_DIR='$tmp/g3/.worktrees/5' bash '$here/scripts/issue.sh' guard 2>&1; }; hk | grep -qF '$tmp/g3/.git is a link'"
@@ -1807,7 +1862,7 @@ rm -rf "$tmp/g3"
 # a project nested in another repository, its .git renamed, a session in .worktrees/<id>: the walk stops at the project the path names, so the guard stays on as git failing there always left it
 mkdir -p "$tmp/f8"; git init -q "$tmp/f8"; git -C "$tmp/f8" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
 mkdir -p "$tmp/f8/p/.claude"; git init -q "$tmp/f8/p"; git -C "$tmp/f8/p" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i
-printf 'tracker: github\nworktree: git\n' > "$tmp/f8/p/.coddy.yml"; git -C "$tmp/f8/p" worktree add -q --detach .worktrees/5
+printf 'tracker: github\nworktree: git\n' > "$tmp/f8/p/.hermy.yml"; git -C "$tmp/f8/p" worktree add -q --detach .worktrees/5
 mv "$tmp/f8/p/.git" "$tmp/f8/p/.gitx"
 t 2 "root: a nested project, its .git renamed, refuses guard from .worktrees/<id>" hk "$tmp/f8/p/.worktrees/5" guard "$tmp/f8/p/x"
 rm -f "$tmp/f8/p/.worktrees/5/.git"; ln -s /etc/hosts "$tmp/f8/p/.worktrees/5/.git"
@@ -1840,7 +1895,7 @@ t 0 "tripwire: and a control byte as \\ooo, a line of its own" grep -qF "'$wo/b\
 git worktree remove --force "$bs"; git worktree remove --force "$cc"; rm -rf "$wo"
 # A worktree's .git is read no further than a NUL or 1024 characters, so a
 # huge one stalls no hook, and what snap records of it stays small.
-sf="${TMPDIR:-/tmp}/coddy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-w"
+sf="${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-w"
 git worktree add -q --detach .worktrees/83; cp .worktrees/83/.git "$tmp/g83"
 { printf 'gitdir: /a/b'; head -c 4000000 /dev/zero | tr '\0' x; } > .worktrees/83/.git
 t 0 "tripwire: a 4 MB .git in a worktree stalls no snap" prompt wire snap w
@@ -1949,11 +2004,11 @@ if [ -d .jj ]; then
   nl="$R"$'\n'"$R/.worktrees/zz"; mkdir -p "${nl%/*}"
   wire snap w; jj workspace add --name zz "$nl" >/dev/null 2>&1
   wire trip w 2>"$tmp/trip.err"; got=$?
-  t 0 "tripwire: a jj workspace at the root, a newline and a coddy path trips" test "$got" = 2
+  t 0 "tripwire: a jj workspace at the root, a newline and a hermy path trips" test "$got" = 2
   t 1 "tripwire: and gives no command line" cmdline
   jj workspace forget "$odd" zz >/dev/null 2>&1; rm -rf "$wo" .worktrees/89 "$R"$'\n'; unset JJ_CONFIG
 fi
-# A project under a directory whose name holds a quote: coddy's own start
+# A project under a directory whose name holds a quote: hermy's own start
 # there is quiet, since only what follows the root is held to the odd test.
 qr="$tmp/q\"x/repo"; mkdir "${qr%/*}"; git clone -q -b main "$tmp/origin.git" "$qr" 2>/dev/null
 mkdir "$qr/.claude"; printf 'tracker: github\nworktree: git\ndefault_branch: main\n' > "$qr/.claude/coddy.yml"
@@ -1976,7 +2031,7 @@ tripped 2 "config: rewriting it trips" 'echo "verify: true" >> .claude/coddy.yml
 t 0 "config: restored after the rewrite" same
 tripped 2 "config: removing .claude/ trips" 'rm -rf .claude'
 t 0 "config: restored after .claude/ was removed" same
-# A shared (committed) config that changes through git is restored too: the user accepts it with /coddy:config.
+# A shared (committed) config that changes through git is restored too: the user accepts it with /hermy:config.
 # The legs merged branches into main on the remote: the local commits above go on
 # top. git reset first: jj colocation left the untracked files as intent-to-add
 # index entries, which a rebase refuses to start over.
@@ -1985,7 +2040,7 @@ git add -f .claude/coddy.yml; git commit -q --no-verify -m "share config"; git p
 git clone -q -b main "$tmp/origin.git" "$tmp/mate" 2>/dev/null
 (cd "$tmp/mate" && echo "roadmap: docs/ROADMAP.md" >> .claude/coddy.yml && git commit -q -am "roadmap" && git push -q origin HEAD:main)
 tripped 2 "config: a pulled change to a shared config is restored" 'git fetch -q origin && git merge -q --ff-only origin/main'
-t 1 "config: the pulled change waits for /coddy:config" grep -q '^roadmap:' .claude/coddy.yml
+t 1 "config: the pulled change waits for /hermy:config" grep -q '^roadmap:' .claude/coddy.yml
 tripped 2 "config: a shell edit to a shared config still trips" 'echo "verify: true" >> .claude/coddy.yml'
 t 1 "config: the shell edit to a shared config is undone" grep -q '^verify: true' .claude/coddy.yml
 
@@ -1997,13 +2052,13 @@ owns() { CLAUDE_CODE_SESSION_ID=${2-sess-a} CLAUDE_PID=${3-$$} CLAUDE_PROJECT_DI
 t 0 "issue.sh status owners: this session's claim is me" owns "43=me"
 t 0 "issue.sh status owners: still me under a new session id (/clear)" owns "43=me" sess-b
 t 0 "issue.sh status owners: still me from a new process (--resume)" owns "43=me" sess-a 1
-mkdir .git/coddy/other; echo "sess-d $(sh -c 'echo $$')" > .git/coddy/other/owner # that shell has exited
+mkdir .git/hermy/other; echo "sess-d $(sh -c 'echo $$')" > .git/hermy/other/owner # that shell has exited
 t 0 "issue.sh status owners: another session whose process exited is gone" owns "other=sess-d (gone)"
-echo "sess-e 1" > .git/coddy/other/owner
+echo "sess-e 1" > .git/hermy/other/owner
 t 0 "issue.sh status owners: another session whose process runs is running" owns "other=sess-e (running)"
-echo "sess-e $$" > .git/coddy/other/owner
+echo "sess-e $$" > .git/hermy/other/owner
 PATH="$tmp/nops:$PATH" t 0 "issue.sh status owners: a running process is running with no ps on PATH" owns "other=sess-e (running)" sess-a 1
-echo "sess-f " > .git/coddy/other/owner
+echo "sess-f " > .git/hermy/other/owner
 t 0 "issue.sh status owners: another session without a pid is running, as claim reads it" owns "other=sess-f (running)"
 # A pid is the owner's only while it is the process that started then: the
 # fourth field, in UTC, is compared; the third is the local start 0.6.0
@@ -2012,15 +2067,15 @@ t 0 "issue.sh status owners: another session without a pid is running, as claim 
 lstart=$(LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_")} 1')
 started=$(TZ=UTC0 LC_ALL=C ps -o lstart= -p $$ | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}')
 tks=$(awk '{sub(/.*\) /, ""); print " t" $20}' /proc/$$/stat 2>/dev/null)
-echo "sess-e $$ $lstart $started$tks" > .git/coddy/other/owner
+echo "sess-e $$ $lstart $started$tks" > .git/hermy/other/owner
 t 0 "issue.sh status owners: a running pid with the recorded start time is running" owns "other=sess-e (running)" sess-z 1
-echo "sess-e $$ $lstart Thu_Jan_1_00:00:00_1970_UTC" > .git/coddy/other/owner
+echo "sess-e $$ $lstart Thu_Jan_1_00:00:00_1970_UTC" > .git/hermy/other/owner
 t 0 "issue.sh status owners: a running pid with another start time is gone" owns "other=sess-e (gone)"
 t 1 "issue.sh status owners: and it is not me by that pid" owns "other=me" sess-z
 PATH="$tmp/nops:$PATH" t 0 "issue.sh status owners: a start time ps cannot read counts as a match" owns "other=sess-e (running)" sess-z 1
-echo "sess-e $$ Thu_Jan_1_00:00:00_1970" > .git/coddy/other/owner # 0.6.0's line: three fields, the third local
+echo "sess-e $$ Thu_Jan_1_00:00:00_1970" > .git/hermy/other/owner # 0.6.0's line: three fields, the third local
 t 0 "issue.sh status owners: a line 0.6.0 wrote counts by its running pid alone" owns "other=sess-e (running)" sess-z 1
-echo "sess-e $$ Thu_Jan_1_00:00:00_1970_UTC" > .git/coddy/other/owner
+echo "sess-e $$ Thu_Jan_1_00:00:00_1970_UTC" > .git/hermy/other/owner
 t 0 "issue.sh status owners: and so does a three-field line in UTC" owns "other=sess-e (running)" sess-z 1
 # ps derives lstart from the wall clock, which a clock correction moves by a
 # second; the ticks it does not.
@@ -2029,27 +2084,27 @@ if [ -r /proc/$$/stat ]; then
   # could have moved back a second, onto $started
   s=${started%_UTC}; off=$(TZ=UTC0 LC_ALL=C date -d "@$(($(TZ=UTC0 LC_ALL=C date -d "${s//_/ }" +%s) + 1))" '+%a %b %e %T %Y' | awk '{$1=$1; gsub(/ /,"_"); print $0 "_UTC"}')
   t 0 "ticks: the shifted start is another start in the same format" sh -c 'case $1 in "$2"|"") exit 1 ;; *_UTC) ;; *) exit 1 ;; esac' _ "$off" "$started"
-  echo "sess-e $$ $lstart $off$tks" > .git/coddy/other/owner
+  echo "sess-e $$ $lstart $off$tks" > .git/hermy/other/owner
   t 0 "ticks: a running pid with its ticks and a UTC start a second off is running" owns "other=sess-e (running)" sess-z 1
   t 0 "ticks: and that pid's own process under a new session id is me" owns "other=me" sess-z $$
   t 1 "ticks: and another session's claim is refused" as sess-z 1 claim other
-  echo "sess-e $$ $lstart $started t$((${tks# t} + 1))" > .git/coddy/other/owner
+  echo "sess-e $$ $lstart $started t$((${tks# t} + 1))" > .git/hermy/other/owner
   t 0 "ticks: a running pid with other ticks is gone, whatever its UTC start" owns "other=sess-e (gone)" sess-z 1
   t 0 "ticks: and another session's claim takes it over" says "taken over: other from session sess-e (pid $$ is not running)" as sess-z 1 claim other
-  rm -r .git/coddy/other; PATH="$tmp/nops:$PATH" as sess-z $$ claim other >/dev/null 2>&1
-  t 0 "ticks: a claim with no ps writes no ticks, as it writes no start" grep -qx "sess-z $$ " .git/coddy/other/owner
+  rm -r .git/hermy/other; PATH="$tmp/nops:$PATH" as sess-z $$ claim other >/dev/null 2>&1
+  t 0 "ticks: a claim with no ps writes no ticks, as it writes no start" grep -qx "sess-z $$ " .git/hermy/other/owner
 else
   echo "skip the start in clock ticks: no /proc/$$/stat"
 fi
-t 0 "ticks: every alive call on an owner line passes its ticks" test "$(grep -c 'alive "$pid"' "$here/bin/coddy")" = "$(grep -c 'alive "$pid" "$start" "$tk"' "$here/bin/coddy")"
+t 0 "ticks: every alive call on an owner line passes its ticks" test "$(grep -c 'alive "$pid"' "$here/bin/hermy")" = "$(grep -c 'alive "$pid" "$start" "$tk"' "$here/bin/hermy")"
 # With ticks, they are compared and the starts by their format alone: a clock
 # correction may have moved lstart between claim's read and the one above.
 sfmt='(Mon|Tue|Wed|Thu|Fri|Sat|Sun)_(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)_[0-9]{1,2}_[0-9]{2}:[0-9]{2}:[0-9]{2}_[0-9]{4}'
 if [ -n "$tks" ]; then oline="$sfmt ${sfmt}_UTC$tks"; else oline="$lstart $started"; fi
-t 0 "claim records the claiming process's start, local as 0.6.0 compares it, then UTC, then its ticks where /proc is" grep -qxE "sess-a $$ $oline" .git/coddy/43/owner
-rm -r .git/coddy/other; : > .git/coddy/other
+t 0 "claim records the claiming process's start, local as 0.6.0 compares it, then UTC, then its ticks where /proc is" grep -qxE "sess-a $$ $oline" .git/hermy/43/owner
+rm -r .git/hermy/other; : > .git/hermy/other
 t 0 "issue.sh status owners: a marker from before locks is unknown" owns "other=unknown"
-rm .git/coddy/other
+rm .git/hermy/other
 t 0 "config.sh finds the config from inside a worktree" sh -c "cd '$repo/.worktrees/43' && CLAUDE_PROJECT_DIR='$repo/.worktrees/43' bash '$here/scripts/config.sh' | grep -q '^tracker:'"
 # rooted <dir>: a session opened in that directory gets the project root from
 # every script: issue.sh status prints it, config.sh and detect.sh find the config,
@@ -2058,7 +2113,7 @@ rooted() (
   cd "$1" && export CLAUDE_PROJECT_DIR=$1
   bash "$here/scripts/issue.sh" status | grep -qx "root: $repo" || exit 1
   bash "$here/scripts/config.sh" | grep -q '^tracker:' || exit 1
-  bash "$here/scripts/detect.sh" | grep -qx 'config: present' || exit 1
+  bash "$here/scripts/detect.sh" | grep -qx 'config: .claude/coddy.yml' || exit 1
   bash "$here/scripts/detect.sh" | grep -qx "root: $repo" || exit 1
   printf '{"tool_input":{"file_path":"%s"}}' "$repo/README.md" | bash "$here/scripts/issue.sh" guard
   [ $? = 2 ]
@@ -2089,18 +2144,18 @@ away() { (cd "$tmp" && "$@"); }
 # asks <path>: guard exits 0 and asks the user, as hook JSON
 asks() { out=$(guard "$1") && printf %s "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and .permissionDecision == "ask"'; }
 t 2 "hook: guard after a cd out of the project blocks the main checkout" away guard "$repo/README.md"
-t 0 "hook: and asks on .coddy.yml" away asks "$repo/.coddy.yml"
+t 0 "hook: and asks on .hermy.yml" away asks "$repo/.hermy.yml"
 away wire snap w; echo x > stray.txt; t 2 "hook: trip after a cd out of the project reports a stray write" away wire trip w; rm stray.txt
 away wire snap w; rm .claude/coddy.yml; t 2 "hook: trip after a cd out of the project restores a deleted config" away wire trip w
 t 0 "hook: and the config came back" same
 wire snap w; t 0 "hook: a cd out of the project is not a change" away wire trip w
-# snap leaves a mark for its session in .git/coddy, which create and claim
+# snap leaves a mark for its session in .git/hermy, which create and claim
 # read through the shim from any TMPDIR (a sandbox's differs): none from
 # this session in the last 60 s means its hooks did not run, which they say.
 # hsnap <session> [TMPDIR]: snap, as Claude Code runs it for that session
 hsnap() { printf '{"session_id":"%s","tool_use_id":"w"}' "$1" | TMPDIR=${2:-${TMPDIR:-/tmp}} run snap >/dev/null 2>&1; }
-off() { says '^hooks: off: .*disableAllHooks.*allowManagedHooksOnly.*coddy@coddy.*2\.1\.139' "$@"; }
-rm -rf .git/coddy/.snap-*
+off() { says '^hooks: off: .*disableAllHooks.*allowManagedHooksOnly.*hermy@hermy.*2\.1\.139' "$@"; }
+rm -rf .git/hermy/.snap-*
 t 0 "hooks: create with no snap for this session says the hooks are off, with the causes" off run create 43 feat/43-thing
 t 0 "hooks: so does claim" off run claim 43
 hsnap sess-b
@@ -2108,22 +2163,22 @@ t 0 "hooks: another session's snap does not quiet it" off run create 43 feat/43-
 mkdir "$tmp/sbx"; hsnap sess-a "$tmp/sbx"
 t 1 "hooks: right after this session's snap under another TMPDIR, create does not say it" off run create 43 feat/43-thing
 t 1 "hooks: nor claim" off run claim 43
-touch -t 202001010000 .git/coddy/.snap-sess-a
+touch -t 202001010000 .git/hermy/.snap-sess-a
 t 0 "hooks: a mark over 60 s old is hooks off" off run claim 43
-: > .git/coddy/.snap-old; touch -t 202001010000 .git/coddy/.snap-old; hsnap sess-c
-t 1 "hooks: a session's first snap prunes marks over a day old" test -e .git/coddy/.snap-old
-t 0 "hooks: and keeps a newer one" test -e .git/coddy/.snap-sess-b
+: > .git/hermy/.snap-old; touch -t 202001010000 .git/hermy/.snap-old; hsnap sess-c
+t 1 "hooks: a session's first snap prunes marks over a day old" test -e .git/hermy/.snap-old
+t 0 "hooks: and keeps a newer one" test -e .git/hermy/.snap-sess-b
 hsnap '../../a/b'
-t 0 "hooks: a session id is kept to a plain word inside .git/coddy" test -e .git/coddy/.snap-ab
+t 0 "hooks: a session id is kept to a plain word inside .git/hermy" test -e .git/hermy/.snap-ab
 # BusyBox's rm has no -d: the refresh and the prune remove a directory mark
 # by rmdir, so neither leaves it, nor a false hooks: off.
 mkdir "$tmp/nod"; printf '#!/bin/sh\nfor a; do case "$a" in --) break ;; -*d*) echo "rm: unrecognized option: d" >&2; exit 1 ;; esac; done\nexec "%s" "$@"\n' "$(command -v rm)" > "$tmp/nod/rm"; chmod +x "$tmp/nod/rm"
 t 1 "hooks: the stand-in rm rejects -d" "$tmp/nod/rm" -df "$tmp/nod/none"
-mkdir .git/coddy/.snap-olddir; touch -t 202001010000 .git/coddy/.snap-olddir; PATH="$tmp/nod:$PATH" hsnap sess-a
-t 1 "hooks: with an rm that has no -d, a session's first snap prunes a day-old directory mark" test -e .git/coddy/.snap-olddir
-touch -t 202001010000 .git/coddy/.snap-sess-a; PATH="$tmp/nod:$PATH" hsnap sess-a
+mkdir .git/hermy/.snap-olddir; touch -t 202001010000 .git/hermy/.snap-olddir; PATH="$tmp/nod:$PATH" hsnap sess-a
+t 1 "hooks: with an rm that has no -d, a session's first snap prunes a day-old directory mark" test -e .git/hermy/.snap-olddir
+touch -t 202001010000 .git/hermy/.snap-sess-a; PATH="$tmp/nod:$PATH" hsnap sess-a
 t 1 "hooks: and refreshes the session's own, so claim does not say the hooks are off" off run claim 43
-rm -rf .git/coddy/.snap-* "$tmp/nod"
+rm -rf .git/hermy/.snap-* "$tmp/nod"
 # Claude Code's settings files, which can turn the hooks off: a shell write
 # of anything but permissions.allow trips, and is left as it is.
 # setting <expected exit> <name> <file> <json>: snap, a shell write of json to file, trip
@@ -2132,9 +2187,9 @@ al='"permissions":{"allow":["Bash(ls)"],"deny":["Bash(rm)"]}'
 echo .claude/settings.local.json >> .git/info/exclude
 for f in .claude/settings.json .claude/settings.local.json; do
   printf '{%s}\n' "$al" > "$f"
-  for kv in '"hooks":{"PreToolUse":[]}' '"env":{"X":"1"}' '"disableAllHooks":true' '"enabledPlugins":{"coddy@coddy":false}'; do
+  for kv in '"hooks":{"PreToolUse":[]}' '"env":{"X":"1"}' '"disableAllHooks":true' '"enabledPlugins":{"hermy@hermy":false}'; do
     k=${kv%%:*}; setting 2 "settings: a shell write of ${k//\"/} into $f trips" "$f" "{$kv,$al}"
-    t 0 "settings: naming the file and what a change there can do" grep -qF "that command changed $f, the agent's settings for this project, where a change can turn coddy's hooks off or change what runs outside the sandbox" "$tmp/trip.err"
+    t 0 "settings: naming the file and what a change there can do" grep -qF "that command changed $f, the agent's settings for this project, where a change can turn hermy's hooks off or change what runs outside the sandbox" "$tmp/trip.err"
     t 0 "settings: and left as the command wrote it" grep -qF "$kv" "$f"
     printf '{%s}\n' "$al" > "$f"
   done
@@ -2190,15 +2245,15 @@ detect_remote() {
   git remote set-url origin "$url" || return 1
   output=$(env CLAUDE_PROJECT_DIR="$repo" "$BASH" "$here/scripts/detect.sh" 2>/dev/null) || return 1
   printf '%s\n' "$output" | grep -Fxq "remote: $expected" &&
-    ! printf '%s\n' "$output" | grep -Fq 'coddy-test-secret'
+    ! printf '%s\n' "$output" | grep -Fq 'hermy-test-secret'
 }
 t 0 "detect.sh reports an installed jq" detect 'jq: installed'
 t 0 "detect.sh reports a missing jq" detect 'jq: missing' PATH="$tmp/bin"
 t 0 "detect.sh reports no PR check" detect 'pr_check: none'
-mkdir -p .github/workflows && : > .github/workflows/coddy.yml
+mkdir -p .github/workflows && : > .github/workflows/hermy.yml
 t 0 "detect.sh reports the PR check once its workflow exists" detect 'pr_check: present'
 rm -r .github
-t 0 "detect.sh strips credentials from an HTTPS remote" detect_remote 'https://host/x.git' 'https://u:coddy-test-secret@host/x.git'
+t 0 "detect.sh strips credentials from an HTTPS remote" detect_remote 'https://host/x.git' 'https://u:hermy-test-secret@host/x.git'
 t 0 "detect.sh preserves an ordinary HTTPS remote" detect_remote 'https://host/x.git' 'https://host/x.git'
 t 0 "detect.sh preserves an SCP-style SSH remote" detect_remote 'git@example.com:owner/repo.git' 'git@example.com:owner/repo.git'
 git remote set-url origin "$tmp/origin.git"
@@ -2206,10 +2261,10 @@ git remote set-url origin "$tmp/origin.git"
 # The PR check's run block, as the workflow runs it (bash -e), with the stub
 # gh and the template's own env names, each set to itself, so the gh log
 # shows which names the run block read.
-sed '1,/run: |/d; s/^          //' "$here/templates/coddy.yml" > "$tmp/check.sh"
+sed '1,/run: |/d; s/^          //' "$here/templates/hermy.yml" > "$tmp/check.sh"
 # check <GH_LINKED> [VAR=value...]: every env name is its own value unless
 # overridden, so BASE and DEFAULT differ: a stacked PR unless both are set.
-IFS=$'\n' read -rd '' -a envs < <(sed -n 's/^      \([A-Z_]*\): .*/\1=\1/p' "$here/templates/coddy.yml")
+IFS=$'\n' read -rd '' -a envs < <(sed -n 's/^      \([A-Z_]*\): .*/\1=\1/p' "$here/templates/hermy.yml")
 check() { GH_LINKED="$1" env "${envs[@]}" "${@:2}" bash -e "$tmp/check.sh"; }
 t 0 "pr check: an open, assigned linked issue passes" check "12 OPEN 1"
 t 0 "pr check: the run block hands env's owner, repo and PR to gh" grep -q -- '-f owner=OWNER -f repo=REPO -F pr=PR' "$GH_LOG"
@@ -2220,7 +2275,7 @@ t 1 "pr check: an unassigned linked issue fails" check "12 OPEN 0"
 t 1 "pr check: one bad issue among two fails" check $'12 OPEN 1\n13 OPEN 0'
 t 0 "pr check: two open, assigned issues pass" check $'12 OPEN 1\n13 OPEN 2'
 t 0 "pr check: no linked issue names the fix" says '::error::no linked issue' check ""
-t 0 "pr check: an unassigned issue names the issue and the fix" says '::error::#12 is not claimed.*/coddy:start 12' check "12 OPEN 0"
+t 0 "pr check: an unassigned issue names the issue and the fix" says '::error::#12 is not claimed.*/hermy:start 12' check "12 OPEN 0"
 # A PR stacked on another branch: GitHub computes no closing references, so
 # the description's keywords are read instead; on the default branch they are not.
 t 0 "pr check: a stacked PR whose description closes an open, assigned issue passes" check "" BODY='Closes #12'
@@ -2242,7 +2297,7 @@ t 0 "pr check: and each issue was read once" test "$(grep -c 'api repos/OWNER/RE
 # CURL_HTTP the status of every call and CURL_ISSUE_HTTP of an issue's alone (200
 # without them), CURL_EXIT curl's own failure. Every call is logged to $CURL_LOG.
 # A merge request's closing and related issues answer 404, as they do a job token.
-gci="$here/templates/coddy.gitlab-ci.yml"
+gci="$here/templates/hermy.gitlab-ci.yml"
 mkdir "$tmp/curlbin"
 cat > "$tmp/curlbin/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -2278,11 +2333,11 @@ t 0 "mr check: an open, assigned linked issue passes" mr CURL_MR="$closes12" CUR
 t 0 "mr check: it reads the description from the API" grep -qE 'https://gl\.example/api/v4/projects/7/merge_requests/9$' "$CURL_LOG"
 t 0 "mr check: and the issue" grep -qE 'https://gl\.example/api/v4/projects/7/issues/12$' "$CURL_LOG"
 t 1 "mr check: never the pipeline's own project, a fork's on a merge request from one" grep -qF 'projects/99/' "$CURL_LOG"
-t 0 "mr check: with the job token when CODDY_TOKEN is not set" grep -qF 'JOB-TOKEN: job-secret' "$CURL_LOG"
+t 0 "mr check: with the job token when HERMY_TOKEN is not set" grep -qF 'JOB-TOKEN: job-secret' "$CURL_LOG"
 t 1 "mr check: closes_issues is never called" grep -qE 'closes_issues|related_issues' "$CURL_LOG"
 t 1 "mr check: nor named in the job" grep -qE 'closes_issues|related_issues' "$gci"
 : > "$CURL_LOG"
-t 0 "mr check: CODDY_TOKEN passes" mr CODDY_TOKEN=tok-secret CURL_MR="$closes12" CURL_ISSUE="$mine"
+t 0 "mr check: HERMY_TOKEN passes" mr HERMY_TOKEN=tok-secret CURL_MR="$closes12" CURL_ISSUE="$mine"
 t 0 "mr check: and is sent as a private token" grep -qF 'PRIVATE-TOKEN: tok-secret' "$CURL_LOG"
 t 1 "mr check: in place of the job token" grep -qF 'JOB-TOKEN' "$CURL_LOG"
 t 1 "mr check: no linked issue fails" mr CURL_MR='{"description":"see #12"}'
@@ -2291,7 +2346,7 @@ t 0 "mr check: and what it does not see" says 'only in a commit message, or a li
 t 1 "mr check: a closed linked issue fails" mr CURL_MR="$closes12" CURL_ISSUE="$(is 12 closed '{"id":1}')"
 t 0 "mr check: and says to re-run" says '#12 is closed.*re-run' mr CURL_MR="$closes12" CURL_ISSUE="$(is 12 closed '{"id":1}')"
 t 1 "mr check: an unassigned linked issue fails" mr CURL_MR="$closes12" CURL_ISSUE="$(is 12 opened)"
-t 0 "mr check: and names the issue, the fix and the re-run" says '#12 is not claimed.*/coddy:start 12.*re-run' mr CURL_MR="$closes12" CURL_ISSUE="$(is 12 opened)"
+t 0 "mr check: and names the issue, the fix and the re-run" says '#12 is not claimed.*/hermy:start 12.*re-run' mr CURL_MR="$closes12" CURL_ISSUE="$(is 12 opened)"
 t 1 "mr check: no assignees key at all fails" mr CURL_MR="$closes12" CURL_ISSUE='{"iid":12,"state":"opened"}'
 t 1 "mr check: one bad issue among two fails" mr CURL_MR='{"description":"Closes #12, #13"}' CURL_ISSUE="$mine" CURL_ISSUE_13="$(is 13 opened)"
 t 0 "mr check: two open, assigned issues pass" mr CURL_MR='{"description":"Closes #12, #13"}' CURL_ISSUE="$mine" CURL_ISSUE_13="$(is 13 opened '{"id":1},{"id":2}')"
@@ -2317,15 +2372,15 @@ t 1 "mr check: nor is a word that merely ends in a keyword" mr CURL_MR='{"descri
 # Every API error fails: a non-200 never passes, whatever body came with it.
 for c in 401 403 404; do
   t 1 "mr check: a $c fails" mr CURL_HTTP=$c CURL_MR="$closes12" CURL_ISSUE="$mine"
-  t 0 "mr check: and names the CODDY_TOKEN variable, tied to this project alone, read_api, masked and not protected" says "CODDY_TOKEN.*tied to this project alone, never a personal one.*read_api.*masked.*not protected" mr CURL_HTTP=$c
+  t 0 "mr check: and names the HERMY_TOKEN variable, tied to this project alone, read_api, masked and not protected" says "HERMY_TOKEN.*tied to this project alone, never a personal one.*read_api.*masked.*not protected" mr CURL_HTTP=$c
   t 1 "mr check: and prints no job token" leaks mr CURL_HTTP=$c
-  t 1 "mr check: and no CODDY_TOKEN value" leaks mr CURL_HTTP=$c CODDY_TOKEN=tok-secret
+  t 1 "mr check: and no HERMY_TOKEN value" leaks mr CURL_HTTP=$c HERMY_TOKEN=tok-secret
   t 1 "mr check: an issue answering $c fails" mr CURL_MR="$closes12" CURL_ISSUE="$mine" CURL_ISSUE_HTTP=$c
-  t 0 "mr check: and names the variable too" says 'CODDY_TOKEN' mr CURL_MR="$closes12" CURL_ISSUE="$mine" CURL_ISSUE_HTTP=$c
+  t 0 "mr check: and names the variable too" says 'HERMY_TOKEN' mr CURL_MR="$closes12" CURL_ISSUE="$mine" CURL_ISSUE_HTTP=$c
 done
 t 1 "mr check: a 500 fails, with a body that would pass" mr CURL_HTTP=500 CURL_MR="$closes12" CURL_ISSUE="$mine"
 t 0 "mr check: and says what GitLab answered" says '500' mr CURL_HTTP=500
-t 1 "mr check: and does not point at the token" says 'CODDY_TOKEN' mr CURL_HTTP=500
+t 1 "mr check: and does not point at the token" says 'HERMY_TOKEN' mr CURL_HTTP=500
 t 1 "mr check: an issue answering 500 fails" mr CURL_MR="$closes12" CURL_ISSUE="$mine" CURL_ISSUE_HTTP=500
 t 1 "mr check: one of two issues answering 404 fails" mr CURL_MR='{"description":"Closes #12, closes #13"}' CURL_ISSUE="$mine" CURL_ISSUE_HTTP=404
 t 1 "mr check: a 302 fails" mr CURL_HTTP=302 CURL_MR="$closes12" CURL_ISSUE="$mine"
@@ -2350,7 +2405,7 @@ t 0 "start never reads a merge request's number as an issue's" grep -qF "the id 
 t 0 "start counts no system note as a comment of mine" grep -qF 'a system note never counting' "$here/skills/start/SKILL.md"
 t 0 "start pages the related merge requests" grep -qF 'related_merge_requests_after' "$here/skills/start/SKILL.md"
 t 0 "onboard names the project on every delivery call" grep -qF 'each with `project_id: <repo>`' "$here/skills/onboard/SKILL.md"
-t 0 "onboard reads coddy/mr-check before it opens or skips anything for it" grep -qF 'with `ref: coddy/mr-check` reads the same two files' "$here/skills/onboard/SKILL.md"
+t 0 "onboard reads hermy/mr-check before it opens or skips anything for it" grep -qF 'with `ref: hermy/mr-check` reads the same two files' "$here/skills/onboard/SKILL.md"
 t 0 "onboard holds that branch to the template and the include alone" grep -qF 'identical to the template and `.gitlab-ci.yml` differing from the `ref: HEAD` copy by the include alone' "$here/skills/onboard/SKILL.md"
 t 0 "onboard opens nothing from a branch that fails the check" grep -qF 'failing → open nothing, name the branch and stop' "$here/skills/onboard/SKILL.md"
 t 1 "onboard takes no existing branch for an earlier run's unread" grep -qF "an earlier run's" "$here/skills/onboard/SKILL.md"
@@ -2377,7 +2432,7 @@ for n in next start ship; do t 0 "skill $n: every GitLab MCP call but get_user t
 t 1 "start names no list_branches, which detects no fork" grep -qF 'list_branches' "$here/skills/start/SKILL.md"
 t 0 "start takes a merge request's branch unasked only when its author is me" grep -qF "taken without asking only when its author's username is mine" "$here/skills/start/SKILL.md"
 t 0 "start asks before taking anyone else's" grep -qF "show the branch, author and URL and take it only on the user's yes" "$here/skills/start/SKILL.md"
-t 0 "start posts that question when headless" grep -qF 'headless → post them as the `<!-- coddy:questions -->` comment and stop' "$here/skills/start/SKILL.md"
+t 0 "start posts that question when headless" grep -qF 'headless → post them as the `<!-- hermy:questions -->` comment and stop' "$here/skills/start/SKILL.md"
 t 0 "start holds an issue's merge request to the same author rule" grep -qF 'by the author rule of the first bullet' "$here/skills/start/SKILL.md"
 t 1 "start evaluates no source project, which get_merge_request does not return" grep -qF 'source project other than its target project' "$here/skills/start/SKILL.md"
 t 0 "start reads sourceBranch" grep -qF '`sourceBranch`' "$here/skills/start/SKILL.md"
@@ -2390,15 +2445,15 @@ t 0 "marketplace names GitLab" grep -qF 'GitHub Issues, GitLab or Jira' "$here/.
 t 0 "CLAUDE.md: a GitLab stop applies once the user picks gitlab" grep -qF 'so does `gitlab`, once the user picks it' "$here/CLAUDE.md"
 t 1 "CLAUDE.md: and no longer on a GitLab remote alone" grep -qF 'or a GitLab remote whose plugin is not loaded' "$here/CLAUDE.md"
 t 0 "CLAUDE.md: the job reads the description, whatever the target branch" grep -qF "reads the merge request's description and matches GitLab's default closing pattern" "$here/CLAUDE.md"
-t 0 "onboard warns about a pipeline holding coddy's job alone" grep -qF "may hold coddy's job alone, so Pipelines must succeed may gate only that job; check the project's existing jobs still run on merge request pipelines before requiring it" "$here/skills/onboard/SKILL.md"
+t 0 "onboard warns about a pipeline holding hermy's job alone" grep -qF "may hold hermy's job alone, so Pipelines must succeed may gate only that job; check the project's existing jobs still run on merge request pipelines before requiring it" "$here/skills/onboard/SKILL.md"
 t 1 "onboard leaves add_commit to the host's prompt" sh -c "sed -n 's/^allowed-tools: //p' '$here/skills/onboard/SKILL.md' | grep -qF add_commit"
-t 0 "onboard keeps the add_commit step" grep -qF '`add_commit` with `branch: coddy/mr-check`' "$here/skills/onboard/SKILL.md"
-t 1 "onboard no longer lists CODDY_TOKEN as a standing step" grep -qF 'when the job token cannot read (the job says so)' "$here/skills/onboard/SKILL.md"
-t 0 "onboard names CODDY_TOKEN only for a job that reports it cannot read" grep -qF 'only a job that reports it cannot read needs the CI variable `CODDY_TOKEN`' "$here/skills/onboard/SKILL.md"
-t 0 "enforcement.md names CODDY_TOKEN only for a job that reports it cannot read" grep -qF 'Only a job that reports it cannot read' "$here/docs/enforcement.md"
+t 0 "onboard keeps the add_commit step" grep -qF '`add_commit` with `branch: hermy/mr-check`' "$here/skills/onboard/SKILL.md"
+t 1 "onboard no longer lists HERMY_TOKEN as a standing step" grep -qF 'when the job token cannot read (the job says so)' "$here/skills/onboard/SKILL.md"
+t 0 "onboard names HERMY_TOKEN only for a job that reports it cannot read" grep -qF 'only a job that reports it cannot read needs the CI variable `HERMY_TOKEN`' "$here/skills/onboard/SKILL.md"
+t 0 "enforcement.md names HERMY_TOKEN only for a job that reports it cannot read" grep -qF 'Only a job that reports it cannot read' "$here/docs/enforcement.md"
 t 1 "README and enforcement.md: closes_issues is gone with the job" grep -qE 'closes_issues|related_issues' "$here/README.md" "$here/docs/enforcement.md" "$here/docs/enforcement-limits.md"
-for f in skills/onboard/SKILL.md docs/enforcement.md templates/coddy.gitlab-ci.yml; do
-  t 0 "$f: CODDY_TOKEN is tied to this project alone" grep -qF 'tied to this project alone, never a personal one' "$here/$f"
+for f in skills/onboard/SKILL.md docs/enforcement.md templates/hermy.gitlab-ci.yml; do
+  t 0 "$f: HERMY_TOKEN is tied to this project alone" grep -qF 'tied to this project alone, never a personal one' "$here/$f"
   t 0 "$f: and any branch's pipeline can read it" grep -qiF "any branch's pipeline can read it" "$here/$f"
 done
 # A confidential gitlab issue or a jira ticket with a security level reaches
@@ -2408,12 +2463,12 @@ t 0 "start: confidential is gitlab's flag or jira's security level, never github
 t 0 "start: gitlab reads the flag and the internal notes" grep -qF 'whether the issue is `confidential` and which notes are `internal`' "$st"
 t 0 "start: jira reads the security level" grep -qF '`getJiraIssue` with `fields: [security]` for its security level' "$st"
 t 0 "start: jira reads each comment's visibility" grep -qF "which gives each comment's visibility restriction and, on JSM, its \`jsdPublic\`" "$st"
-t 0 "start: gates create behind a cover, on internal text and on a plan's cover too" grep -qF 'The cover gate. Confidential, step 1 read internal text, or the latest `<!-- coddy:plan -->` comment of mine carries a `Cover:` line, and no `cover` line in `state $issue` (a `state` refused because the issue is not In Progress yet has none) → before `create`, propose a cover: that `Cover:` line'"'"'s when there is one' "$st"
+t 0 "start: gates create behind a cover, on internal text and on a plan's cover too" grep -qF 'The cover gate. Confidential, step 1 read internal text, or the latest `<!-- hermy:plan -->` comment of mine carries a `Cover:` line, and no `cover` line in `state $issue` (a `state` refused because the issue is not In Progress yet has none) → before `create`, propose a cover: that `Cover:` line'"'"'s when there is one' "$st"
 t 0 "start: and lists what goes public, the review and closing lines exactly" grep -qF "List what goes public once shipped: the branch, every commit message, the PR's title, its description exactly (the description line, then \`Review loop completed.\` or \`Review loop not completed.\`, then the closing line, \`Closes #\$issue\` on gitlab or \`\$issue\` on its own line on jira, then a \`Stacked on\` line when stacked), and the diff." "$st"
 t 0 "start: the gate again after step 5 reads internal text" grep -qF 'Step 5 read internal text and no `cover` line in `state $issue` → the cover gate of step 3 now, `<branch>` fixed as on a resume' "$st"
 t 0 "start: step 5 reads a referenced jira ticket's security level" grep -qF 'jira `getJiraIssue`, and with `fields: [security]` for its security level; gitlab `get_work_item`, which says whether it is `confidential`' "$st"
 t 0 "start: internal text is any text of a confidential issue, from step 1 or 5" grep -qF 'or any text of a confidential issue, read in step 1 or in step 5.' "$st"
-t 0 "start: internal posts key on step 5 and, on a resume, the plan's own visibility" grep -qF 'Step 1 or step 5 read internal text, or the latest `<!-- coddy:plan -->` comment of mine is internal or restricted (a resume skips step 5) → every plan and questions comment this skill posts is internal too, and as restricted as that one' "$st"
+t 0 "start: internal posts key on step 5 and, on a resume, the plan's own visibility" grep -qF 'Step 1 or step 5 read internal text, or the latest `<!-- hermy:plan -->` comment of mine is internal or restricted (a resume skips step 5) → every plan and questions comment this skill posts is internal too, and as restricted as that one' "$st"
 t 0 "start: posts internal only where the tool takes the field" grep -qF "Before each such post, the tool's input schema must list the field it sets (\`internal\`; \`commentVisibility\`, \`jsmCommentType\`), else post nothing and stop, saying so." "$st"
 t 0 "start: reads each internal post back" grep -qF 'not internal, or not so restricted → stop and say to delete it by hand, naming it, since no tool here deletes one.' "$st"
 t 0 "start: an edited branch is checked like any other" grep -qF 'or an edited `<branch>` that fails the check above, → ask again.' "$st"
@@ -2424,12 +2479,12 @@ done
 t 0 "start: every plan comment carries the cover" grep -qF 'Every plan comment this skill posts while `state $issue` has a cover carries that line.' "$st"
 t 0 "start: the plan shown carries it for approval" grep -qF 'while `state $issue` has a cover, its `Cover:` line, which the yes approves' "$st"
 t 0 "start: a cover agreed against an older plan reposts it" grep -qF 'when there is one, does not carry its `Cover:` line → post that plan again with it, as a new plan comment.' "$st"
-t 0 "ship: a cover line that does not hold stops before push" grep -qF 'A `cover` or `cover_body` line in that `state` and no cover that counts → stop before any push and say: run `/coddy:start <issue>`, which shows the cover again.' "$shp"
+t 0 "ship: a cover line that does not hold stops before push" grep -qF 'A `cover` or `cover_body` line in that `state` and no cover that counts → stop before any push and say: run `/hermy:start <issue>`, which shows the cover again.' "$shp"
 for m in get_me get_user; do
   t 0 "ship: allows $m to find my plan comment" sh -c "sed -n 's/^allowed-tools: //p' '$shp' | grep -qF __$m"
 done
 t 0 "start: stop creates nothing" grep -qF 'Ask: approve, edit or stop. Stop → stop, with nothing created.' "$st"
-t 0 "start: headless, the gate is an internal note or a covered comment" grep -qF 'Headless → post the cover and that list as the `<!-- coddy:questions -->` comment (gitlab `save_note` with `internal: true`; jira a comment' "$st"
+t 0 "start: headless, the gate is an internal note or a covered comment" grep -qF 'Headless → post the cover and that list as the `<!-- hermy:questions -->` comment (gitlab `save_note` with `internal: true`; jira a comment' "$st"
 t 0 "start: a branch already given stays fixed" grep -qF 'fixed when a bullet above other than the last gave it' "$st"
 t 0 "start: a confidential issue is interviewed without a skill" grep -qF 'Confidential, step 1 or step 5 read internal text, or `state $issue` has a cover → the interview row'"'"'s fallback, never a skill' "$st"
 t 0 "start: the slug comes from the cover, never the title" grep -qF "from the cover's subject, never the title" "$st"
@@ -2444,7 +2499,7 @@ t 0 "start: the cover holds nothing the shell expands" grep -qF 'The subject is 
 t 0 "start: the jira gate comment is restricted like any questions comment" grep -qF '(gitlab `save_note` with `internal: true`; jira a comment, restricted as above) and stop' "$st"
 t 0 "policy: a cover is every commit message" grep -qF 'A cover given in the pattern'"'"'s place → every commit message is exactly the cover, with no body.' "$here/skills/start/references/policy.md"
 t 0 "ship: stops on a confidential issue with no cover" grep -qF 'No `cover` line in that `state` and the issue is confidential' "$shp"
-t 0 "ship: before any push, naming start" grep -qF 'stop before any push and say: run `/coddy:start <issue>`' "$shp"
+t 0 "ship: before any push, naming start" grep -qF 'stop before any push and say: run `/hermy:start <issue>`' "$shp"
 t 0 "ship: a failed confidential or plan read stops too" grep -qF 'A call here fails → stop before any push and show its error.' "$shp"
 for f in "$st" "$shp"; do
   t 0 "${f##*/skills/}: a cover the shell would expand counts as none" grep -qF 'or a `cover` or `cover_body` line holding `"`, `` ` ``, `$` or `\`, counts as no `cover` line' "$f"
@@ -2454,7 +2509,7 @@ t 0 "ship: titles and describes by the cover alone" grep -qF 'the title is the c
 t 0 "ship: with no summary keys" grep -qF 'nothing else: no `summary` keys' "$shp"
 t 0 "ship: reads jira's security level" sh -c "sed -n 's/^allowed-tools: //p' '$shp' | grep -qF mcp__plugin_atlassian_atlassian__getJiraIssue"
 t 0 "README: the diff stays public on a confidential issue" grep -qF 'The diff itself is public once pushed' "$here/README.md"
-t 0 "README: triage ideas from it are not covered" grep -qF 'Ideas `/coddy:triage` files from that work are not covered' "$here/README.md"
+t 0 "README: triage ideas from it are not covered" grep -qF 'Ideas `/hermy:triage` files from that work are not covered' "$here/README.md"
 t 0 "start: a failed jira security read stops before create" grep -qF 'The `security` read fails → stop before `create` and show its error.' "$st"
 t 0 "start: commits from before the cover keep their messages" grep -qF '→ say the commits already on it keep their messages: the cover applies from now on.' "$st"
 t 0 "start: create on another branch asks the gate again with it" grep -qF '`create` refuses with `is on <b>, not <branch>` after the cover gate proposed `<branch>`' "$st"

@@ -1,6 +1,6 @@
 ---
 name: implement
-description: Coddy start's implementer. Only for use when the coddy:start skill delegates to it, which passes policy.md's path, the worktree path, the plan, verify, the commit pattern, the worktree tool and, in fix mode, the findings to fix.
+description: Hermy start's implementer. Only for use when the hermy:start skill delegates to it, which passes policy.md's path, the worktree path, the plan, verify, the commit pattern, the worktree tool and, in fix mode, the findings to fix.
 model: inherit
 ---
 
