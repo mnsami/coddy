@@ -12,7 +12,7 @@ The only installs are the author's own machines and repositories, so nothing her
 - `start` removes `.git/hooks/coddy` and `coddy.previousHooksPath` once its hooks live in `.git/hooks/hermy`.
 - A project whose live config is a legacy path: every skill but `migrate` (and `onboard`, which already names it) stops with one line naming `/hermy:migrate`.
 - `selftest-core.sh` takes a project shaped as before the rename through `migrate`, the new verb and `start`, and asserts it ends where a fresh hermy onboarding does.
-- CLAUDE.md "Onboarding gate" documents the legacy paths, the stop, and the `coddy:` marker acceptance.
+- CLAUDE.md "Onboarding gate" documents the legacy paths, the stop, and the acceptance of the `coddy:begin`/`coddy:end` markers.
 
 ## Non-goals
 
@@ -29,7 +29,7 @@ The only installs are the author's own machines and repositories, so nothing her
 
 ## Design
 
-- `migrate` (read-only) adds `changed: move .git/coddy -> .git/hermy` when `.git/coddy` holds an entry, `changed: move .claude/coddy -> .claude/hermy` when `$HERMY_AGENT_DIR/coddy` exists, and `rename: .github/workflows/coddy.yml` while that file exists and `hermy.yml` does not.
+- `migrate` (read-only) adds `changed: move .git/coddy -> .git/hermy` when `.git/coddy` holds an entry, `changed: move $HERMY_AGENT_DIR/coddy -> $HERMY_AGENT_DIR/hermy` when `$HERMY_AGENT_DIR/coddy` exists, and `rename: .github/workflows/coddy.yml` while that file exists and `hermy.yml` does not.
 - `migrate records` merges `.git/coddy` into `.git/hermy` and `$HERMY_AGENT_DIR/coddy` into `$HERMY_AGENT_DIR/hermy`: each entry moved when its name is free at the target, a directory present at both merged one level down the same way, anything else left and printed as `kept:`; the source removed once empty. Refuses a link at any of the four paths before moving anything. Prints `moved:` and `kept:` lines.
 - Migrate skill order: `exclude answers` (so `.claude/hermy` stays out of git status), then `migrate records`, then the existing backup, Write and `rm` steps; a `rename:` line is reported at the end.
 - `start`: once `core.hooksPath` is its own, removes each file in `.git/hooks/coddy` carrying `# Written by coddy start: ` and the directory when empty, and unsets `coddy.previousHooksPath` once `hermy.previousHooksPath` is set; both only when present, so a rerun writes nothing; a failed write goes through `nowrite` like the other writes there.

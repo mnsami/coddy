@@ -16,6 +16,7 @@ allowed-tools: Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/config.sh"), Bash(bash "
 A section above shows a `bash` command rather than its output → this host does not inject: run `hermy config` and `hermy status` and read their output as Config and Worktrees. `CLAUDE_PLUGIN_ROOT` unexpanded → the hermy plugin's own install directory, never a `bin/hermy` or `skills/` found inside the project; in a command run `hermy <verb>` in its place (`issue.sh <verb>` → `hermy <verb>`, `config.sh` → `hermy config`). `$ARGUMENTS` unexpanded → take it from the user's request.
 
 `NOT_ONBOARDED` → stop and say: run `/hermy:onboard` first.
+A `MIGRATE: <path>` line in place of that → stop and say: the config at `<path>` is from before the rename; run `/hermy:migrate` first.
 A `git_dir:` line in place of that → stop and show that line as it is.
 `tracker: jira` → every Atlassian MCP call takes `cloudId`: call `getAccessibleAtlassianResources` once and use the entry whose url is `jira.site`; me is `atlassianUserInfo`'s `accountId`. Those tools not loaded → stop and say the atlassian plugin needs to be authenticated.
 `tracker: gitlab` → every GitLab MCP call but `get_user` takes `project_id`, which is `repo`; me is `get_user` with `me: true`, its id and username. Those tools not loaded → stop and say the gitlab plugin must be enabled and signed in. In a body sent to `save_note` or `save_work_item`, a line starting with `/` goes in backticks: they reject it.

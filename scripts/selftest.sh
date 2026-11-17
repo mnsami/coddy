@@ -160,6 +160,8 @@ sed '/`CLAUDE_PLUGIN_ROOT` unexpanded/s/\$ARGUMENTS/$ARGS/' "$here/skills/triage
 t 1 "one whose fallback drops its variable fails it" fallback "$tmp/triage.md" status '$ARGUMENTS'
 # Every skill stops on a git_dir: line, which config, status and detect print in place of their output.
 for f in "$here"/skills/*/SKILL.md; do t 0 "skill $(basename "$(dirname "$f")") stops on a git_dir: line" grep -q 'git_dir:` line.*stop and show that line as it is' "$f"; done
+# Every skill but onboard and migrate stops on a MIGRATE: line, which config prints in place of a config from before the rename.
+for f in "$here"/skills/*/SKILL.md; do case $f in */onboard/*|*/migrate/*) continue ;; esac; t 0 "skill $(basename "$(dirname "$f")") stops on a MIGRATE: line, naming /hermy:migrate" grep -q 'MIGRATE: <path>` line.*stop.*/hermy:migrate' "$f"; done
 t 1 "no skill carries the injection syntax inside a line, which Claude Code would run" grep -qE '.!`' "$here"/skills/*/SKILL.md
 t 0 "onboard names the AGENTS.md begin marker" grep -qF '<!-- hermy:begin -->' "$here/skills/onboard/SKILL.md"
 t 0 "onboard names the AGENTS.md end marker" grep -qF '<!-- hermy:end -->' "$here/skills/onboard/SKILL.md"
@@ -173,7 +175,7 @@ t 0 "onboard names the AGENTS.md end marker" grep -qF '<!-- hermy:end -->' "$her
 # .worktrees/, is read; a listing that fails or is empty fails the check.
 # Binary files are skipped. The pattern is written as a class, so no line
 # here holds the name.
-oldok='.coddy.yml|.claude/coddy.yml|.git/coddy|.git/hooks/coddy|coddy.previousHooksPath|Written by coddy start|coddy:plan|coddy:questions|coddy:begin|coddy:end|workflows/coddy.yml|mnsami/coddy|coddy-spike|coddy-probe|formerly coddy|Coddy Agent|Coddy, Inc.'
+oldok='.coddy.yml|.claude/coddy.yml|.claude/coddy/|AGENT_DIR/coddy|.git/coddy|.git/hooks/coddy|coddy.previousHooksPath|Written by coddy start|coddy:plan|coddy:questions|coddy:begin|coddy:end|workflows/coddy.yml|mnsami/coddy|coddy-spike|coddy-probe|formerly coddy|Coddy Agent|Coddy, Inc.'
 oldname() (
   cd "$1" || exit 2 # paths below it alone: the checkout's own may hold the name
   if [ -e .git ]; then git ls-files -z; elif [ -d .jj ]; then jj file list -T 'path ++ "\0"'; else exit 2; fi > "$tmp/tracked" && [ -s "$tmp/tracked" ] || exit 2
@@ -924,7 +926,7 @@ mirror() {
 # below. A new pre-approved form is added here on purpose; take and drop never.
 SH='bash "${CLAUDE_PLUGIN_ROOT}/scripts'
 shapes=("Bash($SH/config.sh\")" "Bash($SH/detect.sh\")" 'Bash(date +%Y%m%d-%H%M%S)')
-for v in 'claim *' 'create *' 'diff *' 'exclude answers' 'exclude config' 'forget answers' 'log *' 'mark *' migrate 'push *' 'refresh *' 'state *' status sweep 'verify *'; do shapes+=("Bash($SH/issue.sh\" $v)"); done
+for v in 'claim *' 'create *' 'diff *' 'exclude answers' 'exclude config' 'forget answers' 'log *' 'mark *' migrate 'migrate records' 'push *' 'refresh *' 'state *' status sweep 'verify *'; do shapes+=("Bash($SH/issue.sh\" $v)"); done
 gated() {
   local f r s ok
   for f in "$1"/*/SKILL.md; do
@@ -2105,14 +2107,14 @@ t 0 "claim records the claiming process's start, local as 0.6.0 compares it, the
 rm -r .git/hermy/other; : > .git/hermy/other
 t 0 "issue.sh status owners: a marker from before locks is unknown" owns "other=unknown"
 rm .git/hermy/other
-t 0 "config.sh finds the config from inside a worktree" sh -c "cd '$repo/.worktrees/43' && CLAUDE_PROJECT_DIR='$repo/.worktrees/43' bash '$here/scripts/config.sh' | grep -q '^tracker:'"
+t 0 "config.sh finds the config from inside a worktree" sh -c "cd '$repo/.worktrees/43' && CLAUDE_PROJECT_DIR='$repo/.worktrees/43' bash '$here/scripts/config.sh' | grep -qx 'MIGRATE: .claude/coddy.yml'"
 # rooted <dir>: a session opened in that directory gets the project root from
 # every script: issue.sh status prints it, config.sh and detect.sh find the config,
 # and the guard holds the main checkout's README to it
 rooted() (
   cd "$1" && export CLAUDE_PROJECT_DIR=$1
   bash "$here/scripts/issue.sh" status | grep -qx "root: $repo" || exit 1
-  bash "$here/scripts/config.sh" | grep -q '^tracker:' || exit 1
+  bash "$here/scripts/config.sh" | grep -qx 'MIGRATE: .claude/coddy.yml' || exit 1
   bash "$here/scripts/detect.sh" | grep -qx 'config: .claude/coddy.yml' || exit 1
   bash "$here/scripts/detect.sh" | grep -qx "root: $repo" || exit 1
   printf '{"tool_input":{"file_path":"%s"}}' "$repo/README.md" | bash "$here/scripts/issue.sh" guard
@@ -2127,7 +2129,7 @@ git worktree remove --force .claude/worktrees/x; rm -r sub
 # the root: every shim takes it, for a Bash-tool verb, only while the working
 # directory is it or under it, compared by real path, and PWD cannot be set from there.
 # from <dir> <CLAUDE_PROJECT_DIR> <root>: run there, every shim resolves that root
-from() { (cd "$1" && export CLAUDE_PROJECT_DIR=$2 && bash "$here/scripts/issue.sh" status | grep -qx "root: $3" && bash "$here/scripts/detect.sh" | grep -qx "root: $3" && { [ "$3" != "$repo" ] || bash "$here/scripts/config.sh" | grep -q '^tracker:'; } && { [ "$3" = "$repo" ] || bash "$here/scripts/config.sh" | grep -qx NOT_ONBOARDED; }); }
+from() { (cd "$1" && export CLAUDE_PROJECT_DIR=$2 && bash "$here/scripts/issue.sh" status | grep -qx "root: $3" && bash "$here/scripts/detect.sh" | grep -qx "root: $3" && { [ "$3" != "$repo" ] || bash "$here/scripts/config.sh" | grep -qx 'MIGRATE: .claude/coddy.yml'; } && { [ "$3" = "$repo" ] || bash "$here/scripts/config.sh" | grep -qx NOT_ONBOARDED; }); }
 mkdir "$tmp/other" "$tmp/repo2"; ln -s "$repo" "$tmp/link"
 t 0 "shim: a CLAUDE_PROJECT_DIR that does not hold the working directory is ignored" from "$repo" "$tmp/other" "$repo"
 t 0 "shim: so is one that holds it by spelling alone" from "$tmp/repo2" "$repo" "$tmp/repo2"

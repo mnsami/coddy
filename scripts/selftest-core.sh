@@ -160,7 +160,8 @@ rm .git/hooks/pre-commit "$tmp/prevran"
 
 tripped 0 "onboarding: the command that writes the config is let through" 'printf "tracker: github\nworktree: git\ndefault_branch: main\nverify: test -f ok.txt\n" > .claude/coddy.yml'
 t 0 "onboarding: and the config stands" test -f .claude/coddy.yml
-t 0 "config: the legacy file is read when it is the only one" says '^worktree: git$' run config
+t 0 "config: the legacy file, when it is the only one, is named for /hermy:migrate in its place" says '^MIGRATE: .claude/coddy.yml$' run config
+t 1 "config: and not printed" says '^worktree: git$' run config
 t 0 "status names the legacy file" says '^config: .claude/coddy.yml$' run status
 t 0 "detect names the legacy file alone" says '^config: .claude/coddy.yml$' run detect
 printf 'tracker: github\nworktree: git\ndefault_branch: main\nverify: test -f ok.txt\nroadmap: R.md\n' > .hermy.yml
@@ -170,7 +171,7 @@ t 0 "status names .hermy.yml" says '^config: .hermy.yml$' run status
 printf 'tracker: github\nworktree: git\ndefault_branch: main\nverify: test -f ok.txt\nroadmap: M.md\n' > .coddy.yml
 t 0 "config: .hermy.yml is read before .coddy.yml" says '^roadmap: R.md$' run config
 mv .hermy.yml "$tmp/h.yml"
-t 0 "config: .coddy.yml is read before the legacy file" says '^roadmap: M.md$' run config
+t 0 "config: .coddy.yml is read before the legacy file, and named for /hermy:migrate" says '^MIGRATE: .coddy.yml$' run config
 t 0 "status names .coddy.yml" says '^config: .coddy.yml$' run status
 t 0 "detect names .coddy.yml" says '^config: .coddy.yml$' run detect
 rm .coddy.yml; mv "$tmp/h.yml" .hermy.yml
@@ -277,6 +278,49 @@ t 1 "migrate: and prints no file for it" says '^---$' run migrate
 cp "$tmp/v0.yml" .claude/coddy.yml
 t 0 "migrate: both below a current .hermy.yml say remove, each" sh -c "'$here/bin/hermy' migrate | grep -c '^changed: remove \\(.coddy.yml\\|.claude/coddy.yml\\)\$' | grep -qx 2"
 rm .coddy.yml .claude/coddy.yml
+# The records from before the rename: migrate names their move, and the PR
+# check's workflow to rename in a PR, writing nothing; migrate records moves
+# them, a directory at both merged one level down and a name taken there
+# kept, and refuses a link at any of its four paths before moving anything.
+AGENT_DIR=.claude
+mkdir -p .git/coddy/7 .git/coddy/swept/7 .git/coddy/swept/8/a .git/coddy/.snap-x "$AGENT_DIR/coddy/backup/1" .github/workflows
+printf 'sess-x 1 a b\n' > .git/coddy/7/owner; echo feat/7-x > .git/coddy/7.branch; echo b > "$AGENT_DIR/coddy/backup/1/x"; : > .github/workflows/coddy.yml
+t 0 "migrate: a current config with records from before the rename names their move" says '^changed: move .git/coddy -> .git/hermy$' run migrate
+HERMY_AGENT_DIR=.claude t 0 "migrate: and the agent dir's" says "^changed: move $AGENT_DIR/coddy -> $AGENT_DIR/hermy\$" run migrate
+t 1 "migrate: not the agent dir's without HERMY_AGENT_DIR" says "^changed: move $AGENT_DIR/coddy" run migrate
+t 0 "migrate: names the workflow to rename" says '^rename: .github/workflows/coddy.yml$' run migrate
+t 1 "migrate: and prints no file for them" says '^---$' run migrate
+t 0 "migrate: having moved nothing" sh -c "test -s .git/coddy/7/owner && ! test -e .git/hermy/7 && ! test -e '$AGENT_DIR/hermy'"
+: > .github/workflows/hermy.yml
+t 1 "migrate: no rename once hermy.yml is there" says '^rename:' run migrate
+rm -r .github
+mkdir "$tmp/lnk"
+for p in .git/coddy .git/hermy "$AGENT_DIR/coddy" "$AGENT_DIR/hermy"; do
+  [ ! -d "$p" ] || mv "$p" "$tmp/lnk/d"
+  ln -s "$tmp/lnk/d" "$p"
+  HERMY_AGENT_DIR=.claude t 1 "migrate records: a link at $p is refused" run migrate records
+  rm "$p"; [ ! -d "$tmp/lnk/d" ] || mv "$tmp/lnk/d" "$p"
+done
+rmdir "$tmp/lnk"
+t 0 "migrate records: having moved nothing" sh -c "test -s .git/coddy/7/owner && test -s '$AGENT_DIR/coddy/backup/1/x' && ! test -e .git/hermy/7 && ! test -e '$AGENT_DIR/hermy'"
+mkdir -p .git/hermy/swept/8; cp .git/coddy/7/owner "$tmp/owner7"
+HERMY_AGENT_DIR=.claude run migrate records > "$tmp/mr.out" 2>&1; r=$?
+t 0 "migrate records: runs" test "$r" = 0
+for l in 'moved: .git/coddy/7 -> .git/hermy/7' 'moved: .git/coddy/7.branch -> .git/hermy/7.branch' 'moved: .git/coddy/.snap-x -> .git/hermy/.snap-x' \
+  'moved: .git/coddy/swept/7 -> .git/hermy/swept/7' 'kept: .git/coddy/swept/8' "moved: $AGENT_DIR/coddy/backup -> $AGENT_DIR/hermy/backup"; do
+  t 0 "migrate records: prints $l" grep -qxF "$l" "$tmp/mr.out"
+done
+t 0 "migrate records: one line per entry" test "$(wc -l < "$tmp/mr.out")" -eq 6
+t 0 "migrate records: the owner line byte for byte" cmp -s .git/hermy/7/owner "$tmp/owner7"
+t 0 "migrate records: a name taken is left where it was" test -d .git/coddy/swept/8/a -a -d .git/hermy/swept/8 -a ! -e .git/hermy/swept/8/a
+t 0 "migrate records: an emptied source goes" test ! -e "$AGENT_DIR/coddy"
+t 0 "migrate: what is left is still named" says '^changed: move .git/coddy -> .git/hermy$' run migrate
+t 0 "migrate records: a rerun moves nothing more" test "$(HERMY_AGENT_DIR=.claude run migrate records 2>&1)" = 'kept: .git/coddy/swept/8'
+rm -r .git/coddy/swept/8
+HERMY_AGENT_DIR=.claude t 0 "migrate records: once nothing is left, quietly" quiet run migrate records
+t 0 "migrate records: and .git/coddy goes" test ! -e .git/coddy
+HERMY_AGENT_DIR=.claude t 1 "migrate: and no move is named" says '^changed: move' run migrate
+rm -r .git/hermy/7 .git/hermy/7.branch .git/hermy/.snap-x .git/hermy/swept "$AGENT_DIR/hermy"
 mv "$tmp/live.yml" .hermy.yml
 
 # Editing .hermy.yml is for the user to allow, in both guard modes; without
@@ -1499,13 +1543,38 @@ t 0 "old name: recording the hook before the old ones as hermy's" test "$(git -C
 t 0 "old name: a commit on the claimed issue's branch passes" git -C "$lg/.worktrees/5" commit -q --allow-empty -m x
 t 0 "old name: running the hook before, never an old one" test "$(cat "$tmp/lg.log")" = prev
 t 1 "old name: a commit on the default branch is refused" git -C "$lg" commit -q --allow-empty -m x
-t 0 "old name: the old directory and record stay" test -x "$lg/.git/hooks/coddy/pre-commit" -a "$(git -C "$lg" config --local coddy.previousHooksPath)" = "$tmp/lgprev"
+t 0 "old name: start removes the hooks from before the rename and their directory" test ! -e "$lg/.git/hooks/coddy"
+t 1 "old name: and the old record, hermy's being set" git -C "$lg" config --local coddy.previousHooksPath
 lgr start 5 feat/5-old >/dev/null 2>&1
 t 0 "old name: a rerun keeps the record" test "$(git -C "$lg" config --local hermy.previousHooksPath)" = "$tmp/lgprev"
+# Once hermy's are in place, start removes only what it wrote under the old
+# name, the directory once empty, and the old record only once hermy's is
+# set; a removal that fails stops it, naming what it could not remove.
+mkdir "$lg/.git/hooks/coddy"; printf '#!/bin/sh\n# Written by coddy start: the hook from before the rename.\necho old >> "%s"; exit 1\n' "$tmp/lg.log" > "$lg/.git/hooks/coddy/pre-commit"; chmod +x "$lg/.git/hooks/coddy/pre-commit"
+printf '#!/bin/sh\nexit 0\n' > "$lg/.git/hooks/coddy/post-merge"; git -C "$lg" config coddy.previousHooksPath "$tmp/lgprev"; git -C "$lg" config --unset hermy.previousHooksPath
+lgr start 5 feat/5-old >/dev/null 2>&1
+t 0 "old name: start leaves a file in .git/hooks/coddy it did not write, and so the directory" test -f "$lg/.git/hooks/coddy/post-merge" -a ! -e "$lg/.git/hooks/coddy/pre-commit"
+t 0 "old name: and the old record while hermy's is missing" test "$(git -C "$lg" config --local coddy.previousHooksPath)" = "$tmp/lgprev"
+if [ "$(id -u)" != 0 ]; then # root writes anywhere
+  printf '#!/bin/sh\n# Written by coddy start: x\n' > "$lg/.git/hooks/coddy/pre-push"; chmod a-w "$lg/.git/hooks/coddy"
+  t 1 "old name: start that cannot remove an old hook fails" lgr start 5 feat/5-old
+  t 0 "old name: naming it" says "could not remove $lg/.git/hooks/coddy/pre-push" lgr start 5 feat/5-old
+  chmod u+w "$lg/.git/hooks/coddy"; rm "$lg/.git/hooks/coddy/pre-push"
+fi
+rm "$lg/.git/hooks/coddy/post-merge"; git -C "$lg" config hermy.previousHooksPath "$tmp/lgprev"
+lgr start 5 feat/5-old >/dev/null 2>&1
+t 0 "old name: the directory goes once empty, and the old record once hermy's is set" sh -c '! test -e "$1/.git/hooks/coddy" && ! git -C "$1" config --local coddy.previousHooksPath' - "$lg"
+if [ "$(id -u)" != 0 ]; then
+  chmod a-w "$lg/.git/hooks" "$lg/.git/hooks/hermy"; : > "$lg/.git/config.lock"
+  t 0 "old name: a rerun then writes nothing, so it passes where neither the hooks nor .git/config can be written" lgr start 5 feat/5-old
+  chmod u+w "$lg/.git/hooks" "$lg/.git/hooks/hermy"; rm "$lg/.git/config.lock"
+fi
+# githook never runs a hook carrying the old header, and reads the old record while hermy's is missing.
+mkdir "$lg/.git/hooks/coddy"; printf '#!/bin/sh\n# Written by coddy start: the hook from before the rename.\necho old >> "%s"; exit 1\n' "$tmp/lg.log" > "$lg/.git/hooks/coddy/pre-commit"; chmod +x "$lg/.git/hooks/coddy/pre-commit"
 git -C "$lg" config hermy.previousHooksPath "$lg/.git/hooks/coddy"; : > "$tmp/lg.log"
 t 0 "old name: githook never hands off to a hook carrying the old header" git -C "$lg/.worktrees/5" commit -q --allow-empty -m x
 t 0 "old name: which never ran" test ! -s "$tmp/lg.log"
-git -C "$lg" config --unset hermy.previousHooksPath
+git -C "$lg" config --unset hermy.previousHooksPath; git -C "$lg" config coddy.previousHooksPath "$tmp/lgprev"
 t 0 "old name: githook reads coddy.previousHooksPath while hermy's is missing" git -C "$lg/.worktrees/5" commit -q --allow-empty -m x
 t 0 "old name: and runs that hook" test "$(cat "$tmp/lg.log")" = prev
 # Its leftovers are a removed config's too (left): with no config, the old
@@ -1519,6 +1588,53 @@ t 2 "old name: and next to a claim under .git/coddy" lgguard
 t 0 "old name: naming it" says 'yet .git/coddy/5 is there' lgguard
 rmdir "$lg/.git/coddy/5"; mkdir "$lg/.git/coddy/swept"; : > "$lg/.git/coddy/5.branch"; : > "$lg/.git/coddy/.snap-x"
 t 0 "old name: its swept/, .branch record and dot names are no leftover" quiet lgguard
+
+# A project as it stood before the rename, taken through /hermy:migrate's
+# verbs and start, ends where a fresh hermy onboarding and claim does: the
+# same records under .git/hermy, hooks under .git/hooks/hermy, git config
+# keys and backups under the agent dir, with nothing from before the rename
+# left but the workflow, which migrate names to rename in a PR. The project
+# is onboarded and claimed fresh first, its state kept, then turned into the
+# old layout in place, so both are read at the same root.
+fx="$tmp/fx" AGENT_DIR=.claude
+git init -q --bare "$tmp/fxo.git"; git clone -q "$tmp/fxo.git" "$fx" 2>/dev/null
+mkdir "$tmp/fxprev"; printf '#!/bin/sh\nexit 0\n' > "$tmp/fxprev/pre-commit"; cp "$tmp/fxprev/pre-commit" "$tmp/fxprev/post-merge"; chmod +x "$tmp/fxprev"/*
+printf 'version: 2\ntracker: github\nworktree: git\ndefault_branch: main\n' > "$tmp/fx.yml"
+(cd "$fx" && git checkout -q -b main && echo hi > README.md && git add -A && git commit -q -m init && git push -q -u origin main && cp "$tmp/fx.yml" .hermy.yml &&
+  git config core.hooksPath "$tmp/fxprev" && mkdir -p "$AGENT_DIR/hermy/backup/20261116-120000" && echo old > "$AGENT_DIR/hermy/backup/20261116-120000/AGENTS.md")
+fxr() { HERMY_ROOT="$fx" HERMY_AGENT_DIR=.claude run "$@"; }
+fxr start 6 feat/6-fx >/dev/null 2>&1; fxr claim 6 >/dev/null 2>&1
+# every path under hermy's three directories, each file's content, and the git config keys either name writes
+fxstate() (cd "$fx" && find .git/hermy .git/hooks/hermy "$AGENT_DIR/hermy" | sort && find .git/hermy .git/hooks/hermy "$AGENT_DIR/hermy" -type f -exec cksum {} + | sort && git config --local --get-regexp '^(core\.hookspath|hermy\.|c[o]ddy\.)')
+fxstate > "$tmp/fx.want"
+t 0 "migration: the fresh project holds a claim, its hooks with a pass-through, and the hook before recorded" sh -c 'test -s "$1/.git/hermy/6/owner" && test -s "$1/.git/hermy/6.branch" && test -x "$1/.git/hooks/hermy/post-merge" && grep -qx "hermy.previoushookspath $2" "$3"' - "$fx" "$tmp/fxprev" "$tmp/fx.want"
+(cd "$fx" && mv .hermy.yml .coddy.yml && mv .git/hermy .git/coddy && mv "$AGENT_DIR/hermy" "$AGENT_DIR/coddy" && mv .git/hooks/hermy .git/hooks/coddy &&
+  for f in .git/hooks/coddy/*; do sed 's/^# Written by hermy start: /# Written by coddy start: /' "$f" > "$f.n" && chmod +x "$f.n" && mv "$f.n" "$f"; done &&
+  git config core.hooksPath "$fx/.git/hooks/coddy" && git config coddy.previousHooksPath "$tmp/fxprev" && git config --unset hermy.previousHooksPath &&
+  mkdir -p .github/workflows && cp "$here/templates/hermy.yml" .github/workflows/coddy.yml)
+t 0 "migration: the old layout carries the old header" grep -q '^# Written by coddy start: ' "$fx/.git/hooks/coddy/pre-commit"
+t 0 "migration: config names the config from before the rename for /hermy:migrate" says '^MIGRATE: .coddy.yml$' fxr config
+fxr migrate > "$tmp/fx.mig" 2>&1
+for l in 'changed: move .coddy.yml -> .hermy.yml' 'changed: move .git/coddy -> .git/hermy' "changed: move $AGENT_DIR/coddy -> $AGENT_DIR/hermy" 'rename: .github/workflows/coddy.yml'; do
+  t 0 "migration: migrate prints $l" grep -qxF "$l" "$tmp/fx.mig"
+done
+# the skill's order: exclude answers, migrate records, the Write of .hermy.yml, the rm of the source; then start
+fxr exclude answers >/dev/null 2>&1
+t 0 "migration: migrate records" fxr migrate records
+sed '1,/^---$/d' "$tmp/fx.mig" > "$fx/.hermy.yml"; rm "$fx/.coddy.yml"
+t 0 "migration: config prints the config once it is .hermy.yml" says '^tracker: github$' fxr config
+t 0 "migration: start on the claimed issue" fxr start 6 feat/6-fx
+fxstate > "$tmp/fx.got"
+t 0 "migration: ends with the records, hooks, git config keys and backups of a fresh onboarding and claim" cmp -s "$tmp/fx.want" "$tmp/fx.got"
+t 0 "migration: and its config" cmp -s "$fx/.hermy.yml" "$tmp/fx.yml"
+t 0 "migration: nothing from before the rename is left but the workflow" sh -c 'cd "$1" && test -z "$(find . -iname "*c[o]ddy*" ! -path ./.github/workflows/c[o]ddy.yml -print)"' - "$fx"
+fxr migrate > "$tmp/fx.mig" 2>&1
+t 0 "migration: migrate then names the workflow alone" test "$(grep -e '^changed:' -e '^rename:' "$tmp/fx.mig")" = 'rename: .github/workflows/coddy.yml'
+if [ "$(id -u)" != 0 ]; then # root writes anywhere
+  chmod a-w "$fx/.git/hooks" "$fx/.git/hooks/hermy"; : > "$fx/.git/config.lock"
+  t 0 "migration: a rerun of start writes nothing, so it passes where neither the hooks nor .git/config can be written" fxr start 6 feat/6-fx
+  chmod u+w "$fx/.git/hooks" "$fx/.git/hooks/hermy"; rm "$fx/.git/config.lock"
+fi
 
 # get.sh installs main from HERMY_REPO_URL into HERMY_HOME and links hermy
 # into HERMY_BIN, run as curl pipes it (the script on stdin), with no network.
