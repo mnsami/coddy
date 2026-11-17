@@ -140,6 +140,10 @@ A `PreToolUse` hook on Edit, Write and NotebookEdit.
   - Files outside the project. They are refused once the config was removed (see Config lock).
 - **Asks you first:** any edit of `.hermy.yml`, by whatever path it reaches the file.
   A symlink or hard link from a worktree counts.
+  While a config from before the rename is live (`.coddy.yml`, else `.claude/coddy.yml`), the same goes for it
+  and every path above it.
+  A path below the live one is asked about only once the config was removed (see Config lock).
+  Otherwise its edit is held like any other path, so one that is a link to `.git/config` is refused.
   In headless `-p` under `--permission-mode bypassPermissions` the ask is still not bypassed:
   the edit is denied and the file stays as it was.
   That was checked in `-p` alone, where an ask nobody answers is a deny.

@@ -823,6 +823,13 @@ t 2 "guard blocks the main checkout" guard "$repo/README.md"
 t 0 "guard allows .claude/" quiet guard "$repo/.claude/notes.md"
 legask() { guard "$repo/.claude/coddy.yml" | jq -e '.hookSpecificOutput.permissionDecision == "ask"'; }
 t 0 "guard asks on the legacy config there" legask
+# Below a live .coddy.yml it is let go, so free like any path in .claude/, and
+# one that is a link to .git/config is refused, never asked.
+cp .claude/coddy.yml .coddy.yml
+t 0 "guard does not ask on the legacy config below a live .coddy.yml" quiet guard "$repo/.claude/coddy.yml"
+mv .claude/coddy.yml "$tmp/leg.live"; ln -s ../.git/config .claude/coddy.yml
+t 2 "guard refuses a legacy config below a live .coddy.yml that is a link to .git/config" guard "$repo/.claude/coddy.yml"
+rm .claude/coddy.yml .coddy.yml; mv "$tmp/leg.live" .claude/coddy.yml
 t 0 "guard allows .claude/settings.json" guard "$repo/.claude/settings.json"
 t 2 "guard blocks a Claude Code worktree under .claude/ without a claim" guard "$repo/.claude/worktrees/55/a.txt"
 t 2 "guard blocks one in any case of worktrees/" guard "$repo/.claude/WORKTREES/55/a.txt"

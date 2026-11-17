@@ -283,12 +283,33 @@ mv "$tmp/live.yml" .hermy.yml
 # jq the guard cannot tell which path is edited and fails closed.
 t 0 "guard asks on .hermy.yml" asks "$repo/.hermy.yml"
 for p in "$repo/./.hermy.yml" "$repo//.hermy.yml" "$repo/sub/../.hermy.yml" "$repo/.HERMY.YML" .hermy.yml; do t 0 "guard asks on .hermy.yml spelled $p" asks "$p"; done
-# .coddy.yml, live from before the rename while .hermy.yml is absent, the same way.
+# .coddy.yml, from before the rename, below a live .hermy.yml is let go by the
+# config lock, so an edit of it is held like any path in the main checkout, and
+# one that is a link to .git/config is refused, never asked.
 casks() { out=$(guard "$1") && printf %s "$out" | jq -e '.hookSpecificOutput.permissionDecision == "ask" and (.hookSpecificOutput.permissionDecisionReason | contains(".coddy.yml"))'; }
-for p in "$repo/.coddy.yml" "$repo/sub/../.coddy.yml" "$repo/.CODDY.YML"; do t 0 "guard asks on .coddy.yml spelled $p" casks "$p"; done
-# and the legacy .claude/coddy.yml, in the agent dir, which is free otherwise.
+t 2 "guard does not ask on .coddy.yml below a live .hermy.yml" guard "$repo/.coddy.yml"
+t 0 "guard: holding it as the main checkout" says 'edits belong in an issue worktree' guard "$repo/.coddy.yml"
+ln -s .git/config .coddy.yml
+t 2 "guard refuses a .coddy.yml below a live .hermy.yml that is a link to .git/config" guard "$repo/.coddy.yml"
+t 0 "guard: as a .git path, not asked" says 'lies in a .git or .jj below the project root' guard "$repo/.coddy.yml"
+rm .coddy.yml
+# Live while .hermy.yml is absent, it is asked, and so is .hermy.yml above it.
+mv .hermy.yml .coddy.yml
+for p in "$repo/.coddy.yml" "$repo/sub/../.coddy.yml" "$repo/.CODDY.YML"; do t 0 "guard asks on a live .coddy.yml spelled $p" casks "$p"; done
+t 0 "guard asks on .hermy.yml above a live .coddy.yml" asks "$repo/.hermy.yml"
+# The legacy .claude/coddy.yml below it lies in the agent dir, free like any
+# path there, and one that is a link to .git/config is refused.
 lasks() { out=$(guard "$1") && jq -e '.hookSpecificOutput.permissionDecision == "ask" and (.hookSpecificOutput.permissionDecisionReason | contains(".claude/coddy.yml"))' <<<"$out"; }
-HERMY_AGENT_DIR=.claude t 0 "guard asks on the legacy config" lasks "$repo/.claude/coddy.yml"
+HERMY_AGENT_DIR=.claude t 0 "guard does not ask on the legacy config below a live .coddy.yml" quiet guard "$repo/.claude/coddy.yml"
+ln -s ../.git/config .claude/coddy.yml
+HERMY_AGENT_DIR=.claude t 2 "guard refuses a legacy config below a live .coddy.yml that is a link to .git/config" guard "$repo/.claude/coddy.yml"
+rm .claude/coddy.yml
+# Live while both above it are absent, it is asked, and so are both above it.
+mv .coddy.yml .claude/coddy.yml
+HERMY_AGENT_DIR=.claude t 0 "guard asks on a live legacy config" lasks "$repo/.claude/coddy.yml"
+HERMY_AGENT_DIR=.claude t 0 "guard asks on .coddy.yml above a live legacy config" casks "$repo/.coddy.yml"
+HERMY_AGENT_DIR=.claude t 0 "guard asks on .hermy.yml above a live legacy config" asks "$repo/.hermy.yml"
+mv .claude/coddy.yml .hermy.yml
 # The Write tool collapses .. by name before it writes, so a .. after a link
 # out of the project still lands on the root's .hermy.yml.
 mkdir -p "$tmp/out/deep" && ln -s "$tmp/out/deep" lnk

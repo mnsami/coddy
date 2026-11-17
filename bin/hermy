@@ -756,15 +756,17 @@ if [ "${1-}" = guard ]; then
   # Removed (tamp), /hermy:config stops on NOT_ONBOARDED, so the ask names none.
   ask() { local m="Editing $1 changes the hermy guardrails. Allow it only if you asked for this change (/hermy:config)."; [ -z "$tamp" ] || m="Writing $1 puts back the hermy config that was removed, and with it the hermy guardrails. Allow it only if you asked for this change."; jqh -cn --arg m "$m" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'; exit 0; }
   lc=$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')
-  # .coddy.yml, from before the rename, the same way: live while .hermy.yml is
-  # absent.
-  for x in .hermy.yml .coddy.yml; do
-    if [ "$nm" -ef "$root/$x" ] || { [ "${at%/*}" -ef "$pr" ] && [ "$lc" = "$x" ]; }; then ask "$x"; fi
+  # Each config path from the highest down to the live one ($cname), the
+  # legacy one in the agent dir (free otherwise) asked as .hermy.yml is, its
+  # directory by identity or, not made yet, by name. A path below the live
+  # one is ignored and let go by the config lock, so an edit of it goes
+  # through the checks below like any other path (a link of it to .git/config
+  # is refused, not asked); removed (tamp), every path is asked.
+  for x in "${cfgs[@]}"; do
+    d=$pr; case "$x" in */*) d="$pr/${x%/*}" ;; esac
+    { [ "$nm" -ef "$root/$x" ] || { { [ "${at%/*}" -ef "$d" ] || [ "${at%/*}" = "$d" ]; } && [ "$lc" = "${x##*/}" ]; }; } && ask "$x"
+    [ -n "$tamp" ] || [ "$x" != "$cname" ] || break
   done
-  # The legacy one too, asked as .hermy.yml is (the agent dir it lies in is
-  # free otherwise), its directory by identity or, not made yet, by name.
-  lp="$pr/${legacy%/*}"
-  { [ "$nm" -ef "$root/$legacy" ] || { { [ "${at%/*}" -ef "$lp" ] || [ "${at%/*}" = "$lp" ]; } && [ "$lc" = "${legacy##*/}" ]; }; } && ask "$legacy"
   # Removed (tamp): putting a config back is the one edit allowed.
   [ -z "$tamp" ] || die "the edit guard refuses $f: $tm"
   # $1 with its deepest ancestor that is the root directory itself (-ef)
