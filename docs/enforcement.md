@@ -199,7 +199,7 @@ The record (a fingerprint) holds:
 - every changed path, with a hash of its content;
 - the default branch, when it has commits its remote branch lacks, and `HEAD`, when it has left the default branch;
 - the git worktrees and jj workspaces;
-- `core.hooksPath`, once the git hooks are installed;
+- `core.hooksPath`, once the git hooks are installed (in `.git/hooks/coddy` too, from before the rename);
 - the two Claude Code settings files.
 
 What it does with that:

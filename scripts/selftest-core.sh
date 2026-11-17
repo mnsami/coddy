@@ -1417,6 +1417,16 @@ t 0 "tripwire: naming it cut short" grep -qF "core.hooksPath is now '/aaaa" <<<"
 t 0 "tripwire: and saying so" grep -qF "aaa' (cut short), not hermy's hooks directory" <<<"$out"
 mv "$hooks" "$tmp/hooks.aside"
 tripped 0 "tripwire: without .git/hooks/hermy, a core.hooksPath change is quiet" 'git config core.hooksPath .husky/_'
+# A project onboarded before the rename keeps its hooks in .git/hooks/coddy
+# until its first hermy start: core.hooksPath is held to that directory meanwhile.
+mkdir .git/hooks/coddy; git config core.hooksPath "$repo/.git/hooks/coddy"
+tripped 0 "tripwire: with .git/hooks/coddy alone, core.hooksPath left naming it is quiet" 'true'
+report "tripwire: with .git/hooks/coddy alone, core.hooksPath unset trips" 'git config --unset core.hooksPath'
+t 0 "tripwire: saying the hooks are off" grep -qF "core.hooksPath is now unset, not hermy's hooks directory, so hermy's git hooks are off" <<<"$out"
+git config core.hooksPath "$repo/.git/hooks/coddy"
+report "tripwire: with .git/hooks/coddy alone, core.hooksPath re-pointed trips" 'git config core.hooksPath .husky/_'
+t 0 "tripwire: naming /hermy:start" grep -qF "/hermy:start <issue> puts them back" <<<"$out"
+rmdir .git/hooks/coddy
 mv "$tmp/hooks.aside" "$hooks"; git config --unset core.hooksPath; run start 1 feat/1-thing >/dev/null 2>&1
 t 0 "tripwire: start put them back" test "$(git config core.hooksPath)" = "$hooks"
 # hooks: off is for an adapter that runs the shell hooks (HERMY_HOOKS=1)

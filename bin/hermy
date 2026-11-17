@@ -981,8 +981,9 @@ out() {
 # does not, one for HEAD when it has left the default branch, and one for
 # core.hooksPath, its value quoted (q; its first 1024 characters and "cut
 # short" past them, since q takes time quadratic in the length and git sets
-# no bound) or unset, while .git/hooks/hermy is a
-# directory and it names anything else (start's test, ours), written on fd 4
+# no bound) or unset, while .git/hooks/hermy is a directory, or, without it,
+# .git/hooks/coddy, hermy's from before the rename until its first start, and
+# it names anything else (start's test, ours), written on fd 4
 # too as "hooks <line>", which trip tells it by: a hook manager's install
 # re-points it (husky's prepare, on every npm install). A detached
 # HEAD on the default branch's own history counts as on it: that is where jj
@@ -1071,8 +1072,9 @@ snap() {
   elif ! hgit merge-base --is-ancestor HEAD "refs/remotes/origin/$b" 2>/dev/null; then
     echo "detached HEAD $h"
   fi
-  [ ! -d .git/hooks/hermy ] || { hp=$(git config core.hooksPath 2>/dev/null)
-    case "$hp" in /*) [ "$hp" -ef .git/hooks/hermy ] ;; *) false ;; esac ||
+  hd=.git/hooks/hermy; [ -d "$hd" ] || hd=.git/hooks/coddy
+  [ ! -d "$hd" ] || { hp=$(git config core.hooksPath 2>/dev/null)
+    case "$hp" in /*) [ "$hp" -ef "$hd" ] ;; *) false ;; esac ||
       { hc=""; [ "${#hp}" -le 1024 ] || hc=" (cut short)"
         if [ -n "$hp" ]; then hp="core.hooksPath $(q "${hp:0:1024}")$hc"; else hp="core.hooksPath unset"; fi; echo "$hp"; echo "hooks $hp" >&4; }; }
   # The agent's settings files under the agent dir (Claude Code's), which
