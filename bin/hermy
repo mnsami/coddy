@@ -1640,7 +1640,7 @@ if [ "${1-}" = migrate ]; then
   for c in .coddy.yml "$legacy"; do
     [ "$c" != "$cname" ] && { [ -e "$c" ] || [ -L "$c" ]; } || continue
     echo "changed: remove $c"
-    if [ -L "$c" ]; then k=link; elif [ -f "$c" ]; then k=file; elif [ -d "$c" ]; then k=dir; else k=other; fi
+    if [ -L "$c" ]; then k='link'; elif [ -f "$c" ]; then k='file'; elif [ -d "$c" ]; then k='dir'; else k='other'; fi
     echo "legacy: $k $c"
   done
   { [ "$v" -lt "$cur" ] || [ "$cname" != .hermy.yml ]; } || exit 0
