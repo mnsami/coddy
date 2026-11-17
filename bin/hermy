@@ -2596,5 +2596,5 @@ $bad" ;;
         { grep -v "^$k=" "$f" 2>/dev/null; printf '%s=%s\n' "$k" "$v"; } > "$f.tmp" && mv "$f.tmp" "$f" || die "could not write $f"
       fi
     done ;;
-  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] [-- <path>...] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | mark <issue> [digest] | sweep | drop <issue> [--force] | refresh <issue> | status | config | detect | exclude answers|config | forget answers | migrate | doctor | guard | githook pre-commit|pre-push" ;;
+  *) die "usage: $self start|create <issue> <branch> [base-issue] | claim <issue> [--take] | ship|push <issue> [message] [-- <path>...] | state <issue> [key=value ...] | verify <issue> | diff <issue> | log <issue> <path>... | mark <issue> [digest] | sweep | drop <issue> [--force] | refresh <issue> | status | config | detect | exclude answers|config | forget answers | migrate [records] | doctor | guard | githook pre-commit|pre-push" ;;
 esac
