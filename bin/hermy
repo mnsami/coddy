@@ -2,7 +2,7 @@
 # The hermy core: the mechanics of the workflow, and the guard that makes
 # its rules binding, with no agent dependency. Claude Code reaches it through
 # the shims under scripts/, which map its environment onto the inputs below.
-#   hermy start  <issue> <branch> [base-issue]   worktree at .worktrees/<issue> on <branch>, from default_branch or the base issue's branch (alias: create)
+#   hermy start  <issue> <branch> [base-issue]   worktree at .worktrees/<issue> on <branch>, from default_branch or the base issue's branch (alias: create); a new one gets the ignored files .worktreeinclude names, then runs the config's setup
 #   hermy claim  <issue> [--take]   lock the issue for this session, move it to In Progress
 #   hermy ship   <issue> [message] [-- <path>...]  verify, then commit the tracked changes and the untracked files named after --, and push (push: the push alone)
 #   hermy state  <issue> [key=value | key+=value ...]   print, or set, the issue's phase state for start and ship
@@ -2104,6 +2104,8 @@ case "$cmd" in
       fi
       notrack; hooks; echo "exists: $wt"; exit 0
     fi
+    setup=$(cfg setup)
+    case $setup in [\|\>]|[\|\>][-+1-9]|[\|\>][-+1-9][-+1-9]) die "setup: a block scalar (|, >) is not read; write the command on one line in $cname" ;; esac
     mkdir -p .worktrees
     git check-ignore -q .worktrees || echo '.worktrees/' >> .git/info/exclude
     # A branch that exists, here or only on the remote, is continued; any
@@ -2123,7 +2125,6 @@ case "$cmd" in
         jj workspace add --name "$issue" -r "$start" "$wt" || die "could not create the jj workspace"
         jj -R "$wt" bookmark create "$branch" -r @ || die "could not create branch $branch"
       fi
-      notrack
     else
       git fetch origin || die "fetch failed"
       if git show-ref -q "refs/heads/$branch" "refs/remotes/origin/$branch"; then
@@ -2134,8 +2135,60 @@ case "$cmd" in
     fi
     record
     [ -z "$from" ] || echo "$from" > ".git/hermy/$issue.base" || die "could not record the base"
-    hooks
-    echo "created: $wt on $branch${from:+ onto $from}" ;;
+    # The ignored files .worktreeinclude (gitignore syntax) names, copied in
+    # from the main checkout as plain files: never linked, since the guard
+    # refuses a hard link; never a link, nor over a file the branch holds or
+    # through a link in it, nor from .git, .jj or another worktree. The new
+    # worktree must ignore it too, by its own .gitignore files: one it does
+    # not, jj's auto-track would take, until notrack runs, and push commit.
+    if [ -f .worktreeinclude ]; then
+      w=$(cd "$wt" && pwd -P) || die "cannot enter $wt"
+      if [ "$tool" = jj ]; then wi=(--work-tree="$w" check-ignore --no-index); else wi=(-C "$w" check-ignore); fi
+      git ls-files -z --others --ignored --exclude-from=.worktreeinclude 2>/dev/null | git check-ignore -z --stdin 2>/dev/null |
+        while IFS= read -r -d '' p; do
+          case "/$p/" in */.git/*|*/.jj/*|/.worktrees/*) continue ;; esac
+          { [ -f "$p" ] && [ ! -L "$p" ] && [ ! -e "$wt/$p" ] && [ ! -L "$wt/$p" ]; } || continue
+          # The deepest directory there already is held to its physical path
+          # before mkdir, which would make one through a link the branch holds.
+          d=; case $p in */*) d=/${p%/*} ;; esac
+          e=$d; while [ -n "$e" ] && [ ! -e "$wt$e" ] && [ ! -L "$wt$e" ]; do e=${e%/*}; done
+          [ "$(cd "$wt$e" && pwd -P)" = "$w$e" ] || { echo "hermy: could not copy $p into $wt" >&2; continue; }
+          # The new worktree is asked one path at a time, past that check:
+          # git refuses a path through a link, which would end a batch there.
+          git "${wi[@]}" -q -- "$p" 2>/dev/null || continue
+          { mkdir -p "$wt$d" && cp -p -- "$p" "$wt/$p"; } || echo "hermy: could not copy $p into $wt" >&2
+        done
+    fi
+    echo "created: $wt on $branch${from:+ onto $from}"
+    # The config's setup, run once in the new worktree. Its port offset is
+    # the issue number's last two digits times ten: 42 is 420, ABC-123 230.
+    if [ -n "$setup" ]; then
+      n=00${issue##*[!0-9]}; off=$((10#${n: -2} * 10))
+      echo "port_offset: $off"
+      # Under jj, setup runs with auto-track off from a config file of its
+      # own, after the user's files, which JJ_CONFIG replaces (/etc/jj's
+      # too), so a jj command it runs tracks no new file with no write to
+      # jj's config, which a sandbox keeps out. A new file (set -C) in a
+      # mktemp directory, removed however setup ends; a repo or workspace
+      # config naming auto-track still overrides it.
+      jc=
+      if [ "$tool" = jj ]; then
+        jd=$(mktemp -d 2>/dev/null) || die "could not make a temporary directory for setup's jj config"
+        trap 'rm -rf "$jd"' EXIT
+        (set -C; echo 'snapshot.auto-track = "none()"' > "$jd/auto-track.toml") 2>/dev/null || die "could not write $jd/auto-track.toml"
+        if [ -n "${JJ_CONFIG+x}" ]; then jc=$JJ_CONFIG:
+        else jc=/etc/jj/config.toml:/etc/jj/conf.d:$(jj config path --user 2>/dev/null | tr '\n' :); fi
+        jc=$jc$jd/auto-track.toml
+      fi
+      (cd "$wt" && { [ -z "$jc" ] || export JJ_CONFIG="$jc"; } && HERMY_ISSUE=$issue HERMY_PORT_OFFSET=$off sh -c "$setup") >&2; r=$?
+      [ -z "$jc" ] || { rm -rf "$jd"; trap - EXIT; }
+      [ "$r" = 0 ] || die "setup failed (exit $r) in $wt, which stays as it is: fix it there by hand, with HERMY_ISSUE=$issue and HERMY_PORT_OFFSET=$off, since start runs setup only on a new worktree"
+    fi
+    # jj's auto-track and the git hooks after setup: a sandbox refuses both
+    # writes on a first start, which a rerun's exists path does without
+    # setup. The hooks last, since setup's hook manager (husky's prepare, on
+    # npm ci) re-sets core.hooksPath: this puts it back and records that one.
+    notrack; hooks ;;
 
   claim)
     [ -d "$wt" ] || die "create the worktree first: $self create $issue <branch>"

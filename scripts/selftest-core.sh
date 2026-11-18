@@ -2103,4 +2103,70 @@ if command -v jj >/dev/null; then marks jj "jj file track 'root-file:\"new.txt\"
   'the removal of the base record:rm "$tmp/mark-jj/.git/hermy/7.base"' \
   'a move of default_branch on the remote:git -C "$tmp/mark-jj" update-ref refs/remotes/origin/main "$(jj log --no-graph -r @- -T commit_id)"'; fi
 
+# start, on a new worktree, copies in the ignored files .worktreeinclude
+# names, then runs setup there with the issue and its port offset; a
+# failing setup exits non-zero and keeps the worktree.
+s="$tmp/setup"; git clone -q "$tmp/origin.git" "$s" 2>/dev/null
+st() { HERMY_ROOT="$s" run start "$@"; }
+sc() { printf 'version: 2\ntracker: github\nworktree: git\ndefault_branch: main\nsetup: %s\n' "$1" > "$s/.hermy.yml"; }
+sc 'env > setup.out'; echo .env >> "$s/.git/info/exclude"; echo '*.env' > "$s/.worktreeinclude"; echo s > "$s/.env"; echo k > "$s/keep.env"
+printf '%s\n' '-a b.env' l.env in/ m.env >> "$s/.git/info/exclude"; echo d > "$s/-a b.env"; echo m > "$s/m.env"; ln -s .env "$s/l.env"
+# a branch whose in/ is a link out of the worktree, where the main checkout's holds an ignored file
+o="$tmp/setup-out"; mkdir "$o"; git -C "$s" worktree add -q -b feat/140-link "$tmp/setup-lnk" origin/main && ln -s "$o" "$tmp/setup-lnk/in" && git -C "$tmp/setup-lnk" add in && git -C "$tmp/setup-lnk" commit -q -m link && git -C "$s" worktree remove "$tmp/setup-lnk"
+mkdir -p "$s/in/sub"; echo z > "$s/in/sub/z.env"
+st 137 feat/137-setup > "$tmp/setup.log" 2>&1; t 0 "setup: start makes the worktree and runs it" test $? = 0
+t 0 "setup: prints the port offset, issue 137's last two digits times ten" grep -qx 'port_offset: 370' "$tmp/setup.log"
+t 0 "setup: runs in the new worktree with the offset set" grep -qx 'HERMY_PORT_OFFSET=370' "$s/.worktrees/137/setup.out"
+t 0 "setup: and the issue" grep -qx 'HERMY_ISSUE=137' "$s/.worktrees/137/setup.out"
+t 0 "worktreeinclude: an ignored file it names is copied in" cmp -s "$s/.env" "$s/.worktrees/137/.env"
+t 1 "worktreeinclude: one git does not ignore is not" test -e "$s/.worktrees/137/keep.env"
+t 0 "worktreeinclude: a name with a leading dash and a blank is copied" cmp -s "$s/-a b.env" "$s/.worktrees/137/-a b.env"
+t 1 "worktreeinclude: a link is not" test -e "$s/.worktrees/137/l.env"
+st 140 feat/140-link >/dev/null 2>&1
+t 1 "worktreeinclude: nothing is made through a link the branch holds" test -e "$o/sub"
+t 0 "worktreeinclude: a file that sorts after it is still copied" cmp -s "$s/m.env" "$s/.worktrees/140/m.env"
+sc 'exit 3'
+t 1 "setup: a failing one makes start exit non-zero" st 138 feat/138-setup
+t 0 "setup: and keeps the worktree" test -d "$s/.worktrees/138"
+t 0 "setup: a rerun finds the worktree" says '^exists: ' st 138 feat/138-setup
+sc '|'
+t 1 "setup: a block scalar is refused" st 139 feat/139-setup
+t 1 "setup: before any worktree is made" test -e "$s/.worktrees/139"
+# a hook manager setup installs (husky's prepare, on npm ci) re-sets core.hooksPath: start puts hermy's back
+sc 'git config core.hooksPath .husky/_'; st 141 feat/141-setup >/dev/null 2>&1
+t 0 "setup: runs before the git hooks, which keep core.hooksPath" test "$(git -C "$s" config core.hooksPath)" -ef "$s/.git/hooks/hermy"
+# Under jj, auto-track is off before setup where jj's config can be written,
+# so a setup that runs jj tracks no new file; where a sandbox keeps that
+# write out, setup still runs and start then names the sandbox.
+if command -v jj >/dev/null; then
+  sj="$tmp/setup-jj"; git clone -q "$tmp/origin.git" "$sj" 2>/dev/null; (cd "$sj" && jj git init --colocate && echo '.jj/' >> .git/info/exclude) >/dev/null 2>&1
+  printf 'version: 2\ntracker: github\nworktree: jj\ndefault_branch: main\nsetup: echo x > made.txt && jj st\n' > "$sj/.hermy.yml"
+  # the main checkout's own .gitignore ignores sec.env, which the new workspace's does not
+  echo '*.env' > "$sj/.worktreeinclude"; echo .env >> "$sj/.git/info/exclude"; echo sec.env > "$sj/.gitignore"; echo s > "$sj/.env"; echo k > "$sj/sec.env"
+  HERMY_ROOT="$sj" run start 142 feat/142-setup >/dev/null 2>&1
+  t 0 "setup: under jj, the jj it runs tracks no new file" sh -c "l=\$(cd '$sj/.worktrees/142' && jj --ignore-working-copy file list) && printf '%s\n' \"\$l\" | grep -qx README.md && ! printf '%s\n' \"\$l\" | grep -qx made.txt"
+  t 0 "worktreeinclude: under jj, a file both checkouts ignore is copied in" cmp -s "$sj/.env" "$sj/.worktrees/142/.env"
+  t 1 "worktreeinclude: under jj, one only the main checkout ignores is not" test -e "$sj/.worktrees/142/sec.env"
+  mkdir -p "$tmp/sbjj"; printf '#!/bin/sh\ncase " $* " in *" config set "*) printf "Error: Failed to write config file\\nCaused by: Operation not permitted (os error 1)\\n" >&2; exit 1 ;; esac\nexec %s "$@"\n' "$(command -v jj)" > "$tmp/sbjj/jj"; chmod +x "$tmp/sbjj/jj"
+  PATH="$tmp/sbjj:$PATH" HERMY_ROOT="$sj" run start 143 feat/143-setup > "$tmp/setup-jj.log" 2>&1
+  t 0 "setup: under jj, a sandbox that keeps out the auto-track write fails start" test $? != 0
+  t 0 "setup: but setup has run first" test -e "$sj/.worktrees/143/made.txt"
+  t 0 "setup: naming the sandbox" grep -q 'A sandbox blocks it' "$tmp/setup-jj.log"
+  # A jj config dir it cannot write (workspace configs read-only): setup's
+  # jj tracks no new file all the same, and its temporary config is gone
+  # whether setup passes or fails.
+  ut() { l=$(cd "$sj/.worktrees/$1" && jj --ignore-working-copy file list) && printf '%s\n' "$l" | grep -qx README.md && ! printf '%s\n' "$l" | grep -qx made.txt; }
+  if [ "$(id -u)" != 0 ]; then # root writes anywhere
+    jx="$tmp/setup-xdg"; mkdir -p "$jx/jj/workspaces" "$tmp/setup-tmp"; chmod 555 "$jx/jj/workspaces"
+    XDG_CONFIG_HOME="$jx" TMPDIR="$tmp/setup-tmp" HERMY_ROOT="$sj" run start 144 feat/144-setup >/dev/null 2>&1
+    t 0 "setup: under jj, with the workspace config read-only, the jj it runs tracks no new file" ut 144
+    t 0 "setup: and its temporary jj config is removed" test -z "$(ls -A "$tmp/setup-tmp")"
+    printf 'version: 2\ntracker: github\nworktree: jj\ndefault_branch: main\nsetup: echo x > made.txt && jj st && exit 3\n' > "$sj/.hermy.yml"
+    t 1 "setup: under jj, a failing one makes start exit non-zero" env XDG_CONFIG_HOME="$jx" TMPDIR="$tmp/setup-tmp" HERMY_ROOT="$sj" "$here/bin/hermy" start 145 feat/145-setup
+    t 0 "setup: tracking no new file" ut 145
+    t 0 "setup: and removing its temporary jj config" test -z "$(ls -A "$tmp/setup-tmp")"
+    chmod 755 "$jx/jj/workspaces"
+  fi
+fi
+
 exit $fail

@@ -182,6 +182,7 @@ default_branch: main
 branch: "{type}/{issue}-{slug}"
 commit: "{type}({issue}): {summary}"
 verify: "make check"         # must exit 0 before /hermy:ship opens the PR
+setup: "npm ci"              # optional; run once in each new issue worktree
 roadmap: docs/ROADMAP.md     # optional; /hermy:next reads it
 guard: block                 # optional; block (default) | warn
 tiers:                       # model per difficulty, per agent; start picks one per issue
@@ -192,6 +193,9 @@ review_rounds: 3             # optional; 1-5 (default 3)
 
 - `worktree` is `git` (`git worktree add`, the default) or `jj` (`jj workspace add`, colocating the repo on first use).
   Below version 2, an absent key means `jj`. `/hermy:config` refuses to switch it while an issue worktree exists.
+- `setup` runs once in each new issue worktree, with `HERMY_ISSUE` and `HERMY_PORT_OFFSET` (`(issue % 100) * 10`) set.
+  Before it, the git-ignored files that the root's `.worktreeinclude` (gitignore syntax) names are copied in.
+  A failing `setup` stops `start` and keeps the worktree.
 - `guard: warn` turns the edit guard's rejections into [notices](docs/enforcement.md#guard-warn).
   Set it with `/hermy:config guard=warn`.
 - A config without `version` is read as version 0. One at `.coddy.yml`, then `.claude/coddy.yml`, from before
