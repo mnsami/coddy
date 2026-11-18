@@ -2311,7 +2311,7 @@ nogh() { test ! -s "$GH_LOG"; }
 git -C "$rel" checkout -q -b main
 rc 'feat: before the tag' 0.1.0; git -C "$rel" tag v0.1.0
 git -C "$rel" checkout -q -b side; rc 'feat: on a branch'; git -C "$rel" checkout -q main
-git -C "$rel" merge -q --no-ff --no-edit -m "Merge branch 'side'" side
+git -C "$rel" merge -q --no-ff --no-edit -m 'feat: a merge commit, titled like its PR' side
 rc 'fix(guard): held'; rc 'feature: not a fix: one'; rc 'chore: rename' 0.1.0 hermy2
 git -C "$rel" push -q origin main v0.1.0 2>/dev/null
 t 0 "release: a push that leaves the version as it was passes" release

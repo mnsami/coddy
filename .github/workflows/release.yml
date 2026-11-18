@@ -41,7 +41,7 @@ jobs:
           prev=$(git tag --merged HEAD -l 'v[0-9]*' --sort=-v:refname | head -1)
           notes=$(mktemp)
           if [ -n "$prev" ]; then
-            git log --format=%s "$prev..HEAD" | grep -E '^(feat|fix)(\(.*\))?:' > "$notes" || :
+            git log --no-merges --format=%s "$prev..HEAD" | grep -E '^(feat|fix)(\(.*\))?:' > "$notes" || :
           else
             echo "v$new is the first tagged release." > "$notes"
           fi
