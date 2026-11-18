@@ -2110,12 +2110,20 @@ s="$tmp/setup"; git clone -q "$tmp/origin.git" "$s" 2>/dev/null
 st() { HERMY_ROOT="$s" run start "$@"; }
 sc() { printf 'version: 2\ntracker: github\nworktree: git\ndefault_branch: main\nsetup: %s\n' "$1" > "$s/.hermy.yml"; }
 sc 'env > setup.out'; echo .env >> "$s/.git/info/exclude"; echo '*.env' > "$s/.worktreeinclude"; echo s > "$s/.env"; echo k > "$s/keep.env"
+printf '%s\n' '-a b.env' l.env in/ >> "$s/.git/info/exclude"; echo d > "$s/-a b.env"; ln -s .env "$s/l.env"
+# a branch whose in/ is a link out of the worktree, where the main checkout's holds an ignored file
+o="$tmp/setup-out"; mkdir "$o"; git -C "$s" worktree add -q -b feat/140-link "$tmp/setup-lnk" origin/main && ln -s "$o" "$tmp/setup-lnk/in" && git -C "$tmp/setup-lnk" add in && git -C "$tmp/setup-lnk" commit -q -m link && git -C "$s" worktree remove "$tmp/setup-lnk"
+mkdir -p "$s/in/sub"; echo z > "$s/in/sub/z.env"
 st 137 feat/137-setup > "$tmp/setup.log" 2>&1; t 0 "setup: start makes the worktree and runs it" test $? = 0
 t 0 "setup: prints the port offset, issue 137's last two digits times ten" grep -qx 'port_offset: 370' "$tmp/setup.log"
 t 0 "setup: runs in the new worktree with the offset set" grep -qx 'HERMY_PORT_OFFSET=370' "$s/.worktrees/137/setup.out"
 t 0 "setup: and the issue" grep -qx 'HERMY_ISSUE=137' "$s/.worktrees/137/setup.out"
 t 0 "worktreeinclude: an ignored file it names is copied in" cmp -s "$s/.env" "$s/.worktrees/137/.env"
 t 1 "worktreeinclude: one git does not ignore is not" test -e "$s/.worktrees/137/keep.env"
+t 0 "worktreeinclude: a name with a leading dash and a blank is copied" cmp -s "$s/-a b.env" "$s/.worktrees/137/-a b.env"
+t 1 "worktreeinclude: a link is not" test -e "$s/.worktrees/137/l.env"
+st 140 feat/140-link >/dev/null 2>&1
+t 1 "worktreeinclude: nothing is made through a link the branch holds" test -e "$o/sub"
 sc 'exit 3'
 t 1 "setup: a failing one makes start exit non-zero" st 138 feat/138-setup
 t 0 "setup: and keeps the worktree" test -d "$s/.worktrees/138"
@@ -2123,5 +2131,8 @@ t 0 "setup: a rerun finds the worktree" says '^exists: ' st 138 feat/138-setup
 sc '|'
 t 1 "setup: a block scalar is refused" st 139 feat/139-setup
 t 1 "setup: before any worktree is made" test -e "$s/.worktrees/139"
+# a hook manager setup installs (husky's prepare, on npm ci) re-sets core.hooksPath: start puts hermy's back
+sc 'git config core.hooksPath .husky/_'; st 141 feat/141-setup >/dev/null 2>&1
+t 0 "setup: runs before the git hooks, which keep core.hooksPath" test "$(git -C "$s" config core.hooksPath)" -ef "$s/.git/hooks/hermy"
 
 exit $fail

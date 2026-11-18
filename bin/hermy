@@ -2136,7 +2136,6 @@ case "$cmd" in
     fi
     record
     [ -z "$from" ] || echo "$from" > ".git/hermy/$issue.base" || die "could not record the base"
-    hooks
     # The ignored files .worktreeinclude (gitignore syntax) names, copied in
     # from the main checkout as plain files: never linked, since the guard
     # refuses a hard link; never a link, nor over a file the branch holds or
@@ -2147,8 +2146,11 @@ case "$cmd" in
         while IFS= read -r -d '' p; do
           case "/$p/" in */.git/*|*/.jj/*|/.worktrees/*) continue ;; esac
           { [ -f "$p" ] && [ ! -L "$p" ] && [ ! -e "$wt/$p" ] && [ ! -L "$wt/$p" ]; } || continue
+          # The deepest directory there already is held to its physical path
+          # before mkdir, which would make one through a link the branch holds.
           d=; case $p in */*) d=/${p%/*} ;; esac
-          { mkdir -p "$wt$d" && [ "$(cd "$wt$d" && pwd -P)" = "$w$d" ] && cp -p "$p" "$wt/$p"; } || echo "hermy: could not copy $p into $wt" >&2
+          e=$d; while [ -n "$e" ] && [ ! -e "$wt$e" ] && [ ! -L "$wt$e" ]; do e=${e%/*}; done
+          { [ "$(cd "$wt$e" && pwd -P)" = "$w$e" ] && mkdir -p "$wt$d" && cp -p -- "$p" "$wt/$p"; } || echo "hermy: could not copy $p into $wt" >&2
         done
     fi
     echo "created: $wt on $branch${from:+ onto $from}"
@@ -2159,7 +2161,10 @@ case "$cmd" in
       echo "port_offset: $off"
       (cd "$wt" && HERMY_ISSUE=$issue HERMY_PORT_OFFSET=$off sh -c "$setup") >&2; r=$?
       [ "$r" = 0 ] || die "setup failed (exit $r) in $wt, which stays as it is: fix it there by hand, with HERMY_ISSUE=$issue and HERMY_PORT_OFFSET=$off, since start runs setup only on a new worktree"
-    fi ;;
+    fi
+    # The git hooks after setup, whose hook manager (husky's prepare, on npm
+    # ci) re-sets core.hooksPath: this puts it back and records that one.
+    hooks ;;
 
   claim)
     [ -d "$wt" ] || die "create the worktree first: $self create $issue <branch>"
