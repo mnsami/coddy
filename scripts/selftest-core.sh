@@ -2140,8 +2140,12 @@ t 0 "setup: runs before the git hooks, which keep core.hooksPath" test "$(git -C
 if command -v jj >/dev/null; then
   sj="$tmp/setup-jj"; git clone -q "$tmp/origin.git" "$sj" 2>/dev/null; (cd "$sj" && jj git init --colocate && echo '.jj/' >> .git/info/exclude) >/dev/null 2>&1
   printf 'version: 2\ntracker: github\nworktree: jj\ndefault_branch: main\nsetup: echo x > made.txt && jj st\n' > "$sj/.hermy.yml"
+  # the main checkout's own .gitignore ignores sec.env, which the new workspace's does not
+  echo '*.env' > "$sj/.worktreeinclude"; echo .env >> "$sj/.git/info/exclude"; echo sec.env > "$sj/.gitignore"; echo s > "$sj/.env"; echo k > "$sj/sec.env"
   HERMY_ROOT="$sj" run start 142 feat/142-setup >/dev/null 2>&1
   t 0 "setup: under jj, the jj it runs tracks no new file" sh -c "l=\$(cd '$sj/.worktrees/142' && jj --ignore-working-copy file list) && printf '%s\n' \"\$l\" | grep -qx README.md && ! printf '%s\n' \"\$l\" | grep -qx made.txt"
+  t 0 "worktreeinclude: under jj, a file both checkouts ignore is copied in" cmp -s "$sj/.env" "$sj/.worktrees/142/.env"
+  t 1 "worktreeinclude: under jj, one only the main checkout ignores is not" test -e "$sj/.worktrees/142/sec.env"
   mkdir -p "$tmp/sbjj"; printf '#!/bin/sh\ncase " $* " in *" config set "*) printf "Error: Failed to write config file\\nCaused by: Operation not permitted (os error 1)\\n" >&2; exit 1 ;; esac\nexec %s "$@"\n' "$(command -v jj)" > "$tmp/sbjj/jj"; chmod +x "$tmp/sbjj/jj"
   PATH="$tmp/sbjj:$PATH" HERMY_ROOT="$sj" run start 143 feat/143-setup > "$tmp/setup-jj.log" 2>&1
   t 0 "setup: under jj, a sandbox that keeps out the auto-track write fails start" test $? != 0

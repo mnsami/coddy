@@ -2138,10 +2138,13 @@ case "$cmd" in
     # The ignored files .worktreeinclude (gitignore syntax) names, copied in
     # from the main checkout as plain files: never linked, since the guard
     # refuses a hard link; never a link, nor over a file the branch holds or
-    # through a link in it, nor from .git, .jj or another worktree.
+    # through a link in it, nor from .git, .jj or another worktree. The new
+    # worktree must ignore it too, by its own .gitignore files: one it does
+    # not, jj's auto-track would take, until notrack runs, and push commit.
     if [ -f .worktreeinclude ]; then
       w=$(cd "$wt" && pwd -P) || die "cannot enter $wt"
-      git ls-files -z --others --ignored --exclude-from=.worktreeinclude 2>/dev/null | git check-ignore -z --stdin 2>/dev/null |
+      if [ "$tool" = jj ]; then wi=(--work-tree="$w" check-ignore --no-index); else wi=(-C "$w" check-ignore); fi
+      git ls-files -z --others --ignored --exclude-from=.worktreeinclude 2>/dev/null | git check-ignore -z --stdin 2>/dev/null | git "${wi[@]}" -z --stdin 2>/dev/null |
         while IFS= read -r -d '' p; do
           case "/$p/" in */.git/*|*/.jj/*|/.worktrees/*) continue ;; esac
           { [ -f "$p" ] && [ ! -L "$p" ] && [ ! -e "$wt/$p" ] && [ ! -L "$wt/$p" ]; } || continue
