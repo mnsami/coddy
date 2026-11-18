@@ -2144,7 +2144,7 @@ case "$cmd" in
     if [ -f .worktreeinclude ]; then
       w=$(cd "$wt" && pwd -P) || die "cannot enter $wt"
       if [ "$tool" = jj ]; then wi=(--work-tree="$w" check-ignore --no-index); else wi=(-C "$w" check-ignore); fi
-      git ls-files -z --others --ignored --exclude-from=.worktreeinclude 2>/dev/null | git check-ignore -z --stdin 2>/dev/null | git "${wi[@]}" -z --stdin 2>/dev/null |
+      git ls-files -z --others --ignored --exclude-from=.worktreeinclude 2>/dev/null | git check-ignore -z --stdin 2>/dev/null |
         while IFS= read -r -d '' p; do
           case "/$p/" in */.git/*|*/.jj/*|/.worktrees/*) continue ;; esac
           { [ -f "$p" ] && [ ! -L "$p" ] && [ ! -e "$wt/$p" ] && [ ! -L "$wt/$p" ]; } || continue
@@ -2152,7 +2152,11 @@ case "$cmd" in
           # before mkdir, which would make one through a link the branch holds.
           d=; case $p in */*) d=/${p%/*} ;; esac
           e=$d; while [ -n "$e" ] && [ ! -e "$wt$e" ] && [ ! -L "$wt$e" ]; do e=${e%/*}; done
-          { [ "$(cd "$wt$e" && pwd -P)" = "$w$e" ] && mkdir -p "$wt$d" && cp -p -- "$p" "$wt/$p"; } || echo "hermy: could not copy $p into $wt" >&2
+          [ "$(cd "$wt$e" && pwd -P)" = "$w$e" ] || { echo "hermy: could not copy $p into $wt" >&2; continue; }
+          # The new worktree is asked one path at a time, past that check:
+          # git refuses a path through a link, which would end a batch there.
+          git "${wi[@]}" -q -- "$p" 2>/dev/null || continue
+          { mkdir -p "$wt$d" && cp -p -- "$p" "$wt/$p"; } || echo "hermy: could not copy $p into $wt" >&2
         done
     fi
     echo "created: $wt on $branch${from:+ onto $from}"
