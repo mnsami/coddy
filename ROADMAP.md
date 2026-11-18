@@ -4,7 +4,9 @@ hermy's purpose stays the same: **every change an agent makes is tied to a claim
 
 What this roadmap changes is reach and concurrency. hermy aims to support **Claude Code, Codex, Cursor, Copilot CLI and Gemini CLI or Antigravity CLI** (a spike picks the Google host, #150) first-class, and to stay correct when several terminals, a lead session with subagents or agent teams, or several teammates work the same repository.
 
-Each phase below is a [GitHub milestone](https://github.com/mnsami/coddy/milestones). Issue numbers are listed per milestone; the milestone pages are the live source.
+The name changed (formerly coddy) because Coddy Agent (coddy.dev) ships a CLI of the same name in the same niche, Coddy, Inc. (coddy.tech) asserts a trademark in it, and searches for the old name never showed this project.
+
+Each phase below is a [GitHub milestone](https://github.com/mnsami/hermy/milestones). Issue numbers are listed per milestone; the milestone pages are the live source.
 
 ## Enforcement model
 

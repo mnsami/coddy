@@ -4,13 +4,13 @@
 
 # hermy
 
-Formerly coddy; not affiliated with Coddy Agent or Coddy, Inc.
+Formerly coddy; not affiliated with Coddy Agent (coddy.dev) or Coddy, Inc. (coddy.tech).
 
-[![CI](https://github.com/mnsami/coddy/actions/workflows/ci.yml/badge.svg)
-](https://github.com/mnsami/coddy/actions/workflows/ci.yml) [![release][rb]][r]
+[![CI](https://github.com/mnsami/hermy/actions/workflows/ci.yml/badge.svg)
+](https://github.com/mnsami/hermy/actions/workflows/ci.yml) [![release][rb]][r]
 
-[r]: https://github.com/mnsami/coddy/commits/main/.claude-plugin/plugin.json
-[rb]: https://img.shields.io/github/package-json/v/mnsami/coddy?filename=.claude-plugin%2Fplugin.json&label=release
+[r]: https://github.com/mnsami/hermy/commits/main/.claude-plugin/plugin.json
+[rb]: https://img.shields.io/github/package-json/v/mnsami/hermy?filename=.claude-plugin%2Fplugin.json&label=release
 hermy is an issue-driven workflow for Claude Code. Every change Claude makes is tied to a claimed issue,
 lives in its own worktree and lands through a pull request. The tracker holds the state. The plugin holds the habits.
 
@@ -18,7 +18,7 @@ lives in its own worktree and lands through a pull request. The tracker holds th
 - They are not a sandbox. On GitHub and GitLab, two layers you set by hand ([branch protection and the required PR
   check](#how-it-enforces)) send every change to the default branch through a PR that closes an open, assigned issue,
   if [their settings](#how-it-enforces) are right. Jira has branch protection alone.
-- Install: `claude plugin marketplace add mnsami/coddy`, then `claude plugin install hermy@hermy` ([more](#install)).
+- Install: `claude plugin marketplace add mnsami/hermy`, then `claude plugin install hermy@hermy` ([more](#install)).
 - The flow: `/hermy:onboard` → `/hermy:next` → `/hermy:start <issue>` → `/hermy:ship`.
 
 ```text
@@ -39,14 +39,14 @@ The edit in the main checkout is rejected. After `/hermy:start`, the same edit u
 ## Install
 
 ```bash
-claude plugin marketplace add mnsami/coddy   # or a local path to this repo
+claude plugin marketplace add mnsami/hermy   # or a local path to this repo
 claude plugin install hermy@hermy
 ```
 
 For another agent (Codex, Cursor, Copilot CLI, Gemini CLI or Antigravity CLI) or your own terminal:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mnsami/coddy/main/get.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mnsami/hermy/main/get.sh | bash
 ```
 
 - It clones `main` into `~/.hermy` and links `hermy` into `~/.local/bin`. A rerun fast-forwards it,
@@ -209,7 +209,7 @@ review_rounds: 3             # optional; 1-5 (default 3)
 
 ## Contributing
 
-- Collaborators: pick an open [issue](https://github.com/mnsami/coddy/issues) and work it through hermy itself.
+- Collaborators: pick an open [issue](https://github.com/mnsami/hermy/issues) and work it through hermy itself.
   The config is personal: run `/hermy:onboard` in your clone first. Others open a PR by hand with `Closes #<n>`.
 - Commits are `type: summary` (`feat`, `fix`, `chore`). The PR must close its issue (`Closes #<n>`).
   The first three commands under [Develop](#develop) pass before you open it.

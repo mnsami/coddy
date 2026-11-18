@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs hermy for any agent and the terminal: a checkout of main and the
 # hermy command on PATH.
-#   curl -fsSL https://raw.githubusercontent.com/mnsami/coddy/main/get.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/mnsami/hermy/main/get.sh | bash
 # Inputs, all optional: HERMY_REPO_URL (the repository), HERMY_HOME (the
 # checkout, ~/.hermy), HERMY_BIN (where hermy is linked, ~/.local/bin).
 # A rerun updates the checkout by fast-forward. Every refusal comes before
@@ -9,7 +9,7 @@
 # Wrapped in main so a download cut short runs nothing.
 set -u
 main() {
-  local url="${HERMY_REPO_URL:-https://github.com/mnsami/coddy}" home="${HERMY_HOME:-${HOME:?is not set: set it, or HERMY_HOME and HERMY_BIN}/.hermy}" bin="${HERMY_BIN:-${HOME:?is not set: set it, or HERMY_HOME and HERMY_BIN}/.local/bin}"
+  local url="${HERMY_REPO_URL:-https://github.com/mnsami/hermy}" home="${HERMY_HOME:-${HOME:?is not set: set it, or HERMY_HOME and HERMY_BIN}/.hermy}" bin="${HERMY_BIN:-${HOME:?is not set: set it, or HERMY_HOME and HERMY_BIN}/.local/bin}"
   local link state sha top v a
   # Absolute, so the link's target resolves from HERMY_BIN and the PATH line works anywhere.
   case "$home" in /*) ;; *) home="$PWD/$home" ;; esac
@@ -78,7 +78,7 @@ $out"
 
 Next:
   Claude Code: install the plugin, which keeps its own copy and does not use $home:
-    claude plugin marketplace add mnsami/coddy
+    claude plugin marketplace add mnsami/hermy
     claude plugin install hermy@hermy
   Any other agent: in your project, have it read $home/skills/onboard/SKILL.md
     and follow it; the other skills are next to it under $home/skills/.

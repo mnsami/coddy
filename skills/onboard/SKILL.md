@@ -64,12 +64,12 @@ Answers live in `<root>/.claude/hermy/onboard-answers.json`: Read it first (miss
    <!-- hermy:begin -->
    ## hermy
 
-   This repository uses [hermy](https://github.com/mnsami/coddy): every change is tied to a claimed issue, lives in its own worktree and lands through a pull request.
+   This repository uses [hermy](https://github.com/mnsami/hermy): every change is tied to a claimed issue, lives in its own worktree and lands through a pull request.
 
    - Never edit the main checkout. Issue work happens only in `.worktrees/<issue>`, which the `start` skill creates once it has claimed the issue.
    - Before acting, run `hermy config` and `hermy status`: the config, then the root and the claimed worktrees. `NOT_ONBOARDED` from `hermy config` → stop and run the `onboard` skill first; a `MIGRATE: <path>` line → stop and run the `migrate` skill first.
    - Ship only through the `ship` skill: it runs verify, commits, pushes and opens the pull request. Never merge.
-   - The skills (`onboard`, `config`, `migrate`, `next`, `start`, `ship`, `drop`, `refresh`, `triage`) and `hermy` come from the hermy plugin, https://github.com/mnsami/coddy (`skills/<name>/SKILL.md` and `bin/hermy` there). `CLAUDE_PLUGIN_ROOT` in a skill is where that plugin is installed, never a copy found inside this repository. Not installed → get it from that repository.
+   - The skills (`onboard`, `config`, `migrate`, `next`, `start`, `ship`, `drop`, `refresh`, `triage`) and `hermy` come from the hermy plugin, https://github.com/mnsami/hermy (`skills/<name>/SKILL.md` and `bin/hermy` there). `CLAUDE_PLUGIN_ROOT` in a skill is where that plugin is installed, never a copy found inside this repository. Not installed → get it from that repository.
    <!-- hermy:end -->
    ```
 
