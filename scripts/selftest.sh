@@ -2309,6 +2309,7 @@ rc() { [ -z "${2-}" ] || printf '{\n  "name": "%s",\n  "version": "%s"\n}\n' "${
 release() { : > "$GH_LOG"; rm -f "$GH_NOTES"; (cd "$rel" && env "${renvs[@]}" SHA="$(git rev-parse HEAD)" BEFORE="${1-$(git rev-parse HEAD^)}" bash -e "$tmp/release.sh"); }
 nogh() { test ! -s "$GH_LOG"; }
 git -C "$rel" checkout -q -b main
+rc 'feat: an older release' 0.0.9; git -C "$rel" tag v0.0.9
 rc 'feat: before the tag' 0.1.0; git -C "$rel" tag v0.1.0
 git -C "$rel" checkout -q -b side; rc 'feat: on a branch'; git -C "$rel" checkout -q main
 git -C "$rel" merge -q --no-ff --no-edit -m 'feat: a merge commit, titled like its PR' side
@@ -2335,7 +2336,9 @@ t 0 "release: with one gh call" test "$(grep -c '' "$GH_LOG")" = 1
 t 0 "release: creating v<new> and its release on the pushed commit" grep -qx "release create v0.2.0 --target $(git -C "$rel" rev-parse HEAD) --title v0.2.0 --notes-file .* --repo REPO" "$GH_LOG"
 printf '%s\n' 'feat: on a branch' 'fix(guard): held' > "$tmp/want.notes"
 t 0 "release: its notes the feat: and fix: subjects since the previous tag, one per line, merges aside" sh -c 'sort "$1" | cmp -s - "$2"' - "$GH_NOTES" "$tmp/want.notes"
-git -C "$rel" tag -d v0.1.0 >/dev/null
+t 0 "release: BEFORE all zeros after the bump reads 0.1.0 from HEAD^ and releases" release 0000000000000000000000000000000000000000
+t 0 "release: with one gh call" test "$(grep -c '' "$GH_LOG")" = 1
+git -C "$rel" tag -d v0.1.0 v0.0.9 >/dev/null
 t 0 "release: with no previous tag passes" release
 t 0 "release: its notes say it is the first tagged release, and list nothing" test "$(cat "$GH_NOTES")" = 'v0.2.0 is the first tagged release.'
 
