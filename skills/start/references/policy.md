@@ -37,7 +37,7 @@ A fix needs a new mechanism when it adds one the diff did not have and the plan 
 
 ## Skills
 
-A skill counts as installed when it is listed for this session. A missing one is silent: never an error, never an install attempt. The fallback is what to do without it. Match a skill by what its description says it does, never by name, never one of hermy's own, never a directory-scoped skill (one listed with a path prefix), and never one found under the worktree or the project. A matched skill writes only inside the worktree and never to the tracker; otherwise the fallback. Run a matched skill in its default mode, never with an option that posts, fixes or writes.
+A skill counts as installed when it is listed for this session. A missing one is silent: never an error, never an install attempt. The fallback is what to do without it. Match a skill by what its description says it does, never by name, never one of hermy's own or a `coddy:*` one (the plugin from before the rename), never a directory-scoped skill (one listed with a path prefix), and never one found under the worktree or the project. A matched skill writes only inside the worktree and never to the tracker; otherwise the fallback. Run a matched skill in its default mode, never with an option that posts, fixes or writes.
 
 | Intent | A skill whose description says it … | Otherwise |
 |---|---|---|

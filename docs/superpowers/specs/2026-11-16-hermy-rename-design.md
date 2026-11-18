@@ -38,7 +38,7 @@ The old name collides with Coddy Agent (same niche, same CLI name, same `~/.<nam
 - `doctor`'s `pr_check` accepts `.github/workflows/coddy.yml` while `hermy.yml` is absent and the old file is byte-identical to the old template, held as its hash.
 - The GitLab template's token variable becomes `HERMY_TOKEN`.
 - Docs: every file under `docs/` renamed, dated records included, external names kept.
-- The grep: over the tracked files alone (`git ls-files` in a checkout with a `.git`, `jj file list` in a jj workspace), so no untracked or ignored file and no other worktree under `.worktrees/` is read, case-insensitive, each line with the allowed legacy spellings removed must hold no old name; no path holds it. Allowed: `.coddy.yml`, `.claude/coddy.yml`, `.claude/coddy/`, `AGENT_DIR/coddy`, `.git/coddy`, `.git/hooks/coddy`, `coddy.previousHooksPath`, `Written by coddy start`, `coddy:plan`, `coddy:questions`, `coddy:begin`, `coddy:end`, `workflows/coddy.yml`, `mnsami/coddy`, `coddy-spike`, `coddy-probe`, `formerly coddy`, `Coddy Agent`, `Coddy, Inc.`.
+- The grep: over the tracked files alone (`git ls-files` in a checkout with a `.git`, `jj file list` in a jj workspace), so no untracked or ignored file and no other worktree under `.worktrees/` is read, case-insensitive, each line with the allowed legacy spellings removed must hold no old name; no path holds it. Allowed: `coddy@coddy`, `coddy:*`, `.coddy.yml`, `.claude/coddy.yml`, `.claude/coddy/`, `AGENT_DIR/coddy`, `.git/coddy`, `.git/hooks/coddy`, `coddy.previousHooksPath`, `Written by coddy start`, `coddy:plan`, `coddy:questions`, `coddy:begin`, `coddy:end`, `workflows/coddy.yml`, `mnsami/coddy`, `coddy-spike`, `coddy-probe`, `formerly coddy`, `Coddy Agent`, `Coddy, Inc.`.
 
 ## Left to the builder
 
