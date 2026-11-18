@@ -35,7 +35,7 @@ Lines under Cleaned up → say so first, in one sentence. `cleaned` is an issue 
 3. `roadmap` set → read it and note the current milestone or phase.
 4. Rank the rest: assigned to me first, then bugs that break production, then roadmap order, then priority and age.
 5. No `--parallel N` in the request → recommend one issue with a one-line reason, then at most four alternatives as `id: title`. End with: `/hermy:start <id>`.
-6. `--parallel N` → N not a whole number of at least 1 → say so and stop. Otherwise walk step 4's ranking top down and take issues until N are picked or the list ends; skip, and list under `Blocked` as `id: title (blocked by <id>)`, any with an open blocker:
+6. `--parallel N` → N not a whole number of at least 1 → say so and stop. Otherwise walk step 4's ranking top down and take issues until N are picked or the list ends; skip, and list under `Blocked` as `id: title (blocked by <id>)`, any with an open blocker, or whose own read fails (blocked by `unreadable`):
    - github: `issue_read` with `method: get` for its dependency fields (blocked by); none there → scan its body and comments for `blocked by #N`, and read each `#N` named: open means blocked; one that cannot be read counts as blocked.
    - jira: `getJiraIssue` for its issue links; a `is blocked by` link to an issue whose status is not in the Done category means blocked; a link whose issue cannot be read counts as blocked.
    - gitlab: the MCP tools cannot read a work item's links (`get_work_item` returns no link data), so blockers cannot be checked; say so, and leave each GitLab pick's blockers for the user to check by hand on the tracker before `/hermy:start`.
