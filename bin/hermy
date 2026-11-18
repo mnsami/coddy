@@ -1719,7 +1719,6 @@ if [ "$cmd" = doctor ]; then
     [ -x "$f" ] || { e="$h is not executable, so git skips it"; break; }
     c=$(head -c 4096 "$f" | sed -n "s/^c='\(.*\)'\$/\1/p" | head -1); c=${c//"'\\''"/"'"}
     if ! { [ -f "$c" ] && [ -x "$c" ]; }; then e="$h runs $c, which is gone"
-    elif head -c 4096 "$f" | grep -q 'command -v hermy'; then e="$h falls back to a hermy on PATH, where a command in the project could plant one" fx=$tf
     elif ! { [ -n "${ins+x}" ] || wtroots; }; then e="$wf failed, so whether $h runs a file in a worktree of the project cannot be told" fx="repair what makes $wf fail here"
     else follow "$c" inproj; [ $? != 2 ] || e="$h runs $c, which lies in the project or a worktree of it, or is reached through a link there" fx=$tf; fi
   done
