@@ -17,6 +17,7 @@ A section above shows a `bash` command rather than its output → this host does
 
 `NOT_ONBOARDED` → stop and say: run `/hermy:onboard` first.
 A `git_dir:` line in place of that → stop and show that line as it is.
+A `coddy:*` skill listed for this session (the plugin from before the rename is loaded) → stop before any write and say: run `claude plugin uninstall coddy@coddy`, open a new session and run `/hermy:migrate` again; that plugin's guard refuses the `.hermy.yml` write once `migrate records` has moved the claims.
 A `MIGRATE: <path>` line in Current → go on: that config is the source.
 
 `<root>` is Worktrees' `root`; the source is Worktrees' `config`.
