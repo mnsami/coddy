@@ -1293,11 +1293,7 @@ t 0 "link: points <dir>/hermy at the hermy it ran, by its real path" test "$(rea
 ino=$(ls -i "$tmp/data/hermy"); "$tmp/v1/hermy" link "$tmp/data"
 t 0 "link: pointing there already, it makes no new link" test "$(ls -i "$tmp/data/hermy")" = "$ino"
 t 0 "link: into a directory that is not there, nothing and exit 0" quiet "$tmp/v1/hermy" link "$tmp/nodata"
-# Hooks an older hermy wrote, by its versioned path, fell back to a hermy on PATH.
-for h in pre-commit pre-push; do sed -i.bak 's/^\[ -x "\$c" \] || {/[ -x "$c" ] || c=$(command -v hermy) || {/' "$hooks/$h"; rm "$hooks/$h.bak"; done
-t 0 "githook: (hooks as an older hermy wrote them, falling back to PATH)" grep -q 'command -v hermy' "$hooks/pre-commit"
 HERMY_EXEC="$tmp/data/hermy" "$tmp/v1/hermy" start 1 feat/1-thing >/dev/null 2>&1
-t 1 "githook: the next start rewrites them, PATH fallback gone" grep -q 'command -v' "$hooks/pre-commit" "$hooks/pre-push"
 t 0 "githook: start writes HERMY_EXEC's path, not its own" grep -qxF "c='$tmp/data/hermy'" "$hooks/pre-commit"
 sums=$(cksum "$hooks"/*; git config --local --list)
 "$tmp/v2/hermy" link "$tmp/data"; rm -r "$tmp/v1"
@@ -1797,12 +1793,10 @@ prob "a hook without hermy's header" '^hooks: pre-push is missing or not one her
 t 0 "doctor: the recorded hermy path gone, whatever is on PATH" sh -c "PATH='$tmp/onpath:/usr/bin:/bin' HERMY_ROOT='$dp' '$here/bin/hermy' doctor | grep -qx 'hooks: pre-commit runs /nonexistent/hermy, which is gone (fix: /hermy:start <issue>)'"
 t 1 "doctor: the recorded hermy path gone exits 1" env PATH="$tmp/onpath:/usr/bin:/bin" HERMY_ROOT="$dp" "$here/bin/hermy" doctor
 (cd "$dp" && cp "$tmp/pc" .git/hooks/hermy/pre-commit)
-# A sandboxed start cannot rewrite what git runs outside the sandbox: a hook an
-# older hermy wrote, falling back to a hermy on PATH, or one recording a hermy
-# in the project (claude --plugin-dir . did), is put right from the user's own terminal.
+# A sandboxed start cannot rewrite what git runs outside the sandbox: a hook
+# recording a hermy in the project (claude --plugin-dir . did) is put right from
+# the user's own terminal.
 term="(fix: one run of hermy's start from your own terminal, with a hermy installed outside the project)\$"
-oldhook() { cp .git/hooks/hermy/pre-commit "$tmp/pc"; { sed -n 1,3p "$tmp/pc"; echo '[ -x "$c" ] || c=$(command -v hermy) || exit 1'; sed 1,3d "$tmp/pc"; } > .git/hooks/hermy/pre-commit; }
-prob "a hook falling back to a hermy on PATH" "^hooks: pre-commit falls back to a hermy on PATH, where a command in the project could plant one $term" oldhook 'cp "$tmp/pc" .git/hooks/hermy/pre-commit'
 inhook() { cp .git/hooks/hermy/pre-commit "$tmp/pc"; mkdir bin; cp "$here/bin/hermy" bin/; sed -i.bak "s#^c=.*#c='$PWD/bin/hermy'#" .git/hooks/hermy/pre-commit; rm .git/hooks/hermy/pre-commit.bak; }
 prob "a hook running a hermy in the project" "^hooks: pre-commit runs .*/bin/hermy, which lies in the project or a worktree of it, or is reached through a link there $term" inhook 'cp "$tmp/pc" .git/hooks/hermy/pre-commit; rm -r bin'
 PATH="$tmp/nowtl:$PATH" t 0 "doctor: git worktree list failing" dsays '^hooks: git worktree list failed, so whether pre-commit runs a file in a worktree of the project cannot be told (fix: '
