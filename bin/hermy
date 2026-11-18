@@ -2158,11 +2158,23 @@ case "$cmd" in
     if [ -n "$setup" ]; then
       n=00${issue##*[!0-9]}; off=$((10#${n: -2} * 10))
       echo "port_offset: $off"
-      # jj's auto-track turned off first where its config can be written, so
-      # a jj command setup runs tracks no new file; where a sandbox keeps that
-      # write out, setup runs all the same and notrack below says so after it.
-      (notrack) >/dev/null 2>&1
-      (cd "$wt" && HERMY_ISSUE=$issue HERMY_PORT_OFFSET=$off sh -c "$setup") >&2; r=$?
+      # Under jj, setup runs with auto-track off from a config file of its
+      # own, after the user's files, which JJ_CONFIG replaces (/etc/jj's
+      # too), so a jj command it runs tracks no new file with no write to
+      # jj's config, which a sandbox keeps out. A new file (set -C) in a
+      # mktemp directory, removed however setup ends; a repo or workspace
+      # config naming auto-track still overrides it.
+      jc=
+      if [ "$tool" = jj ]; then
+        jd=$(mktemp -d 2>/dev/null) || die "could not make a temporary directory for setup's jj config"
+        trap 'rm -rf "$jd"' EXIT
+        (set -C; echo 'snapshot.auto-track = "none()"' > "$jd/auto-track.toml") 2>/dev/null || die "could not write $jd/auto-track.toml"
+        if [ -n "${JJ_CONFIG+x}" ]; then jc=$JJ_CONFIG:
+        else jc=/etc/jj/config.toml:/etc/jj/conf.d:$(jj config path --user 2>/dev/null | tr '\n' :); fi
+        jc=$jc$jd/auto-track.toml
+      fi
+      (cd "$wt" && { [ -z "$jc" ] || export JJ_CONFIG="$jc"; } && HERMY_ISSUE=$issue HERMY_PORT_OFFSET=$off sh -c "$setup") >&2; r=$?
+      [ -z "$jc" ] || { rm -rf "$jd"; trap - EXIT; }
       [ "$r" = 0 ] || die "setup failed (exit $r) in $wt, which stays as it is: fix it there by hand, with HERMY_ISSUE=$issue and HERMY_PORT_OFFSET=$off, since start runs setup only on a new worktree"
     fi
     # jj's auto-track and the git hooks after setup: a sandbox refuses both

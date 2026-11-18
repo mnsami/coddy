@@ -2147,6 +2147,21 @@ if command -v jj >/dev/null; then
   t 0 "setup: under jj, a sandbox that keeps out the auto-track write fails start" test $? != 0
   t 0 "setup: but setup has run first" test -e "$sj/.worktrees/143/made.txt"
   t 0 "setup: naming the sandbox" grep -q 'A sandbox blocks it' "$tmp/setup-jj.log"
+  # A jj config dir it cannot write (workspace configs read-only): setup's
+  # jj tracks no new file all the same, and its temporary config is gone
+  # whether setup passes or fails.
+  ut() { l=$(cd "$sj/.worktrees/$1" && jj --ignore-working-copy file list) && printf '%s\n' "$l" | grep -qx README.md && ! printf '%s\n' "$l" | grep -qx made.txt; }
+  if [ "$(id -u)" != 0 ]; then # root writes anywhere
+    jx="$tmp/setup-xdg"; mkdir -p "$jx/jj/workspaces" "$tmp/setup-tmp"; chmod 555 "$jx/jj/workspaces"
+    XDG_CONFIG_HOME="$jx" TMPDIR="$tmp/setup-tmp" HERMY_ROOT="$sj" run start 144 feat/144-setup >/dev/null 2>&1
+    t 0 "setup: under jj, with the workspace config read-only, the jj it runs tracks no new file" ut 144
+    t 0 "setup: and its temporary jj config is removed" test -z "$(ls -A "$tmp/setup-tmp")"
+    printf 'version: 2\ntracker: github\nworktree: jj\ndefault_branch: main\nsetup: echo x > made.txt && jj st && exit 3\n' > "$sj/.hermy.yml"
+    t 1 "setup: under jj, a failing one makes start exit non-zero" env XDG_CONFIG_HOME="$jx" TMPDIR="$tmp/setup-tmp" HERMY_ROOT="$sj" "$here/bin/hermy" start 145 feat/145-setup
+    t 0 "setup: tracking no new file" ut 145
+    t 0 "setup: and removing its temporary jj config" test -z "$(ls -A "$tmp/setup-tmp")"
+    chmod 755 "$jx/jj/workspaces"
+  fi
 fi
 
 exit $fail
