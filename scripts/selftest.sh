@@ -175,7 +175,7 @@ t 0 "onboard names the AGENTS.md end marker" grep -qF '<!-- hermy:end -->' "$her
 # .worktrees/, is read; a listing that fails or is empty fails the check.
 # Binary files are skipped. The pattern is written as a class, so no line
 # here holds the name.
-oldok='coddy@coddy|coddy:*|.coddy.yml|.claude/coddy.yml|.claude/coddy/|AGENT_DIR/coddy|.git/coddy|.git/hooks/coddy|coddy.previousHooksPath|Written by coddy start|coddy:plan|coddy:questions|coddy:begin|coddy:end|workflows/coddy.yml|mnsami/coddy|coddy-spike|coddy-probe|formerly coddy|Coddy Agent|Coddy, Inc.'
+oldok='coddy@coddy|coddy:*|.coddy.yml|.claude/coddy.yml|.claude/coddy/|AGENT_DIR/coddy|.git/coddy|.git/hooks/coddy|coddy.previousHooksPath|Written by coddy start|coddy:plan|coddy:questions|coddy:begin|coddy:end|workflows/coddy.yml|mnsami/coddy|coddy-spike|coddy-probe|formerly coddy|Coddy Agent|Coddy, Inc.|coddy.dev|coddy.tech'
 oldname() (
   cd "$1" || exit 2 # paths below it alone: the checkout's own may hold the name
   if [ -e .git ]; then git ls-files -z; elif [ -d .jj ]; then jj file list -T 'path ++ "\0"'; else exit 2; fi > "$tmp/tracked" && [ -s "$tmp/tracked" ] || exit 2
