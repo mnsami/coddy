@@ -24,7 +24,7 @@ Both self-tests build a throwaway repo with a local bare remote; `selftest.sh` a
 
 Skills act on the project in `$CLAUDE_PROJECT_DIR`, so to exercise one, run `claude --plugin-dir /path/to/hermy` from inside a target project that has (or, for `onboard`, lacks) `.hermy.yml`.
 
-Release = a version bump of `.claude-plugin/plugin.json` through a PR of its own, never a direct commit to `main` (the marketplace installs from it); steps in `RELEASING.md`. `marketplace.json` carries no version. An installed copy only changes after a bump: `claude plugin marketplace update hermy && claude plugin update hermy@hermy`.
+Release = a version bump of `.claude-plugin/plugin.json` through a PR of its own, never a direct commit to `main` (the marketplace installs from it); once it merges, CI tags it `v<version>` and creates its GitHub release (`.github/workflows/release.yml`); steps in `RELEASING.md`. `marketplace.json` carries no version. An installed copy only changes after a bump: `claude plugin marketplace update hermy && claude plugin update hermy@hermy`.
 
 ## Architecture
 
