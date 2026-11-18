@@ -2134,5 +2134,19 @@ t 1 "setup: before any worktree is made" test -e "$s/.worktrees/139"
 # a hook manager setup installs (husky's prepare, on npm ci) re-sets core.hooksPath: start puts hermy's back
 sc 'git config core.hooksPath .husky/_'; st 141 feat/141-setup >/dev/null 2>&1
 t 0 "setup: runs before the git hooks, which keep core.hooksPath" test "$(git -C "$s" config core.hooksPath)" -ef "$s/.git/hooks/hermy"
+# Under jj, auto-track is off before setup where jj's config can be written,
+# so a setup that runs jj tracks no new file; where a sandbox keeps that
+# write out, setup still runs and start then names the sandbox.
+if command -v jj >/dev/null; then
+  sj="$tmp/setup-jj"; git clone -q "$tmp/origin.git" "$sj" 2>/dev/null; (cd "$sj" && jj git init --colocate && echo '.jj/' >> .git/info/exclude) >/dev/null 2>&1
+  printf 'version: 2\ntracker: github\nworktree: jj\ndefault_branch: main\nsetup: echo x > made.txt && jj st\n' > "$sj/.hermy.yml"
+  HERMY_ROOT="$sj" run start 142 feat/142-setup >/dev/null 2>&1
+  t 0 "setup: under jj, the jj it runs tracks no new file" sh -c "l=\$(cd '$sj/.worktrees/142' && jj --ignore-working-copy file list) && printf '%s\n' \"\$l\" | grep -qx README.md && ! printf '%s\n' \"\$l\" | grep -qx made.txt"
+  mkdir -p "$tmp/sbjj"; printf '#!/bin/sh\ncase " $* " in *" config set "*) printf "Error: Failed to write config file\\nCaused by: Operation not permitted (os error 1)\\n" >&2; exit 1 ;; esac\nexec %s "$@"\n' "$(command -v jj)" > "$tmp/sbjj/jj"; chmod +x "$tmp/sbjj/jj"
+  PATH="$tmp/sbjj:$PATH" HERMY_ROOT="$sj" run start 143 feat/143-setup > "$tmp/setup-jj.log" 2>&1
+  t 0 "setup: under jj, a sandbox that keeps out the auto-track write fails start" test $? != 0
+  t 0 "setup: but setup has run first" test -e "$sj/.worktrees/143/made.txt"
+  t 0 "setup: naming the sandbox" grep -q 'A sandbox blocks it' "$tmp/setup-jj.log"
+fi
 
 exit $fail
