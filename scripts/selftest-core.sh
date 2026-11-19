@@ -901,6 +901,32 @@ t 2 "guard: a refused path beats an ask" guardp "[\"$repo/.hermy.yml\",\"$repo/R
 t 2 "guard: an empty paths list is refused" guardp '[]'
 t 0 "guard: two paths in the claimed worktree pass" guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.worktrees/1/b.txt\"]"
 HERMY_ASK=0 t 2 "guard: under HERMY_ASK=0 two paths, one the config, block" guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.hermy.yml\"]"
+# A host's shim hands over every file one apply_patch string names. Codex-
+# and Copilot-shaped shims, the self-test's alone, share one extractor.
+cat > "$tmp/patchshim" <<'EOF'
+# Codex sends apply_patch with the patch as its command's last word, Copilot
+# as an Edit whose tool_input is the patch string.
+hermy_in() {
+  jq -c 'def patch: if (.tool_input | type) == "string" then .tool_input
+      elif (.tool_input.command | type) == "array" then .tool_input.command[-1]
+      else .tool_input.input // "" end;
+    {paths: [patch | splits("\n") | rtrimstr("\r") | capture("^\\*\\*\\* (?:(?:Update|Add|Delete) File|Move to): (?<p>.+)$") | .p],
+     cwd: (.cwd // ""), call: (.tool_use_id // ""), session: (.session_id // "")}'
+}
+EOF
+printf '. %q\n' "$here/bin/hermy" >> "$tmp/patchshim"
+# patch <path...>: an apply_patch string updating each path
+patch() { local p; printf '*** Begin Patch\n'; for p; do printf '*** Update File: %s\n@@\n-hi\n+ho\n' "$p"; done; printf '*** End Patch\n'; }
+# codexp <patch> and copilot <path...>: the guard's payload as each host sends it
+codexp() { jq -cn --arg p "$1" --arg c "$repo" '{session_id: "sess-a", tool_use_id: "c1", cwd: $c, tool_name: "apply_patch", tool_input: {command: ["apply_patch", $p]}}' | bash "$tmp/patchshim" guard; }
+codex() { codexp "$(patch "$@")"; }
+copilot() { jq -cn --arg p "$(patch "$@")" --arg c "$repo" '{session_id: "sess-a", tool_use_id: "c1", cwd: $c, tool_name: "Edit", tool_input: $p}' | bash "$tmp/patchshim" guard; }
+t 0 "apply_patch: a Codex patch of two files in the claimed worktree passes" codex .worktrees/1/a.txt .worktrees/1/b.txt
+t 2 "apply_patch: a Codex patch of README.md is refused" codex README.md
+t 0 "apply_patch: a Copilot Edit patching a file in the claimed worktree passes" copilot .worktrees/1/a.txt
+t 2 "apply_patch: a Copilot Edit patching README.md is refused" copilot README.md
+t 2 "apply_patch: a patch of the claimed worktree and README.md is refused" codex .worktrees/1/a.txt README.md
+t 2 "apply_patch: a move out of the claimed worktree onto README.md is refused" codexp "$(printf '*** Begin Patch\n*** Update File: .worktrees/1/a.txt\n*** Move to: README.md\n@@\n-hi\n+ho\n*** End Patch')"
 many=$(jq -cn --arg d "$repo/.worktrees/1/" '[range(0;65)|$d+"f\(.)"]')
 t 2 "guard: a payload with more paths than the cap is refused" guardp "$many"
 t 0 "guard: that refusal names the cap" eval 'guardp "$many" 2>&1 | grep -q "too many paths, more than the 64"'
