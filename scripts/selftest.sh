@@ -2334,13 +2334,21 @@ git -C "$rel" remote set-url origin "$rel.git"
 t 0 "release: a new version passes" release
 t 0 "release: with one gh call" test "$(grep -c '' "$GH_LOG")" = 1
 t 0 "release: creating v<new> and its release on the pushed commit" grep -qx "release create v0.2.0 --target $(git -C "$rel" rev-parse HEAD) --title v0.2.0 --notes-file .* --repo REPO" "$GH_LOG"
-printf '%s\n' 'feat: on a branch' 'fix(guard): held' > "$tmp/want.notes"
-t 0 "release: its notes the feat: and fix: subjects since the previous tag, one per line, merges aside" sh -c 'sort "$1" | cmp -s - "$2"' - "$GH_NOTES" "$tmp/want.notes"
+printf '%s\n' '```text' 'fix(guard): held' 'feat: on a branch' '```' > "$tmp/want.notes"
+t 0 "release: its notes the feat: and fix: subjects since the previous tag, one per line in a text fence, merges aside" cmp -s "$GH_NOTES" "$tmp/want.notes"
 t 0 "release: BEFORE all zeros after the bump reads 0.1.0 from HEAD^ and releases" release 0000000000000000000000000000000000000000
 t 0 "release: with one gh call" test "$(grep -c '' "$GH_LOG")" = 1
 git -C "$rel" tag -d v0.1.0 v0.0.9 >/dev/null
 t 0 "release: with no previous tag passes" release
 t 0 "release: its notes say it is the first tagged release, and list nothing" test "$(cat "$GH_NOTES")" = 'v0.2.0 is the first tagged release.'
+git -C "$rel" tag v0.2.0; git -C "$rel" push -q origin v0.2.0 2>/dev/null
+rc 'chore: bump to 0.3.0' 0.3.0
+t 0 "release: a bump with no feat: or fix: since the previous tag passes" release
+t 0 "release: its notes say so in one line" test "$(cat "$GH_NOTES")" = 'No feat: or fix: change since v0.2.0.'
+rc 'Revert "chore: bump to 0.3.0"' 0.2.0
+t 0 "release: a push that lowers the version passes, though its tag is on origin" release
+t 0 "release: and calls no gh" nogh
+t 0 "release: saying the version went down" says 'version went down from 0.3.0 to 0.2.0: nothing to tag.' release
 
 # The GitLab job's script, as the runner runs it, against a stub curl.
 # CURL_MR and CURL_ISSUE are the response bodies, CURL_ISSUE_<n> issue n's alone,
