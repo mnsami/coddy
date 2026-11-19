@@ -58,10 +58,10 @@ Enforcement every agent gets.
 - #14 Make git the default worktree tool, keep jj opt-in
 
 ### M4 · Agent adapters
-No adapter is built before the M6 spike (#40) reports; the M4 spikes (#30, the Copilot spike) run alongside. One plugin per agent, each carrying the same skills, briefs and `bin/hermy`; what differs is the manifest and the hook names.
+No adapter is built before the M6 spike (#40) reports; the M4 spikes (#30, the Copilot spike) run alongside. One plugin per agent, each carrying the same skills, briefs and `bin/hermy`; what differs is the manifest, the hook registration and a shim mapping the host's hook payload to the core's host-neutral contract (#278). Until a host's shim lands, the hooks run on Claude Code only.
 - #30 Spike: build agent adapters on an existing cross-agent hook layer
 - #31 Codex adapter: `.codex-plugin/plugin.json` with PreToolUse hooks
-- #32 Cursor adapter: a Cursor plugin; a blocking pre-edit hook is unconfirmed
+- #32 Cursor adapter: a Cursor plugin; whether its pre-edit hook can block is unconfirmed, not known to be absent
 - #33 Copilot CLI adapter: loads the plugin's skills but drops the `args` of the exec form in `hooks/hooks.json` (so no hook guardrail runs) and expands nothing in skill bodies, so it needs its own hook manifest and shim
 - #150 Google adapter: Gemini CLI or Antigravity CLI, a spike picks; Gemini CLI's is an extension (`gemini-extension.json`) with BeforeTool hooks
 - #34 hermy doctor: prerequisites and per-agent enforcement level
