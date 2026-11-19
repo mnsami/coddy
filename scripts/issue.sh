@@ -20,9 +20,9 @@
 # has none, so it never repoints the launcher an installed hermy keeps. link,
 # the SessionStart hook, which needs no project and whose output is the
 # model's context, points it at this install's bin/hermy, given that dir
-# alone; start has the hooks run it once it is there. An inherited HERMY_EXEC
-# or HERMY_BUDGET (the fingerprint's seconds, the self-test's to lower) is
-# ignored, as every HERMY_* is.
+# alone; start has the hooks run it once it is there. An inherited HERMY_EXEC,
+# HERMY_BUDGET (the fingerprint's seconds, the self-test's to lower) or
+# HERMY_ASK (Claude Code can ask) is ignored, as every HERMY_* is.
 # A hook blocks only on exit 2, so any other exit of guard or snap, a core
 # that cannot be read included, becomes a 2 here with a message naming what
 # to do in plain text: a hermy crash blocks every such call until hermy is
@@ -32,7 +32,7 @@
 # shellcheck disable=SC2154 # c is the trap's own
 case "${1-}" in guard|snap) trap 'c=$?; [ "$c" = 0 ] || [ "$c" = 2 ] || { echo "hermy: the '"$1"' hook failed (exit $c), so the call is refused. The failure lies in hermy, not in the call (its error, if any, is above), and every such call is refused until the user updates or reinstalls the hermy plugin, or disables it." >&2; exit 2; }' EXIT ;; esac
 for v in "${!GIT_@}"; do case $v in GIT_AUTHOR_*|GIT_COMMITTER_*|GIT_SSH*|GIT_ASKPASS|GIT_TERMINAL_PROMPT) ;; *) unset "$v" ;; esac; done
-unset HERMY_EXEC HERMY_BUDGET
+unset HERMY_EXEC HERMY_BUDGET HERMY_ASK
 case "${1-}" in link|start|create)
   d=$(cd -P "${0%/*}/.." 2>/dev/null && pwd -P); d=${d%/*}; id=${d##*/}; d=${d%/*}; id="$id@${d##*/}"; d=${d%/*}
   case "$d" in */plugins/cache) d="${d%/cache}/data/${id//[!A-Za-z0-9_-]/-}" ;; *) d="" ;; esac

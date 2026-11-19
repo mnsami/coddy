@@ -328,6 +328,10 @@ mv "$tmp/live.yml" .hermy.yml
 # jq the guard cannot tell which path is edited and fails closed.
 t 0 "guard asks on .hermy.yml" asks "$repo/.hermy.yml"
 for p in "$repo/./.hermy.yml" "$repo//.hermy.yml" "$repo/sub/../.hermy.yml" "$repo/.HERMY.YML" .hermy.yml; do t 0 "guard asks on .hermy.yml spelled $p" asks "$p"; done
+# A shim whose host cannot ask sets HERMY_ASK=0: the ask blocks, saying so.
+HERMY_ASK=0 t 2 "guard: under HERMY_ASK=0 the ask on .hermy.yml blocks" guard "$repo/.hermy.yml"
+HERMY_ASK=0 t 0 "guard: that refusal says the host cannot ask" says 'This host cannot ask, so hermy refuses it' guard "$repo/.hermy.yml"
+HERMY_ASK=1 t 0 "guard: any other HERMY_ASK still asks" asks "$repo/.hermy.yml"
 # .coddy.yml, from before the rename, below a live .hermy.yml is let go by the
 # config lock, so an edit of it is held like any path in the main checkout, and
 # one that is a link to .git/config is refused, never asked.
@@ -896,6 +900,7 @@ t 0 "guard: that ask is one neutral line" eval 'guardp "[\"$repo/.worktrees/1/a.
 t 2 "guard: a refused path beats an ask" guardp "[\"$repo/.hermy.yml\",\"$repo/README.md\"]"
 t 2 "guard: an empty paths list is refused" guardp '[]'
 t 0 "guard: two paths in the claimed worktree pass" guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.worktrees/1/b.txt\"]"
+HERMY_ASK=0 t 2 "guard: under HERMY_ASK=0 two paths, one the config, block" guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.hermy.yml\"]"
 many=$(jq -cn --arg d "$repo/.worktrees/1/" '[range(0;65)|$d+"f\(.)"]')
 t 2 "guard: a payload with more paths than the cap is refused" guardp "$many"
 t 0 "guard: that refusal names the cap" eval 'guardp "$many" 2>&1 | grep -q "too many paths, more than the 64"'

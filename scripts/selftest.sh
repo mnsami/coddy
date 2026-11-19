@@ -2161,6 +2161,7 @@ away() { (cd "$tmp" && "$@"); }
 asks() { out=$(guard "$1") && printf %s "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and .permissionDecision == "ask"'; }
 t 2 "hook: guard after a cd out of the project blocks the main checkout" away guard "$repo/README.md"
 t 0 "hook: and asks on .hermy.yml" away asks "$repo/.hermy.yml"
+HERMY_ASK=0 t 0 "hook: an inherited HERMY_ASK=0 still gives Claude Code's ask" asks "$repo/.hermy.yml"
 away wire snap w; echo x > stray.txt; t 2 "hook: trip after a cd out of the project reports a stray write" away wire trip w; rm stray.txt
 away wire snap w; rm .claude/coddy.yml; t 2 "hook: trip after a cd out of the project restores a deleted config" away wire trip w
 t 0 "hook: and the config came back" same

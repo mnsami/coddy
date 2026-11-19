@@ -789,7 +789,13 @@ if [ "${1-}" = guard ]; then
   nm=$(byname "$f" && printf x) && nm=${nm%?x} && at=$(phys "$nm" new) && at=${at%x} || die "$nf"
   pr=$(cd "$root" && pwd -P && printf x) && pr=${pr%?x} || pr=$root
   # Removed (tamp), /hermy:config stops on NOT_ONBOARDED, so the ask names none.
-  ask() { local m="Editing $1 changes the hermy guardrails. Allow it only if you asked for this change (/hermy:config)."; [ -z "$tamp" ] || m="Writing $1 puts back the hermy config that was removed, and with it the hermy guardrails. Allow it only if you asked for this change."; emit "$(jqh -cn --arg m "$m" '{hermy: "ask", text: $m}')"; exit 0; }
+  # A shim whose host cannot ask sets HERMY_ASK=0: the ask then blocks.
+  ask() {
+    local m="Editing $1 changes the hermy guardrails. Allow it only if you asked for this change (/hermy:config)."
+    [ -z "$tamp" ] || m="Writing $1 puts back the hermy config that was removed, and with it the hermy guardrails. Allow it only if you asked for this change."
+    [ "${HERMY_ASK-}" != 0 ] || die "$m This host cannot ask, so hermy refuses it."
+    emit "$(jqh -cn --arg m "$m" '{hermy: "ask", text: $m}')"; exit 0
+  }
   lc=$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')
   # Each config path from the highest down to the live one ($cname), the
   # legacy one in the agent dir (free otherwise) asked as .hermy.yml is, its
