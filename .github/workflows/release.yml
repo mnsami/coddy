@@ -49,12 +49,15 @@ jobs:
           [ "$found" = 2 ] || { echo "::error::could not list origin's tags: nothing created."; exit 1; }
           prev=$(git tag --merged HEAD -l 'v[0-9]*' --sort=-v:refname | head -1)
           notes=$(mktemp); trap 'rm -f "$notes"' EXIT
-          # Fenced, so a link or mention in a subject shows as text. A CR, which Markdown reads as a line end, becomes a space, so every line starts with feat or fix and none closes the fence.
+          # Fenced, so a link or mention in a subject shows as text. A CR, which Markdown reads as a line end, becomes a space, so every line starts with feat or fix and none closes the fence. Both read bytes (LC_ALL=C): under a UTF-8 locale grep drops a subject holding a byte that is not UTF-8 as binary, and macOS's tr stops at it.
           if [ -z "$prev" ]; then
             echo "v$new is the first tagged release." > "$notes"
-          elif list=$(git log --no-merges --format=%s "$prev..HEAD" | tr '\r' ' ' | grep -E '^(feat|fix)(\(.*\))?:'); then
+          elif list=$(git log --no-merges --format=%s "$prev..HEAD" | LC_ALL=C tr '\r' ' ' | LC_ALL=C grep -aE '^(feat|fix)(\(.*\))?:'); then
             printf '```text\n%s\n```\n' "$list" > "$notes"
           else
             echo "No feat: or fix: change since $prev." > "$notes"
           fi
-          gh release create "v$new" --target "$SHA" --title "v$new" --notes-file "$notes" --repo "$REPO"
+          # A version below a tag the checkout holds (a failed or cancelled run rerun after a later bump shipped) is not marked latest.
+          top=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -1) latest=
+          [ "$(printf '%s\n' "$top" "v$new" | sort -V | tail -1)" = "v$new" ] || latest=--latest=false
+          gh release create "v$new" --target "$SHA" --title "v$new" ${latest:+"$latest"} --notes-file "$notes" --repo "$REPO"

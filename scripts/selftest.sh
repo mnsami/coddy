@@ -2313,7 +2313,10 @@ rc 'feat: an older release' 0.0.9; git -C "$rel" tag v0.0.9
 rc 'feat: before the tag' 0.1.0; git -C "$rel" tag v0.1.0
 git -C "$rel" checkout -q -b side; rc 'feat: on a branch'; git -C "$rel" checkout -q main
 git -C "$rel" merge -q --no-ff --no-edit -m 'feat: a merge commit, titled like its PR' side
-rc 'fix(guard): held'; rc $'fix: typo\r```\r[x](https://e) @u'; rc 'feature: not a fix: one'; rc 'chore: rename' 0.1.0 hermy2
+rc 'fix(guard): held'; rc $'fix: typo\r```\r[x](https://e) @u'
+# git commit turns a byte that is not UTF-8 into UTF-8 unless the commit names an encoding: under one iconv does not know, git log prints it as it is.
+git -C "$rel" -c i18n.commitEncoding=x-unknown commit -q --allow-empty -m $'fix: latin1 caf\xe9'
+rc 'feature: not a fix: one'; rc 'chore: rename' 0.1.0 hermy2
 git -C "$rel" push -q origin main v0.1.0 2>/dev/null
 t 0 "release: a push that leaves the version as it was passes" release
 t 0 "release: and calls no gh" nogh
@@ -2333,9 +2336,9 @@ t 0 "release: and calls no gh" nogh
 git -C "$rel" remote set-url origin "$rel.git"
 t 0 "release: a new version passes" release
 t 0 "release: with one gh call" test "$(grep -c '' "$GH_LOG")" = 1
-t 0 "release: creating v<new> and its release on the pushed commit" grep -qx "release create v0.2.0 --target $(git -C "$rel" rev-parse HEAD) --title v0.2.0 --notes-file .* --repo REPO" "$GH_LOG"
-printf '%s\n' '```text' 'fix: typo ``` [x](https://e) @u' 'fix(guard): held' 'feat: on a branch' '```' > "$tmp/want.notes"
-t 0 "release: its notes the feat: and fix: subjects since the previous tag, one per line in a text fence, merges aside, a CR in one a space" cmp -s "$GH_NOTES" "$tmp/want.notes"
+t 0 "release: creating v<new> and its release on the pushed commit, with no --latest=false" grep -qx "release create v0.2.0 --target $(git -C "$rel" rev-parse HEAD) --title v0.2.0 --notes-file .* --repo REPO" "$GH_LOG"
+printf '%s\n' '```text' $'fix: latin1 caf\xe9' 'fix: typo ``` [x](https://e) @u' 'fix(guard): held' 'feat: on a branch' '```' > "$tmp/want.notes"
+t 0 "release: its notes the feat: and fix: subjects since the previous tag, one per line in a text fence, merges aside, a CR in one a space, one holding a byte that is not UTF-8 listed" cmp -s "$GH_NOTES" "$tmp/want.notes"
 t 0 "release: BEFORE all zeros after the bump reads 0.1.0 from HEAD^ and releases" release 0000000000000000000000000000000000000000
 t 0 "release: with one gh call" test "$(grep -c '' "$GH_LOG")" = 1
 git -C "$rel" tag -d v0.1.0 v0.0.9 >/dev/null
@@ -2349,6 +2352,10 @@ rc 'Revert "chore: bump to 0.3.0"' 0.2.0
 t 0 "release: a push that lowers the version passes, though its tag is on origin" release
 t 0 "release: and calls no gh" nogh
 t 0 "release: saying the version went down" says 'version went down from 0.3.0 to 0.2.0: nothing to tag.' release
+git -C "$rel" checkout -q -b later; rc 'chore: bump to 0.10.0' 0.10.0; git -C "$rel" tag v0.10.0; git -C "$rel" checkout -q main
+rc 'chore: bump to 0.2.1' 0.2.1
+t 0 "release: a version below a tag the checkout holds (a rerun after a later bump shipped) passes" release
+t 0 "release: and is not marked latest" grep -qx "release create v0.2.1 --target $(git -C "$rel" rev-parse HEAD) --title v0.2.1 --latest=false --notes-file .* --repo REPO" "$GH_LOG"
 
 # The GitLab job's script, as the runner runs it, against a stub curl.
 # CURL_MR and CURL_ISSUE are the response bodies, CURL_ISSUE_<n> issue n's alone,
