@@ -8,9 +8,11 @@
 # gh release create alone would hang a release on that tag. gh creates the tag
 # through the API, so the checkout keeps no push credential. The run block
 # reads its inputs from env alone, so scripts/selftest.sh runs it against a
-# stub gh. A failed run is rerun from the Actions page. The concurrency group
-# queues two bumps merged close together, so neither passes the tag check
-# before the other's tag exists, which the self-test cannot show.
+# stub gh. The concurrency group queues two bumps merged close together, so
+# neither passes the tag check before the other's tag exists, which the
+# self-test cannot show. GitHub keeps one run waiting per group and cancels the
+# older waiting one, so a third bump close behind cancels the second's run. A
+# failed or cancelled run is rerun from the Actions page.
 name: release
 on:
   push:
@@ -47,10 +49,10 @@ jobs:
           [ "$found" = 2 ] || { echo "::error::could not list origin's tags: nothing created."; exit 1; }
           prev=$(git tag --merged HEAD -l 'v[0-9]*' --sort=-v:refname | head -1)
           notes=$(mktemp); trap 'rm -f "$notes"' EXIT
-          # Fenced, so a link or mention in a subject shows as text; every line starts with feat or fix, so none closes the fence.
+          # Fenced, so a link or mention in a subject shows as text. A CR, which Markdown reads as a line end, becomes a space, so every line starts with feat or fix and none closes the fence.
           if [ -z "$prev" ]; then
             echo "v$new is the first tagged release." > "$notes"
-          elif list=$(git log --no-merges --format=%s "$prev..HEAD" | grep -E '^(feat|fix)(\(.*\))?:'); then
+          elif list=$(git log --no-merges --format=%s "$prev..HEAD" | tr '\r' ' ' | grep -E '^(feat|fix)(\(.*\))?:'); then
             printf '```text\n%s\n```\n' "$list" > "$notes"
           else
             echo "No feat: or fix: change since $prev." > "$notes"

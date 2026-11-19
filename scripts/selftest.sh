@@ -2313,7 +2313,7 @@ rc 'feat: an older release' 0.0.9; git -C "$rel" tag v0.0.9
 rc 'feat: before the tag' 0.1.0; git -C "$rel" tag v0.1.0
 git -C "$rel" checkout -q -b side; rc 'feat: on a branch'; git -C "$rel" checkout -q main
 git -C "$rel" merge -q --no-ff --no-edit -m 'feat: a merge commit, titled like its PR' side
-rc 'fix(guard): held'; rc 'feature: not a fix: one'; rc 'chore: rename' 0.1.0 hermy2
+rc 'fix(guard): held'; rc $'fix: typo\r```\r[x](https://e) @u'; rc 'feature: not a fix: one'; rc 'chore: rename' 0.1.0 hermy2
 git -C "$rel" push -q origin main v0.1.0 2>/dev/null
 t 0 "release: a push that leaves the version as it was passes" release
 t 0 "release: and calls no gh" nogh
@@ -2334,8 +2334,8 @@ git -C "$rel" remote set-url origin "$rel.git"
 t 0 "release: a new version passes" release
 t 0 "release: with one gh call" test "$(grep -c '' "$GH_LOG")" = 1
 t 0 "release: creating v<new> and its release on the pushed commit" grep -qx "release create v0.2.0 --target $(git -C "$rel" rev-parse HEAD) --title v0.2.0 --notes-file .* --repo REPO" "$GH_LOG"
-printf '%s\n' '```text' 'fix(guard): held' 'feat: on a branch' '```' > "$tmp/want.notes"
-t 0 "release: its notes the feat: and fix: subjects since the previous tag, one per line in a text fence, merges aside" cmp -s "$GH_NOTES" "$tmp/want.notes"
+printf '%s\n' '```text' 'fix: typo ``` [x](https://e) @u' 'fix(guard): held' 'feat: on a branch' '```' > "$tmp/want.notes"
+t 0 "release: its notes the feat: and fix: subjects since the previous tag, one per line in a text fence, merges aside, a CR in one a space" cmp -s "$GH_NOTES" "$tmp/want.notes"
 t 0 "release: BEFORE all zeros after the bump reads 0.1.0 from HEAD^ and releases" release 0000000000000000000000000000000000000000
 t 0 "release: with one gh call" test "$(grep -c '' "$GH_LOG")" = 1
 git -C "$rel" tag -d v0.1.0 v0.0.9 >/dev/null
