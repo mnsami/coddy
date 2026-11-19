@@ -806,8 +806,24 @@ rm .hermy.yml; mv .claude/coddy.yml .hermy.yml
 mv .hermy.yml "$tmp/aside"
 tripped 0 "snapshot: quiet once the config is gone, no claim or git hooks left" 'true'
 mv "$tmp/aside" .hermy.yml
-t 0 "snapshot: a call that is not a plain word names the shared snapshot" sh -c "printf '{\"call\":\"../x\"}' | '$here/bin/hermy' snap && test -f '${snapfile%-w}-shared'"
+t 0 "snapshot: a call that is not a plain word, with no session or pid, names the shared snapshot" env -u HERMY_PID sh -c "printf '{\"call\":\"../x\"}' | '$here/bin/hermy' snap && test -f '${snapfile%-w}-shared'"
 rm -f "${snapfile%-w}-shared"*
+# With no call id, each session keeps a shared snapshot of its own (else its
+# pid's), its name reduced to a plain word, so two never take each other's.
+# sw <verb> <session>: the hook with that session and no call id
+sw() { printf '{"session":"%s"}' "$2" | run "$1"; }
+t 0 "snapshot: with no call id, the session names it" sh -c "printf '{\"session\":\"../a\"}' | '$here/bin/hermy' snap && test -f '${snapfile%-w}-shared-a'"
+t 0 "snapshot: with no call id or session, the pid names it" sh -c "printf '{}' | '$here/bin/hermy' snap && test -f '${snapfile%-w}-shared-$$'"
+rm -f "${snapfile%-w}-shared"*
+sw snap a >/dev/null 2>&1; sw snap b >/dev/null 2>&1; sw trip b >/dev/null 2>&1
+out=$(sw trip a 2>&1); r=$?
+t 0 "snapshot: two sessions with no call id, interleaved, each trip finds its own" test "$r" = 0
+t 1 "snapshot: and none reports it lost" grep -q 'left no snapshot' <<<"$out"
+sw snap a >/dev/null 2>&1; sw snap b >/dev/null 2>&1; git worktree add -q --detach "$tmp/stray" 2>/dev/null
+t 2 "snapshot: a stray worktree one session's command made trips that session's trip" sw trip a
+out=$(sw trip b 2>&1)
+t 1 "snapshot: while the other's reports no lost snapshot" grep -q 'left no snapshot' <<<"$out"
+git worktree remove --force "$tmp/stray"; rm -f "${snapfile%-w}-shared"*
 
 # No agent-dir rules without HERMY_AGENT_DIR; with it, its directory is free
 # and its worktrees/ held to the lock.

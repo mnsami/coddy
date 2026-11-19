@@ -1213,13 +1213,15 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   fpb=20 SECONDS=0
   case "${HERMY_BUDGET-}" in ''|*[!0-9]*) ;; *) [ "${#HERMY_BUDGET}" -gt 4 ] || fpb=$HERMY_BUDGET ;; esac
   adb=$((10#$fpb / 2))
-  # The snapshot is named by the tool use; an id that is not a plain word
-  # reads as none, so it cannot name a path outside TMPDIR. Read without jq:
-  # onboard installs jq inside one command, so snap runs without it and trip
-  # with it, and the name must come out the same on both sides. Inside a JSON
-  # string a quote is escaped, so a bare "call" is a key, never text.
+  # The snapshot is named by the tool use, else the session (shared); an id
+  # that is not a plain word reads as none, so it cannot name a path outside
+  # TMPDIR. Both read without jq: onboard installs jq inside one command, so
+  # snap runs without it and trip with it, and the name must come out the
+  # same on both sides. Inside a JSON string a quote is escaped, so a bare
+  # "call" or "session" is a key, never text.
   readin
   id=$(sed -n 's/.*"call"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
+  ss=$(sed -n 's/.*"session"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
   R=$(cd "$root" 2>/dev/null && pwd -P)
   # The common dir git worktree list reads, physical, read past each side's
   # onboarding gate: it runs at the root, whose .git is, past oddly, a real
@@ -1343,7 +1345,11 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     [ -n "$w" ] && echo "$w"
   }
   seen="" nowt="" vf=/dev/null gd="" pd=""
-  case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
+  # With no call id, the session's (else its pid's) own shared snapshot, so
+  # two sessions without one never take each other's: each word reduced to
+  # [A-Za-z0-9_-] and cut to 128 characters, an empty one the next fallback.
+  shared() { local w; for w in "$1" "${HERMY_PID-}"; do w=${w//[!A-Za-z0-9_-]/}; w=${w:0:128}; [ -z "$w" ] || { echo "shared-$w"; return; }; done; echo shared; }
+  case "$id" in ''|*[!A-Za-z0-9_-]*) id=$(shared "$ss") ;; esac
   file="${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
   # Every config path is kept (cfgs), present or not: a .hermy.yml or
   # .coddy.yml the command makes above a live lower one would shadow it.
@@ -1383,7 +1389,6 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # when it is no directory, since BusyBox's rm has no -d), and none when
     # .git/hermy is a link or no directory; a session's first has fp prune
     # those over a day old (pd).
-    ss=$(sed -n 's/.*"session"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
     if [ -d "$root/.git" ] && m=$(smark "$ss"); then
       { [ -e "${m%/*}" ] || [ -L "${m%/*}" ] || mkdir "${m%/*}"
         if [ -d "${m%/*}" ] && [ ! -L "${m%/*}" ]; then
