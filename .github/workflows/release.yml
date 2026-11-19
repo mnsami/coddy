@@ -57,7 +57,7 @@ jobs:
           else
             echo "No feat: or fix: change since $prev." > "$notes"
           fi
-          # A version below a tag the checkout holds (a failed or cancelled run rerun after a later bump shipped) is not marked latest.
-          top=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -1) latest=
+          # A version below a tag HEAD does not hold (a failed or cancelled run rerun after a later bump shipped) is not marked latest. A higher tag HEAD holds is a release since reverted, and does not count.
+          top=$(git tag --no-merged HEAD -l 'v[0-9]*' --sort=-v:refname | head -1) latest=
           [ "$(printf '%s\n' "$top" "v$new" | sort -V | tail -1)" = "v$new" ] || latest=--latest=false
           gh release create "v$new" --target "$SHA" --title "v$new" ${latest:+"$latest"} --notes-file "$notes" --repo "$REPO"
