@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Runs the scripts against a throwaway repo with a local bare remote: both
 # worktree tools, the claim and its lock, the push, the sweep, the edit
-# guard, the shell tripwire, the GitLab job's script (against a stub curl), the PR check's run block (against a stub gh,
-# the one place gh remains: GitHub Actions) and issue.sh status's owners line.
+# guard, the shell tripwire, the GitLab job's script (against a stub curl), the PR check's and the release workflow's
+# run blocks (against a stub gh, the one place gh remains: GitHub Actions) and issue.sh status's owners line.
 # Usage: bash scripts/selftest.sh
 set -u
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -39,10 +39,11 @@ silent() { out=$(shell "$@") && [ -z "$out" ]; }
 # cmdline: trip's last message holds a removal command to paste
 cmdline() { grep -qE "git worktree remove '|jj workspace forget -- '" "$tmp/trip.err"; }
 
-# The stub gh, for the PR check's run block alone. GH_LINKED: the "<number>
-# <state> <assignees>" lines "api graphql" reports, or fail. GH_ISSUE: the
-# "<state> <assignees>" that "api repos/*/issues/<n>" reports after the
-# number, or fail. Every call is logged to $GH_LOG.
+# The stub gh, for the PR check's and the release workflow's run blocks alone.
+# GH_LINKED: the "<number> <state> <assignees>" lines "api graphql" reports,
+# or fail. GH_ISSUE: the "<state> <assignees>" that "api repos/*/issues/<n>"
+# reports after the number, or fail. "release create" copies its notes file
+# to $GH_NOTES. Every call is logged to $GH_LOG.
 mkdir "$tmp/bin"
 cat > "$tmp/bin/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -50,9 +51,10 @@ echo "$*" >> "$GH_LOG"
 case "$*" in
   *"api graphql"*) [ "${GH_LINKED-}" != fail ] || exit 1; echo "${GH_LINKED-}" ;;
   *"api repos/"*"/issues/"*) [ "${GH_ISSUE-}" != fail ] || exit 1; n="${*##*/issues/}"; echo "${n%% *} ${GH_ISSUE-OPEN 1}" ;;
+  "release create "*) while [ $# -gt 1 ]; do [ "$1" != --notes-file ] || cp "$2" "$GH_NOTES"; shift; done ;;
 esac
 EOF
-chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log"
+chmod +x "$tmp/bin/gh"; PATH="$tmp/bin:$PATH"; export GH_LOG="$tmp/gh.log" GH_NOTES="$tmp/gh.notes"
 # A ps that is not there, as in a container image without procps: on PATH first when a case asks.
 mkdir "$tmp/nops"; printf '#!/bin/sh\nexit 127\n' > "$tmp/nops/ps"; chmod +x "$tmp/nops/ps"
 # A PATH with everything snap needs but jq (jj too, once the root holds a .jj).
@@ -2293,6 +2295,71 @@ t 1 "pr check: a stacked lookup that fails fails" check "" BODY='Closes #12' GH_
 : > "$GH_LOG"
 t 0 "pr check: two stacked keywords pass" check "" BODY=$'Closes #12\nResolves #13, closes #12'
 t 0 "pr check: and each issue was read once" test "$(grep -c 'api repos/OWNER/REPO/issues/' "$GH_LOG")" = 2
+
+# The release workflow's run block, as the workflow runs it (bash -e), in a
+# clone of a bare origin, with the stub gh and the workflow's own env names,
+# each set to itself but SHA, the pushed commit, and BEFORE, the tip before
+# the push (HEAD^ unless named).
+rwf="$here/.github/workflows/release.yml"
+sed '1,/run: |/d; s/^          //' "$rwf" > "$tmp/release.sh"
+IFS=$'\n' read -rd '' -a renvs < <(sed -n 's/^      \([A-Z_]*\): .*/\1=\1/p' "$rwf")
+rel="$tmp/rel"; git init -q --bare "$rel.git"; git clone -q "$rel.git" "$rel" 2>/dev/null; mkdir "$rel/.claude-plugin"
+# rc <subject> [version] [name]: a commit, writing plugin.json when a version is given
+rc() { [ -z "${2-}" ] || printf '{\n  "name": "%s",\n  "version": "%s"\n}\n' "${3-hermy}" "$2" > "$rel/.claude-plugin/plugin.json"; git -C "$rel" add -A && git -C "$rel" commit -q --allow-empty -m "$1"; }
+release() { : > "$GH_LOG"; rm -f "$GH_NOTES"; (cd "$rel" && env "${renvs[@]}" SHA="$(git rev-parse HEAD)" BEFORE="${1-$(git rev-parse HEAD^)}" bash -e "$tmp/release.sh"); }
+nogh() { test ! -s "$GH_LOG"; }
+git -C "$rel" checkout -q -b main
+rc 'feat: an older release' 0.0.9; git -C "$rel" tag v0.0.9
+rc 'feat: before the tag' 0.1.0; git -C "$rel" tag v0.1.0
+git -C "$rel" checkout -q -b side; rc 'feat: on a branch'; git -C "$rel" checkout -q main
+git -C "$rel" merge -q --no-ff --no-edit -m 'feat: a merge commit, titled like its PR' side
+rc 'fix(guard): held'; rc $'fix: typo\r```\r[x](https://e) @u'
+# git commit turns a byte that is not UTF-8 into UTF-8 unless the commit names an encoding: under one iconv does not know, git log prints it as it is.
+git -C "$rel" -c i18n.commitEncoding=x-unknown commit -q --allow-empty -m $'fix: latin1 caf\xe9'
+rc 'feature: not a fix: one'; rc 'chore: rename' 0.1.0 hermy2
+git -C "$rel" push -q origin main v0.1.0 2>/dev/null
+t 0 "release: a push that leaves the version as it was passes" release
+t 0 "release: and calls no gh" nogh
+t 0 "release: BEFORE all zeros reads the version before from HEAD^" release 0000000000000000000000000000000000000000
+t 0 "release: and calls no gh" nogh
+t 0 "release: so does a BEFORE not in history" release 1234567890123456789012345678901234567890
+t 0 "release: and calls no gh" nogh
+rc 'chore: bump to 0.2.0' 0.2.0
+git -C "$rel" push -q origin "v0.1.0^{commit}:refs/tags/v0.2.0" 2>/dev/null
+t 1 "release: a version whose tag is on origin fails" release
+t 0 "release: and calls no gh" nogh
+t 0 "release: naming the tag" says '::error::tag v0.2.0 is already on origin' release
+git -C "$rel" push -q origin :refs/tags/v0.2.0 2>/dev/null
+git -C "$rel" remote set-url origin "$tmp/nowhere.git"
+t 1 "release: an origin whose tags cannot be listed fails" release
+t 0 "release: and calls no gh" nogh
+git -C "$rel" remote set-url origin "$rel.git"
+t 0 "release: a new version passes" release
+t 0 "release: with one gh call" test "$(grep -c '' "$GH_LOG")" = 1
+t 0 "release: creating v<new> and its release on the pushed commit, with no --latest=false" grep -qx "release create v0.2.0 --target $(git -C "$rel" rev-parse HEAD) --title v0.2.0 --notes-file .* --repo REPO" "$GH_LOG"
+printf '%s\n' '```text' $'fix: latin1 caf\xe9' 'fix: typo ``` [x](https://e) @u' 'fix(guard): held' 'feat: on a branch' '```' > "$tmp/want.notes"
+t 0 "release: its notes the feat: and fix: subjects since the previous tag, one per line in a text fence, merges aside, a CR in one a space, one holding a byte that is not UTF-8 listed" cmp -s "$GH_NOTES" "$tmp/want.notes"
+t 0 "release: BEFORE all zeros after the bump reads 0.1.0 from HEAD^ and releases" release 0000000000000000000000000000000000000000
+t 0 "release: with one gh call" test "$(grep -c '' "$GH_LOG")" = 1
+git -C "$rel" tag -d v0.1.0 v0.0.9 >/dev/null
+t 0 "release: with no previous tag passes" release
+t 0 "release: its notes say it is the first tagged release, and list nothing" test "$(cat "$GH_NOTES")" = 'v0.2.0 is the first tagged release.'
+git -C "$rel" tag v0.2.0; git -C "$rel" push -q origin v0.2.0 2>/dev/null
+rc 'chore: bump to 0.3.0' 0.3.0
+t 0 "release: a bump with no feat: or fix: since the previous tag passes" release
+t 0 "release: its notes say so in one line" test "$(cat "$GH_NOTES")" = 'No feat: or fix: change since v0.2.0.'
+git -C "$rel" tag v0.3.0; git -C "$rel" push -q origin v0.3.0 2>/dev/null
+rc 'Revert "chore: bump to 0.3.0"' 0.2.0
+t 0 "release: a push that lowers the version passes, though its tag is on origin" release
+t 0 "release: and calls no gh" nogh
+t 0 "release: saying the version went down" says 'version went down from 0.3.0 to 0.2.0: nothing to tag.' release
+rc 'chore: bump to 0.2.1' 0.2.1
+t 0 "release: a version below a released tag HEAD holds (a release since reverted) passes" release
+t 0 "release: and is marked latest" grep -qx "release create v0.2.1 --target $(git -C "$rel" rev-parse HEAD) --title v0.2.1 --notes-file .* --repo REPO" "$GH_LOG"
+t 0 "release: its notes count from the tag below it, not the reverted one" test "$(cat "$GH_NOTES")" = 'No feat: or fix: change since v0.2.0.'
+git -C "$rel" checkout -q -b later; rc 'chore: bump to 0.10.0' 0.10.0; git -C "$rel" tag v0.10.0; git -C "$rel" checkout -q main
+t 0 "release: a version below a tag the checkout holds (a rerun after a later bump shipped) passes" release
+t 0 "release: and is not marked latest" grep -qx "release create v0.2.1 --target $(git -C "$rel" rev-parse HEAD) --title v0.2.1 --latest=false --notes-file .* --repo REPO" "$GH_LOG"
 
 # The GitLab job's script, as the runner runs it, against a stub curl.
 # CURL_MR and CURL_ISSUE are the response bodies, CURL_ISSUE_<n> issue n's alone,

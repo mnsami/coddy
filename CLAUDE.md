@@ -15,7 +15,7 @@ claude plugin validate .                    # manifest + skill frontmatter; its 
 claude --plugin-dir . -p "/hermy:next"      # run one skill headless against the working copy
 ```
 
-Both self-tests build a throwaway repo with a local bare remote; `selftest.sh` adds a stub `gh` for the PR check's run block and a stub `curl` for the GitLab job's script alone and skips the jj leg when `jj` is missing. Run both after any change under `bin/` or `scripts/`. CI's `macos-latest` job runs both under `/bin/bash` 3.2 and is the check that every script parses and runs there. `selftest.sh` asserts the static wiring (the `hooks/hooks.json` table, the `allowed-tools` mirror, and that no path in the tree and no line, once the legacy spellings the rename keeps are removed, holds the name from before the rename: its list, `oldok`, is the design doc's (`docs/superpowers/specs/2026-11-16-hermy-rename-design.md`)), but not that Claude Code loads the hooks or runs the skills; check those headless inside an onboarded scratch repo:
+Both self-tests build a throwaway repo with a local bare remote; `selftest.sh` adds a stub `gh` for the PR check's and the release workflow's run blocks and a stub `curl` for the GitLab job's script alone and skips the jj leg when `jj` is missing. Run both after any change under `bin/` or `scripts/`. CI's `macos-latest` job runs both under `/bin/bash` 3.2 and is the check that every script parses and runs there. `selftest.sh` asserts the static wiring (the `hooks/hooks.json` table, the `allowed-tools` mirror, and that no path in the tree and no line, once the legacy spellings the rename keeps are removed, holds the name from before the rename: its list, `oldok`, is the design doc's (`docs/superpowers/specs/2026-11-16-hermy-rename-design.md`)), but not that Claude Code loads the hooks or runs the skills; check those headless inside an onboarded scratch repo:
 
 - `claude --plugin-dir . -p "start issue 42"` - plain-language trigger. In `-p` the Skill call is denied unless `Skill(hermy:start)` is allowed in settings or via `--allowedTools`.
 - `--permission-mode acceptEdits` for edit-guard checks, `--allowedTools Bash` for tripwire checks. Without them the permission layer refuses before any hook runs. For `guard: warn`, have the run quote the hook message back: that is the only proof it reached the model.
@@ -24,7 +24,7 @@ Both self-tests build a throwaway repo with a local bare remote; `selftest.sh` a
 
 Skills act on the project in `$CLAUDE_PROJECT_DIR`, so to exercise one, run `claude --plugin-dir /path/to/hermy` from inside a target project that has (or, for `onboard`, lacks) `.hermy.yml`.
 
-Release = a version bump of `.claude-plugin/plugin.json` through a PR of its own, never a direct commit to `main` (the marketplace installs from it); steps in `RELEASING.md`. `marketplace.json` carries no version. An installed copy only changes after a bump: `claude plugin marketplace update hermy && claude plugin update hermy@hermy`.
+Release = a version bump of `.claude-plugin/plugin.json` through a PR of its own, never a direct commit to `main` (the marketplace installs from it); once it merges, CI tags it `v<version>` and creates its GitHub release (`.github/workflows/release.yml`); steps in `RELEASING.md`. `marketplace.json` carries no version. An installed copy only changes after a bump: `claude plugin marketplace update hermy && claude plugin update hermy@hermy`.
 
 ## Architecture
 

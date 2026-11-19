@@ -1,6 +1,6 @@
 # Releasing
 
-Release = a version bump PR of its own, never a direct commit to `main`. Tags and GitHub releases come from CI (#282, not yet built; per #285 D6, a workflow will tag `v<version>` and create a release for each `plugin.json` bump merged to `main`), so none exist yet. `get.sh` keeps installing from `main` whatever the tag.
+Release = a version bump PR of its own, never a direct commit to `main`. Tags exist from `v0.7.3`: for each `plugin.json` version bump merged to `main`, CI (`.github/workflows/release.yml`, #282, per #285 D6) creates tag `v<version>` on the merge commit and a GitHub release listing the `feat:` and `fix:` subjects since the previous tag. `get.sh` still installs from `main`; following the newest tag is #497.
 
 1. List the installed GitHub and Atlassian plugin tools in a session; compare them with `grep -oh 'mcp__[A-Za-z0-9_]*' skills/*/SKILL.md | sort -u`. A name that differs → stop and fix the skills first.
 2. The release branch `chore/<issue>-release-X-Y-Z` comes from `/hermy:start <issue>`. Rebase it on the remote's `main`, which the local `main` may lag: `git fetch origin && git rebase origin/main`, or `jj git fetch && jj rebase -d main@origin` in a jj worktree.
@@ -10,4 +10,4 @@ Release = a version bump PR of its own, never a direct commit to `main`. Tags an
    - Fresh scratch project: `/hermy:onboard` → `/hermy:start <issue>` → an edit → `/hermy:ship`.
    - Project onboarded by 0.6.0 (`.claude/coddy.yml`, no `version` key): it still works, and `/hermy:migrate` moves it to `.hermy.yml`.
 6. Open the PR. Any step above fails → fix it on the branch, rebase again, and repeat from step 4; nothing is released until the PR merges.
-7. After it merges: `claude plugin marketplace update hermy && claude plugin update hermy@hermy`.
+7. After it merges: the `release` workflow's run creates tag `vX.Y.Z` and its GitHub release. Check both (`gh release view vX.Y.Z`; a failed run is rerun from the Actions page, and so is a cancelled one: GitHub keeps one waiting run in the workflow's concurrency group, so a third bump merged close behind cancels the second's), then `claude plugin marketplace update hermy && claude plugin update hermy@hermy`.

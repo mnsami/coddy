@@ -217,8 +217,9 @@ review_rounds: 3             # optional; 1-5 (default 3)
   The config is personal: run `/hermy:onboard` in your clone first. Others open a PR by hand with `Closes #<n>`.
 - Commits are `type: summary` (`feat`, `fix`, `chore`). The PR must close its issue (`Closes #<n>`).
   The first three commands under [Develop](#develop) pass before you open it.
-- A release is a version bump of `.claude-plugin/plugin.json`, in a PR of its own. An installed copy changes only
-  after a bump. PRs merge with a merge commit, never squash or rebase, so stacked PRs keep their base's commits.
+- A release is a version bump of `.claude-plugin/plugin.json`, in a PR of its own; once it merges, CI tags it
+  `v<version>` and creates its GitHub release. An installed copy changes only after a bump. PRs merge with a merge
+  commit, never squash or rebase, so stacked PRs keep their base's commits.
 
 ## Develop
 

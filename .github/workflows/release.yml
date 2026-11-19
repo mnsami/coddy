@@ -1,0 +1,64 @@
+# Tags and releases each version bump: on a push to main whose
+# .claude-plugin/plugin.json holds a higher version than before the push, it
+# creates tag v<version> on the pushed commit, a merge commit since PRs merge
+# with one, and a GitHub release listing the feat: and fix: subjects since the
+# previous v* tag, fenced as plain text. A push that leaves the version as it
+# was, or lowers it (a revert), does nothing. A version whose tag is already
+# on origin fails, with nothing created or moved:
+# gh release create alone would hang a release on that tag. gh creates the tag
+# through the API, so the checkout keeps no push credential. The run block
+# reads its inputs from env alone, so scripts/selftest.sh runs it against a
+# stub gh. The concurrency group queues two bumps merged close together, so
+# neither passes the tag check before the other's tag exists, which the
+# self-test cannot show. GitHub keeps one run waiting per group and cancels the
+# older waiting one, so a third bump close behind cancels the second's run. A
+# failed or cancelled run is rerun from the Actions page.
+name: release
+on:
+  push:
+    branches: [main]
+    paths: [.claude-plugin/plugin.json]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.sha }}
+      BEFORE: ${{ github.event.before }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: |
+          ver() { git show "$1:.claude-plugin/plugin.json" 2>/dev/null | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1; }
+          # BEFORE is all zeros for a new branch and gone after a force push: read the first parent then.
+          git cat-file -e "$BEFORE^{commit}" 2>/dev/null || BEFORE=HEAD^
+          new=$(ver HEAD) old=$(ver "$BEFORE")
+          [ -n "$new" ] || { echo "::error::no version in .claude-plugin/plugin.json."; exit 1; }
+          [ "$new" != "$old" ] || { echo "version is still $new: nothing to tag."; exit 0; }
+          [ "$(printf '%s\n' "$old" "$new" | sort -V | tail -1)" = "$new" ] || { echo "version went down from $old to $new: nothing to tag."; exit 0; }
+          found=0; git ls-remote --exit-code --tags origin "refs/tags/v$new" >/dev/null || found=$?
+          [ "$found" != 0 ] || { echo "::error::tag v$new is already on origin: nothing created or moved. Bump the version again."; exit 1; }
+          [ "$found" = 2 ] || { echo "::error::could not list origin's tags: nothing created."; exit 1; }
+          # The newest tag HEAD holds below v$new by sort -V: a higher one is a release since reverted.
+          prev=$( { git tag --merged HEAD -l 'v[0-9]*'; echo "v$new"; } | sort -V | awk -v n="v$new" '$0 == n { print p; exit } { p = $0 }')
+          notes=$(mktemp); trap 'rm -f "$notes"' EXIT
+          # Fenced, so a link or mention in a subject shows as text. A CR, which Markdown reads as a line end, becomes a space, so every line starts with feat or fix and none closes the fence. Both read bytes (LC_ALL=C): under a UTF-8 locale grep drops a subject holding a byte that is not UTF-8 as binary, and macOS's tr stops at it.
+          if [ -z "$prev" ]; then
+            echo "v$new is the first tagged release." > "$notes"
+          elif list=$(git log --no-merges --format=%s "$prev..HEAD" | LC_ALL=C tr '\r' ' ' | LC_ALL=C grep -aE '^(feat|fix)(\(.*\))?:'); then
+            printf '```text\n%s\n```\n' "$list" > "$notes"
+          else
+            echo "No feat: or fix: change since $prev." > "$notes"
+          fi
+          # A version below a tag HEAD does not hold (a failed or cancelled run rerun after a later bump shipped) is not marked latest. A higher tag HEAD holds is a release since reverted, and does not count.
+          top=$(git tag --no-merged HEAD -l 'v[0-9]*' --sort=-v:refname | head -1) latest=
+          [ "$(printf '%s\n' "$top" "v$new" | sort -V | tail -1)" = "v$new" ] || latest=--latest=false
+          gh release create "v$new" --target "$SHA" --title "v$new" ${latest:+"$latest"} --notes-file "$notes" --repo "$REPO"
