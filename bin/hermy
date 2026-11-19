@@ -664,7 +664,11 @@ if [ "${1-}" = guard ]; then
   readin
   # An edit naming several paths is held on each: guard runs itself once per
   # path, and the first refusal, else the first ask, else the notes, win.
+  # Each child costs a process and its walk, so an edit naming more than 64
+  # paths is refused before any starts, in warn mode too: the hook's timeout
+  # lets the edit through before Claude Code 2.1.295.
   if n=$(jqh -r '(.paths // []) | length' <<<"$in" 2>/dev/null) && [ "$n" -gt 1 ] 2>/dev/null; then
+    [ "$n" -le 64 ] || die "the edit guard refuses an edit naming $n paths: too many paths, more than the 64 one edit may name."
     ask="" notes="" i=0
     while [ "$i" -lt "$n" ]; do
       # A child prints on stderr when it blocks and on stdout when it lets

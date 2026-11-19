@@ -880,6 +880,9 @@ t 0 "guard: that ask is one neutral line" eval 'guardp "[\"$repo/.worktrees/1/a.
 t 2 "guard: a refused path beats an ask" guardp "[\"$repo/.hermy.yml\",\"$repo/README.md\"]"
 t 2 "guard: an empty paths list is refused" guardp '[]'
 t 0 "guard: two paths in the claimed worktree pass" guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.worktrees/1/b.txt\"]"
+many=$(jq -cn --arg d "$repo/.worktrees/1/" '[range(0;65)|$d+"f\(.)"]')
+t 2 "guard: a payload with more paths than the cap is refused" guardp "$many"
+t 0 "guard: that refusal names the cap" eval 'guardp "$many" 2>&1 | grep -q "too many paths, more than the 64"'
 # Shift_JIS, GBK and GB18030 take 0x78 as a trail byte, so a path ending in
 # a lead byte reads with the x the guard puts after it as one character: the
 # guard reads byte-wise. ぁ, in UTF-8 as the payload carries it, ends in 0x81.
