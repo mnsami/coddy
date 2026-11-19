@@ -47,7 +47,8 @@ jobs:
           found=0; git ls-remote --exit-code --tags origin "refs/tags/v$new" >/dev/null || found=$?
           [ "$found" != 0 ] || { echo "::error::tag v$new is already on origin: nothing created or moved. Bump the version again."; exit 1; }
           [ "$found" = 2 ] || { echo "::error::could not list origin's tags: nothing created."; exit 1; }
-          prev=$(git tag --merged HEAD -l 'v[0-9]*' --sort=-v:refname | head -1)
+          # The newest tag HEAD holds below v$new by sort -V: a higher one is a release since reverted.
+          prev=$( { git tag --merged HEAD -l 'v[0-9]*'; echo "v$new"; } | sort -V | awk -v n="v$new" '$0 == n { print p; exit } { p = $0 }')
           notes=$(mktemp); trap 'rm -f "$notes"' EXIT
           # Fenced, so a link or mention in a subject shows as text. A CR, which Markdown reads as a line end, becomes a space, so every line starts with feat or fix and none closes the fence. Both read bytes (LC_ALL=C): under a UTF-8 locale grep drops a subject holding a byte that is not UTF-8 as binary, and macOS's tr stops at it.
           if [ -z "$prev" ]; then

@@ -2356,6 +2356,7 @@ t 0 "release: saying the version went down" says 'version went down from 0.3.0 t
 rc 'chore: bump to 0.2.1' 0.2.1
 t 0 "release: a version below a released tag HEAD holds (a release since reverted) passes" release
 t 0 "release: and is marked latest" grep -qx "release create v0.2.1 --target $(git -C "$rel" rev-parse HEAD) --title v0.2.1 --notes-file .* --repo REPO" "$GH_LOG"
+t 0 "release: its notes count from the tag below it, not the reverted one" test "$(cat "$GH_NOTES")" = 'No feat: or fix: change since v0.2.0.'
 git -C "$rel" checkout -q -b later; rc 'chore: bump to 0.10.0' 0.10.0; git -C "$rel" tag v0.10.0; git -C "$rel" checkout -q main
 t 0 "release: a version below a tag the checkout holds (a rerun after a later bump shipped) passes" release
 t 0 "release: and is not marked latest" grep -qx "release create v0.2.1 --target $(git -C "$rel" rev-parse HEAD) --title v0.2.1 --latest=false --notes-file .* --repo REPO" "$GH_LOG"
