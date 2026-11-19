@@ -671,17 +671,18 @@ if [ "${1-}" = guard ]; then
     [ "$n" -le 64 ] || die "the edit guard refuses an edit naming $n paths: too many paths, more than the 64 one edit may name."
     ask="" notes="" i=0
     while [ "$i" -lt "$n" ]; do
-      # A child prints on stderr when it blocks and on stdout when it lets
-      # through, never both, so one capture holds the message or the line.
-      o=$(jqh -c --argjson i "$i" '.paths = [.paths[$i]]' <<<"$in" | "$BASH" -p "$src" guard 2>&1); c=$?
-      [ "$c" -ne 2 ] || { printf '%s\n' "$o" >&2; exit 2; }
-      [ "$c" -eq 0 ] || exit 1
+      # A child's refusal reaches stderr itself; only its stdout, the verdict
+      # line, is read, so a warning it printed cannot hide an ask.
+      o=$(jqh -c --argjson i "$i" '.paths = [.paths[$i]]' <<<"$in" | "$BASH" -p "$src" guard); c=$?
+      [ "$c" -ne 2 ] || exit 2
+      [ "$c" -eq 0 ] || die "the edit guard failed on path $((i+1)) of $n (exit $c)"
       if [ -n "$o" ]; then
-        k=$(jqh -r '.hermy // ""' <<<"$o"); t=$(jqh -r '.text // ""' <<<"$o")
-        case "$k" in ask) [ -n "$ask" ] || ask=$t ;; note) notes="${notes:+$notes }$t" ;; esac
+        k=$(jqh -r '.hermy // ""' <<<"$o") && t=$(jqh -r '.text // ""' <<<"$o") || k=""
+        case "$k" in ask) [ -n "$ask" ] || ask=$t ;; note) notes="${notes:+$notes }$t" ;; *) die "the edit guard could not read its verdict on path $((i+1)) of $n" ;; esac
       fi
       i=$((i+1))
     done
+    [ -z "$ask" ] || [ "${HERMY_ASK-}" != 0 ] || die "$ask This host cannot ask, so hermy refuses it."
     [ -z "$ask" ] || { emit "$(jqh -cn --arg t "$ask" '{hermy:"ask",text:$t}')"; exit 0; }
     [ -z "$notes" ] || emit "$(jqh -cn --arg t "$notes" '{hermy:"note",text:$t}')"
     exit 0

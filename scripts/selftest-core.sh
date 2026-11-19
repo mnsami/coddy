@@ -901,6 +901,9 @@ t 2 "guard: a refused path beats an ask" guardp "[\"$repo/.hermy.yml\",\"$repo/R
 t 2 "guard: an empty paths list is refused" guardp '[]'
 t 0 "guard: two paths in the claimed worktree pass" guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.worktrees/1/b.txt\"]"
 HERMY_ASK=0 t 2 "guard: under HERMY_ASK=0 two paths, one the config, block" guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.hermy.yml\"]"
+t 2 "guard: and so under a shim's HERMY_ASK=0 it never exported" bash -c 'HERMY_ASK=0; . "$1" guard' _ "$here/bin/hermy" <<<"{\"session\":\"sess-a\",\"paths\":[\"$repo/.worktrees/1/a.txt\",\"$repo/.hermy.yml\"]}"
+# A NUL in a path makes bash warn on stderr; the ask on stdout still wins.
+t 0 "guard: two paths, the config's with a NUL, still ask" eval 'guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.hermy.yml\\u0000\"]" 2>/dev/null | jq -e ".hermy == \"ask\""'
 # A host's shim hands over every file one apply_patch string names. Codex-
 # and Copilot-shaped shims, the self-test's alone, share one extractor.
 cat > "$tmp/patchshim" <<'EOF'
