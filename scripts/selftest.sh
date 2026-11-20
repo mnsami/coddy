@@ -1441,7 +1441,7 @@ printf '#!/bin/sh\ncase " $* " in *" hash-object "*) echo x >> "%s" ;; esac\nexe
 for i in $(seq 1000); do echo "$i" > "many/$i.txt"; done
 : > "$tmp/hashes"; PATH="$tmp/gitshim:$PATH" wire snap many
 t 0 "tripwire: 1000 dirty files are hashed by one hash-object" test "$(wc -l < "$tmp/hashes" | tr -d ' ')" = 1
-t 0 "tripwire: and each is in the snapshot" test "$(grep -c '^many/.* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/hermy-snap-*-many)" = 1000
+t 0 "tripwire: and each is in the snapshot" test "$(grep -c '^many/.* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-many")" = 1000
 wire trip many 2>/dev/null; rm -r many
 # A dirty file over 1 MiB is not read: its line holds its size, ctime and
 # inode, so a sparse 14 GiB one costs what a small one does, and one
@@ -1449,7 +1449,7 @@ wire trip many 2>/dev/null; rm -r many
 dd if=/dev/null of=huge.bin bs=1048576 seek=14336 count=0 2>/dev/null
 SECONDS=0; wire snap big
 t 0 "tripwire: a sparse 14 GiB untracked file is fingerprinted within seconds" test "$SECONDS" -le 5
-t 0 "tripwire: as its size, ctime and inode, unread" grep -q '^huge\.bin big:15032385536:[0-9.]*:[0-9]*$' "${TMPDIR:-/tmp}"/hermy-snap-*-big
+t 0 "tripwire: as its size, ctime and inode, unread" grep -q '^huge\.bin big:15032385536:[0-9.]*:[0-9]*$' "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-big"
 SECONDS=0; wire trip big; got=$?
 t 0 "tripwire: and trip, quiet while it stands, within seconds too" test "$got:$((SECONDS <= 5))" = 0:1
 rm huge.bin; dd if=/dev/zero of=two.bin bs=1048576 count=2 2>/dev/null
@@ -1461,23 +1461,23 @@ t 0 "tripwire: and the report names its path alone" grep -q 'main checkout: two\
 rm two.bin
 # Exactly 1 MiB is hashed; a byte more is not read.
 head -c 1048576 /dev/zero > mib.bin; head -c 1048577 /dev/zero > mib1.bin; wire snap big
-t 0 "tripwire: a file of exactly 1 MiB is hashed" grep -q '^mib\.bin [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/hermy-snap-*-big
-t 0 "tripwire: one a byte over is not read" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}"/hermy-snap-*-big
+t 0 "tripwire: a file of exactly 1 MiB is hashed" grep -q '^mib\.bin [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-big"
+t 0 "tripwire: one a byte over is not read" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-big"
 wire trip big 2>/dev/null; rm mib.bin mib1.bin
 # A file named %Fc in the root, which GNU's stat reads after its -f as a
 # path, does not pass it off as BSD's, which would read every big file.
 head -c 1048577 /dev/zero > mib1.bin; : > %Fc; wire snap big
-t 0 "tripwire: a file named %Fc in the root leaves a big file unread" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}"/hermy-snap-*-big
+t 0 "tripwire: a file named %Fc in the root leaves a big file unread" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-big"
 wire trip big 2>/dev/null; rm mib1.bin %Fc
 # Past 32 MiB hashed in all a file up to 1 MiB is recorded as a big one, so
 # 8000 sparse 1 MiB untracked files cost what their paths do, not 8 GiB
 # read, and one recorded so, rewritten in place to the same size, still trips.
 mkdir sp; seq -f 'sp/f%04g' 0 7999 | xargs perl -e 'for (@ARGV) { open my $f, ">", $_ or die; truncate $f, 1048576 or die }'
 wire snap big
-t 1 "tripwire: 8000 sparse 1 MiB untracked files are fingerprinted within the budget" grep -qx unchecked "${TMPDIR:-/tmp}"/hermy-snap-*-big
-got=$(grep -c '^sp/f[0-9]* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/hermy-snap-*-big)
+t 1 "tripwire: 8000 sparse 1 MiB untracked files are fingerprinted within the budget" grep -qx unchecked "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-big"
+got=$(grep -c '^sp/f[0-9]* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-big")
 t 0 "tripwire: no more than 32 MiB of them hashed" test "$got" -ge 1 -a "$got" -le 32
-t 0 "tripwire: the rest by size, ctime and inode" grep -q '^sp/f7999 big:1048576:' "${TMPDIR:-/tmp}"/hermy-snap-*-big
+t 0 "tripwire: the rest by size, ctime and inode" grep -q '^sp/f7999 big:1048576:' "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-big"
 wire trip big 2>/dev/null
 wire snap w; printf x | dd of=sp/f7999 bs=1 seek=4096 conv=notrunc 2>/dev/null
 wire trip w 2>"$tmp/trip.err"; got=$?
