@@ -147,7 +147,7 @@ When jq is missing or fails: `printf '{"raw":%s,"call":"%s","session":"%s"}\n' "
 
 Notes from the build:
 - #261 removed snap's reader of the command text, so the core reads `command` nowhere today; the key stays in the contract for the next reader.
-- Added on the way, each with its tests in `selftest-core.sh` (the shim one in `selftest.sh`): the guard refuses an edit naming more than 64 paths, before any child runs (`feat: the edit guard caps the paths one edit names`); `HERMY_ASK=0`, for a host that cannot ask, turns the guard's ask into a block that says so, and `issue.sh` unsets an inherited one (`feat: an ask blocks where the host cannot ask`); self-test-only Codex- and Copilot-shaped shims hand one `apply_patch` string's files to the guard (`test: apply_patch payloads through host-shaped shims`).
+- Added on the way, each with its tests in `selftest-core.sh` (the shim one in `selftest.sh`): the guard refuses an edit naming more than 64 paths, before any child runs (`feat: the edit guard caps the paths one edit names`), and one not checked within 8 s, before the next child; `HERMY_ASK=0`, for a host that cannot ask, turns the guard's ask into a block that says so, and `issue.sh` unsets an inherited one (`feat: an ask blocks where the host cannot ask`); self-test-only Codex- and Copilot-shaped shims hand one `apply_patch` string's files to the guard (`test: apply_patch payloads through host-shaped shims`).
 - Task 4's fallback is `shared-<session>`, else `shared-<HERMY_PID>`, else `shared`, one helper (`shared`) naming the file for both `snap` and `trip`.
 
 **Files:**

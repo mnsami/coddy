@@ -933,6 +933,15 @@ t 2 "apply_patch: a move out of the claimed worktree onto README.md is refused" 
 many=$(jq -cn --arg d "$repo/.worktrees/1/" '[range(0;65)|$d+"f\(.)"]')
 t 2 "guard: a payload with more paths than the cap is refused" guardp "$many"
 t 0 "guard: that refusal names the cap" eval 'guardp "$many" 2>&1 | grep -q "too many paths, more than the 64"'
+# Past its deadline (HERMY_GUARD_BUDGET lowers it) an edit naming several
+# paths is refused before the next path, in warn mode too.
+two="[\"$repo/.worktrees/1/a.txt\",\"$repo/.worktrees/1/b.txt\"]"
+HERMY_GUARD_BUDGET=0 t 2 "guard: an edit naming several paths past its deadline is refused" guardp "$two"
+HERMY_GUARD_BUDGET=0 t 0 "guard: that refusal names the deadline" says "too many paths to check in time, 0 of them checked when its 0 s deadline passed" guardp "$two"
+cp .hermy.yml "$tmp/dl.yml"; echo 'guard: warn' >> .hermy.yml
+HERMY_GUARD_BUDGET=0 t 2 "guard: and so under guard: warn" guardp "$two"
+cp "$tmp/dl.yml" .hermy.yml
+t 0 "guard: eight paths in the claimed worktree pass within it" guardp "$(jq -cn --arg d "$repo/.worktrees/1/" '[range(0;8)|$d+"f\(.)"]')"
 # Shift_JIS, GBK and GB18030 take 0x78 as a trail byte, so a path ending in
 # a lead byte reads with the x the guard puts after it as one character: the
 # guard reads byte-wise. ぁ, in UTF-8 as the payload carries it, ends in 0x81.

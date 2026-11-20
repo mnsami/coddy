@@ -645,8 +645,14 @@ if [ "${1-}" = guard ]; then
   export LC_ALL=C
   # Seconds the walk below (phys) may take, from here, well inside the hook's
   # 10 s timeout, past which a Claude Code before 2.1.295 lets the edit
-  # through. Reset, not read, as an environment can set SECONDS.
-  budget=5 SECONDS=0
+  # through. Reset, not read, as an environment can set SECONDS. The whole
+  # guard, an edit naming several paths included, has 8 s (HERMY_GUARD_BUDGET,
+  # a whole number, lowers it: the self-test's, and what an edit naming
+  # several paths hands each path's run, the seconds left), and the walk no
+  # more than that.
+  budget=5 gdl=8 SECONDS=0
+  case "${HERMY_GUARD_BUDGET-}" in ''|*[!0-9]*) ;; *) [ "${#HERMY_GUARD_BUDGET}" -gt 4 ] || [ "$((10#$HERMY_GUARD_BUDGET))" -ge "$gdl" ] || gdl=$((10#$HERMY_GUARD_BUDGET)) ;; esac
+  [ "$gdl" -ge "$budget" ] || budget=$gdl
   # No config: inert, unless a started issue's leftovers say it was removed
   # (left): then every edit is refused but a Write of a config (below).
   tamp=""; [ -f "$conf" ] || { left || exit 0; tamp=1; }
@@ -665,15 +671,21 @@ if [ "${1-}" = guard ]; then
   # An edit naming several paths is held on each: guard runs itself once per
   # path, and the first refusal, else the first ask, else the notes, win.
   # Each child costs a process and its walk, so an edit naming more than 64
-  # paths is refused before any starts, in warn mode too: the hook's timeout
-  # lets the edit through before Claude Code 2.1.295.
+  # paths is refused before any starts, and one whose paths are not all
+  # checked within the guard's seconds ($gdl) once they are up, in warn mode
+  # too: the hook's timeout lets the edit through before Claude Code 2.1.295.
+  # Each child gets the seconds left, less one: SECONDS counts whole
+  # wall-clock seconds, so each side may read up to one short, and the last
+  # child's walk still ends about 9 s in, inside the 10 s.
   if n=$(jqh -r '(.paths // []) | length' <<<"$in" 2>/dev/null) && [ "$n" -gt 1 ] 2>/dev/null; then
     [ "$n" -le 64 ] || die "the edit guard refuses an edit naming $n paths: too many paths, more than the 64 one edit may name."
     ask="" notes="" i=0
     while [ "$i" -lt "$n" ]; do
       # A child's refusal reaches stderr itself; only its stdout, the verdict
       # line, is read, so a warning it printed cannot hide an ask.
-      o=$(jqh -c --argjson i "$i" '.paths = [.paths[$i]]' <<<"$in" | "$BASH" -p "$src" guard); c=$?
+      r=$((gdl - SECONDS - 1))
+      [ "$r" -gt 0 ] || die "the edit guard refuses an edit naming $n paths: too many paths to check in time, $i of them checked when its ${gdl} s deadline passed."
+      o=$(jqh -c --argjson i "$i" '.paths = [.paths[$i]]' <<<"$in" | HERMY_GUARD_BUDGET=$r "$BASH" -p "$src" guard); c=$?
       [ "$c" -ne 2 ] || exit 2
       [ "$c" -eq 0 ] || die "the edit guard failed on path $((i+1)) of $n (exit $c)"
       if [ -n "$o" ]; then

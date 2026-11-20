@@ -248,6 +248,7 @@ leg() {
   t 0 "$tool: that rejection names the issue and the owner" says "issue $n belongs to session sess-a (pid $$, running)" guard "$repo/.worktrees/$n/a.txt" sess-b
   t 2 "$tool: a Claude Code worktree is held to the same owner check" guard "$repo/.claude/worktrees/$n/a.txt" sess-b
   t 2 "$tool: and so is one in any case of worktrees/" guard "$repo/.claude/WorkTrees/$n/a.txt" sess-b
+  t 2 "$tool: a session_id key inside tool_input does not name the editor" sh -c 'printf "{\"session_id\":\"sess-b\",\"tool_input\":{\"file_path\":\"%s\",\"session_id\":\"sess-a\"}}" "$1" | CLAUDE_PID=1 CLAUDE_PROJECT_DIR="$2" bash "$3/scripts/issue.sh" guard' _ "$repo/.worktrees/$n/a.txt" "$repo" "$here"
   t 0 "$tool: a hook payload without session_id is not held to it" guard "$repo/.worktrees/$n/a.txt" ""
   t 0 "$tool: guard allows the owner's process under a new session id (/clear)" guard "$repo/.worktrees/$n/a.txt" sess-b $$
   t 0 "$tool: and moves the lock to that session id" holds "sess-b $$" ".git/hermy/$n/owner"
@@ -1550,8 +1551,13 @@ shimin() { printf '%s' "$2" | CLAUDE_PROJECT_DIR="$repo" bash "$here/scripts/iss
 t 2 "shim: guard refuses a payload whose tool_input is not an object" shimin guard '{"session_id":"sess-a","tool_input":["x"]}'
 t 2 "shim: guard refuses two JSON values in one payload" shimin guard '{"session_id":"sess-a","tool_input":{"file_path":"x"}}{"session_id":"sess-a"}'
 # snap without jq and trip with it must name one snapshot, the call id read by sed on both sides
-sharedid() { printf '{"tool_use_id":"w","session_id":"s","cwd":"%s","tool_input":{"command":"true"}}' "$repo" > "$tmp/w.json"; PATH="$tmp/nojq" run snap < "$tmp/w.json" >/dev/null && o=$(run trip < "$tmp/w.json" 2>&1) && ! grep -q lost <<<"$o"; }
+sharedid() { printf '{"tool_use_id":"w","session_id":"s","cwd":"%s","tool_input":{"command":"true"}}' "$repo" > "$tmp/w.json"; PATH="$tmp/nojq" run snap < "$tmp/w.json" >/dev/null && o=$(run trip < "$tmp/w.json" 2>&1) && ! grep -q "left no snapshot" <<<"$o"; }
 t 0 "shim: snap without jq and trip with it name the same snapshot" sharedid
+# With no call id the session names it, read by sed on both sides too, so a
+# JSON escape or a control character in it names one snapshot.
+sharedss() { printf '{"session_id":"%s","cwd":"%s","tool_input":{"command":"true"}}' "$1" "$repo" > "$tmp/w.json"; PATH="$tmp/nojq" run snap < "$tmp/w.json" >/dev/null && o=$(run trip < "$tmp/w.json" 2>&1) && ! grep -q "left no snapshot" <<<"$o"; }
+t 0 "shim: so do they for a session with a JSON escape and no call id" sharedss 's\u00e9x'
+t 0 "shim: and for one with a DEL and no call id" sharedss "s$(printf '\177')x"
 # jq loads ~/.jq into every program; the hooks run it with HOME=/dev/null,
 # so a broken one leaves the guard reading the payload as before.
 mkdir "$tmp/badhome"; printf 'def x: ;\n' > "$tmp/badhome/.jq"
@@ -2162,6 +2168,7 @@ asks() { out=$(guard "$1") && printf %s "$out" | jq -e '.hookSpecificOutput | .h
 t 2 "hook: guard after a cd out of the project blocks the main checkout" away guard "$repo/README.md"
 t 0 "hook: and asks on .hermy.yml" away asks "$repo/.hermy.yml"
 HERMY_ASK=0 t 0 "hook: an inherited HERMY_ASK=0 still gives Claude Code's ask" asks "$repo/.hermy.yml"
+HERMY_GUARD_BUDGET=0 t 0 "hook: an inherited HERMY_GUARD_BUDGET=0 leaves the guard's time as it was" asks "$repo/.hermy.yml"
 away wire snap w; echo x > stray.txt; t 2 "hook: trip after a cd out of the project reports a stray write" away wire trip w; rm stray.txt
 away wire snap w; rm .claude/coddy.yml; t 2 "hook: trip after a cd out of the project restores a deleted config" away wire trip w
 t 0 "hook: and the config came back" same

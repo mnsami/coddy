@@ -90,7 +90,21 @@ inputs (`claim`, `push`, `status`); `session` is the hook side's.
 Reading stays as today: `call` and `session` by `sed` (plain words, so no jq
 is needed and both sides name the snapshot alike), the rest by jq. A shim
 without a working jq still hands over `call` and `session`, as plain words it
-read with `sed`, so `snap` behaves as it does today without jq.
+read with `sed`, so `snap` behaves as it does today without jq. With jq it
+hands over the top-level `session_id` while that is a plain word, which `sed`
+reads alike, so a `session_id` key inside `tool_input` never names the
+guard's owner; any other it hands over as `sed` read it, in its JSON
+spelling with control characters dropped, never jq's decoding of it, so a
+session holding a JSON escape names one snapshot on both sides.
+
+An edit naming several paths runs the guard once per path. It is refused
+with more than 64 paths, before any runs, and once 8 s have passed since the
+hook started, before the next path, in both modes; each path's run gets the
+seconds left less one (`HERMY_GUARD_BUDGET`, which lowers the 8 s and which
+the Claude shim unsets when inherited), since `SECONDS` counts whole
+wall-clock seconds and each side may read up to one short, so the whole ends
+about 9 s in, inside the guard's 10 s timeout. A path's run takes a tenth to a fifth of a second, so a patch
+of more than some forty paths is refused under the 64 cap and must be split.
 
 ### Verdict: the core prints at most one neutral line on stdout
 

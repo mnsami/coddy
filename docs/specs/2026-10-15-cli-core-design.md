@@ -92,8 +92,8 @@ The agent-dir rules in `guard` and `snap`, today written as `.claude/`:
 The hook verbs (`guard`, `snap`, `trip`) read one neutral JSON object on stdin: `paths` (every path an edit writes), `command`, `cwd`, `call` (the per-call id pairing `snap` with `trip`) and `session`. They print at most one verdict line: block is exit 2 with the message on stderr; `{"hermy": "ask", "text": "..."}` and `{"hermy": "note", "text": "..."}` exit 0. A host's shim defines `hermy_in` (its payload to that object) and `hermy_out` (the verdict to its hook output) and sources the core; with neither, stdin is the object and the verdict goes out as it is. Design: `docs/superpowers/specs/2026-11-11-hook-contract-design.md`.
 
 - `HERMY_ASK=0`: a shim whose host cannot ask sets it, and the guard's ask then blocks, saying the host cannot ask. `scripts/issue.sh` unsets an inherited one.
-- The guard refuses an edit naming more than 64 paths, in both guard modes, before it guards any.
-- With no plain-word `call`, the snapshot is `shared-<session>`, else `shared-<HERMY_PID>`, each reduced to `[A-Za-z0-9_-]` and cut to 128 characters, else `shared`.
+- The guard refuses an edit naming more than 64 paths, in both guard modes, before it guards any, and one whose paths are not all checked within 8 s, before the next path; each path's run gets the seconds left less one, `SECONDS` counting whole seconds (`HERMY_GUARD_BUDGET`, which lowers the 8 s; `scripts/issue.sh` unsets an inherited one).
+- With no plain-word `call`, the snapshot is `shared-<session>`, else `shared-<HERMY_PID>`, each reduced to `[A-Za-z0-9_-]` and cut to 128 characters, else `shared`. The Claude shim hands over the top-level `session_id` while it is a plain word, else `session` as `sed` read it on both of its branches (its JSON spelling, control characters dropped), so `snap` without jq and `trip` with it name one snapshot.
 
 | Host | Payload keys | Session id | Call id | Ask | Failure event | Hook registration |
 |---|---|---|---|---|---|---|
