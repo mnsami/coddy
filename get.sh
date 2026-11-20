@@ -78,11 +78,22 @@ $out"
     }
   else
     git clone -q -b main -- "$url" "$home" || die "could not clone $url"
-    sha= state=cloned on=main
+    sha='' state=cloned on=main
   fi
-  # The latest release: the v* tag nearest origin/main's tip, which a reverted release does not move.
+  # The latest release: the v* tag nearest origin/main's tip on its first-parent line, so a state main itself
+  # was at and never a commit inside a merged branch; a reverted release does not move it.
   # Full ref names: a fetched tag named origin/main (or main) would shadow the short one.
-  ref=${HERMY_REF:-$(git -C "$home" describe --tags --abbrev=0 --match 'v[0-9]*' refs/remotes/origin/main 2>/dev/null || echo main)}
+  ref=${HERMY_REF:-} c=''
+  if [ -z "$ref" ] && out=$(LC_ALL=C git -C "$home" describe --first-parent --tags --abbrev=0 --match 'v[0-9]*' refs/remotes/origin/main 2>&1); then
+    ref=${out##*$'\n'}
+    # A tag object named otherwise than its ref: git warns and prints the object's name, which may be another tag's.
+    case $out in *"is externally known as"*|*"is really '"*) ;; *)
+      c=$(git -C "$home" rev-parse -q --verify "refs/tags/$ref^{commit}") && git -C "$home" merge-base --is-ancestor "$c" refs/remotes/origin/main || c='' ;;
+    esac
+    [ -n "$c" ] || die "the latest release tag in $url is not one main was at; the checkout and HEAD are unchanged: name a release in HERMY_REF, or main, then run this again. git says:
+$(printf '%s\n' "$out" | LC_ALL=C tr -d '\000-\011\013-\037\177')"
+  fi
+  ref=${ref:-main}
   if [ "$ref" = main ]; then
     # Detached: main moves only by fast-forward, and checkout -B moves nothing when it fails.
     if [ "$on" = main ]; then out=$(git -C "$home" merge --ff-only refs/remotes/origin/main 2>&1)
@@ -90,7 +101,7 @@ $out"
       die "could not update $home (not a fast-forward, or an untracked file is in the way); the checkout and HEAD are unchanged. git says:
 $out"
   else
-    c=$(git -C "$home" rev-parse -q --verify "$ref^{commit}") || die "HERMY_REF=$ref names no commit in $url: name a tag, or main, then run this again"
+    [ -n "$c" ] || c=$(git -C "$home" rev-parse -q --verify "$ref^{commit}") || die "HERMY_REF=$ref names no commit in $url: name a tag, or main, then run this again"
     out=$(git -C "$home" checkout -q --detach "$c" 2>&1) ||
       die "could not check out $ref in $home (an untracked file is in the way); the checkout and HEAD are unchanged. git says:
 $out"

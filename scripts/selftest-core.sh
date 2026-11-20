@@ -1736,6 +1736,23 @@ git -C "$src" push -q "$tmp/hermy.git" refs/tags/origin/main
 t 0 "get.sh: a tag named origin/main does not move the release" says "^up to date: $cs at v4 ($(short v4))\$" get
 gref=main t 0 "get.sh: nor main's tip" says "^up to date: $cs at main ($(short main))\$" get
 git -C "$src" push -q "$tmp/hermy.git" :refs/tags/origin/main; git -C "$src" tag -d origin/main >/dev/null; git -C "$cs" tag -d origin/main >/dev/null
+# A commit inside a branch merged with a merge commit was never main's state: a release tag there is not followed.
+git -C "$src" checkout -q -b pr; echo backdoor > "$src/README.md"; git -C "$src" commit -q -am pr1; git -C "$src" tag v5
+echo eleven > "$src/README.md"; git -C "$src" commit -q -am pr2; git -C "$src" checkout -q main; git -C "$src" merge -q --no-ff -m merge pr
+git -C "$src" push -q "$tmp/hermy.git" main v5
+t 0 "get.sh: a release tag inside a merged branch is not followed" says "^up to date: $cs at v4 ($(short v4))\$" get
+git -C "$src" tag v6; git -C "$src" push -q "$tmp/hermy.git" v6
+t 0 "get.sh: one on the merge commit is" says "^updated: $cs at v6 ($(short v6))\$" get
+# A tag object whose own name is not its ref's: describe prints that name, and rev-parse would find another tag by it.
+git -C "$src" checkout -q side; git -C "$src" tag evil; git -C "$src" checkout -q main
+git -C "$src" update-ref refs/tags/v7 "$(printf 'object %s\ntype commit\ntag evil\ntagger T <t@example.com> 0 +0000\n\nm\n' "$(git -C "$src" rev-parse main)" | git -C "$src" mktag)"
+git -C "$src" push -q "$tmp/hermy.git" v7 evil; was=$(sha)
+t 1 "get.sh: a release tag object named otherwise is refused" get
+t 0 "get.sh: saying the checkout is unchanged" says 'release tag .*the checkout and HEAD are unchanged' get
+t 0 "get.sh: naming the tag" says "^warning: tag .*'v7'" get
+t 0 "get.sh: and left as it was" sh -c "test \"\$(git -C '$cs' rev-parse --short HEAD)\" = $was && git -C '$cs' diff --quiet HEAD"
+git -C "$src" push -q "$tmp/hermy.git" :refs/tags/v7 :refs/tags/evil; git -C "$src" tag -d v7 evil >/dev/null; git -C "$cs" tag -d v7 evil >/dev/null
+t 0 "get.sh: with both tags gone, the release is v6 again" says "^up to date: $cs at v6 ($(short v6))\$" get
 t 1 "get.sh: a first run with a HERMY_REF naming nothing is refused" env HOME="$gh" HERMY_HOME="$tmp/h11" HERMY_BIN="$tmp/b11" HERMY_REPO_URL="$tmp/hermy.git" HERMY_REF=nosuch bash "$here/get.sh"
 t 1 "get.sh: and links nothing" test -e "$tmp/b11"
 touch "$tmp/binfile"
