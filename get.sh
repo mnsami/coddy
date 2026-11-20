@@ -96,8 +96,10 @@ $out"
   if [ -z "$ref" ] && out=$(LC_ALL=C git -C "$home" describe --first-parent --tags --abbrev=0 --match 'v[0-9]*' refs/remotes/origin/main 2>&1); then
     ref=${out##*$'\n'}
     # A tag object named otherwise than its ref: git warns and prints the object's name, which may be another tag's.
+    # Its ref, read again, is held to the first-parent line as a pinned tag is: a file system that folds case may
+    # open another tag's ref by that name.
     case $out in *"is externally known as"*|*"is really '"*) ;; *)
-      c=$(git -C "$home" rev-parse -q --verify "refs/tags/$ref^{commit}") && git -C "$home" merge-base --is-ancestor "$c" refs/remotes/origin/main || c='' ;;
+      c=$(git -C "$home" rev-parse -q --verify "refs/tags/$ref^{commit}") && git -C "$home" rev-list --first-parent refs/remotes/origin/main | grep -qxF "$c" || c='' ;;
     esac
     [ -n "$c" ] || die "the latest release tag in $url is not one main was at; the checkout and HEAD are unchanged: name a release in HERMY_REF, or main, then run this again. git says:
 $(clean "$out")"
