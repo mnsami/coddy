@@ -951,7 +951,14 @@ HERMY_GUARD_BUDGET=0 t 2 "guard: and so under guard: warn" guardp "$two"
 # the ask carries both.
 wa="[\"$repo/.hermy.yml\",\"$repo/README.md\"]"
 t 0 "guard: warn, the config and a path outside any worktree: the ask carries both" eval 'guardp "$wa" | jq -e ".hermy == \"ask\" and (.text | test(\"changes the hermy guardrails\") and test(\"let through .guard: warn.\"))"'
+# An exported HERMY_ASK=0 is the parent's to apply: its refusal keeps the note.
+HERMY_ASK=0 t 2 "guard: warn, HERMY_ASK=0 exported, the config and a path outside any worktree are refused" guardp "$wa"
+HERMY_ASK=0 t 0 "guard: that refusal carries the other path's note" eval 'guardp "$wa" 2>&1 | grep "This host cannot ask" | grep -q "let through .guard: warn."'
 cp "$tmp/dl.yml" .hermy.yml
+# Two config paths asked in one edit: the one ask names both.
+mv .hermy.yml .coddy.yml
+t 0 "guard: an edit of .hermy.yml and a live .coddy.yml asks once, naming both" eval 'guardp "[\"$repo/.hermy.yml\",\"$repo/.coddy.yml\"]" | jq -e ".hermy == \"ask\" and (.text | contains(\"Editing .hermy.yml \") and contains(\"Editing .coddy.yml \"))"'
+mv .coddy.yml .hermy.yml
 # A path's verdict the parent cannot read (a jq that prints no JSON for the
 # child's ask alone) refuses the edit, naming the path, never passes it.
 mkdir "$tmp/oddjq"

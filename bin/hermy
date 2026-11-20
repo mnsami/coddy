@@ -669,7 +669,7 @@ if [ "${1-}" = guard ]; then
   # phys and inroot below (abspath's own line ends in a newline).
   readin
   # An edit naming several paths is held on each: guard runs itself once per
-  # path, and the first refusal, else the first ask, else the notes, win.
+  # path, and the first refusal, else the asks as one, else the notes, win.
   # Each child costs a process and its walk, so an edit naming more than 64
   # paths is refused before any starts, and one whose paths are not all
   # checked within the guard's seconds ($gdl) once they are up, in warn mode
@@ -685,12 +685,12 @@ if [ "${1-}" = guard ]; then
       # line, is read, so a warning it printed cannot hide an ask.
       r=$((gdl - SECONDS - 1))
       [ "$r" -gt 0 ] || die "the edit guard refuses an edit naming $n paths: too many paths to check in time, $i of them checked when its ${gdl} s deadline passed."
-      o=$(jqh -c --argjson i "$i" '.paths = [.paths[$i]]' <<<"$in" | HERMY_GUARD_BUDGET=$r "$BASH" -p "$src" guard); c=$?
+      o=$(jqh -c --argjson i "$i" '.paths = [.paths[$i]]' <<<"$in" | HERMY_ASK= HERMY_GUARD_BUDGET=$r "$BASH" -p "$src" guard); c=$?
       [ "$c" -ne 2 ] || exit 2
       [ "$c" -eq 0 ] || die "the edit guard failed on path $((i+1)) of $n (exit $c)"
       if [ -n "$o" ]; then
         k=$(jqh -r '.hermy // ""' <<<"$o") && t=$(jqh -r '.text // ""' <<<"$o") || k=""
-        case "$k" in ask) [ -n "$ask" ] || ask=$t ;; note) notes="${notes:+$notes }$t" ;; *) die "the edit guard could not read its verdict on path $((i+1)) of $n" ;; esac
+        case "$k" in ask) ask="${ask:+$ask }$t" ;; note) notes="${notes:+$notes }$t" ;; *) die "the edit guard could not read its verdict on path $((i+1)) of $n" ;; esac
       fi
       i=$((i+1))
     done
