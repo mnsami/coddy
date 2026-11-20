@@ -10,8 +10,8 @@
 # A rerun moves the checkout to that target, main by fast-forward. Every
 # refusal comes before any change to the checkout, but a first run's refusal
 # of its target (a HERMY_REF that is no tag main itself was at, a latest
-# release tag object named otherwise), which comes once it has cloned main,
-# linking nothing.
+# release tag object named otherwise, or whose ref resolves off main's
+# first-parent line), which comes once it has cloned main, linking nothing.
 # Reads nothing from stdin, which is this script under curl.
 # Wrapped in main so a download cut short runs nothing.
 set -u
