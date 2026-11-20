@@ -14,7 +14,7 @@
 set -u
 main() {
   local url="${HERMY_REPO_URL:-https://github.com/mnsami/hermy}" home="${HERMY_HOME:-${HOME:?is not set: set it, or HERMY_HOME and HERMY_BIN}/.hermy}" bin="${HERMY_BIN:-${HOME:?is not set: set it, or HERMY_HOME and HERMY_BIN}/.local/bin}"
-  local link state sha top v a on ref c out
+  local link state sha top v a on ref c out tags
   # Absolute, so the link's target resolves from HERMY_BIN and the PATH line works anywhere.
   case "$home" in /*) ;; *) home="$PWD/$home" ;; esac
   case "$bin" in /*) ;; *) bin="$PWD/$bin" ;; esac
@@ -69,8 +69,13 @@ main() {
   if [ -e "$home" ]; then
     sha=$(git -C "$home" rev-parse -q --verify HEAD) state=updated
     # --tags: a tag on a commit the checkout has already is not followed otherwise.
-    # --force: a tag moved on the remote would fail the whole fetch, quietly, on every rerun.
-    git -C "$home" fetch -q --tags --force origin main || die "could not fetch from $url"
+    # A tag moved on the remote fails the fetch and stops the run; LC_ALL=C keeps git's reason matchable.
+    out=$(LC_ALL=C git -C "$home" fetch --tags origin main 2>&1) || {
+      tags=$(printf '%s\n' "$out" | sed -n 's/^ ! \[rejected\] *\([^ ]*\) .*(would clobber existing tag)$/\1/p' | tr '\n' ' ')
+      [ -z "$tags" ] || tags="; a release tag moved on the remote: delete the local one (git -C $home tag -d ${tags% }), then run this again"
+      die "could not fetch from $url$tags. git says:
+$out"
+    }
   else
     git clone -q -b main -- "$url" "$home" || die "could not clone $url"
     sha= state=cloned on=main

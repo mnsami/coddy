@@ -1723,8 +1723,13 @@ upstream ten extra.txt; git -C "$src" tag v4; git -C "$src" push -q "$tmp/hermy.
 t 1 "get.sh: an untracked file in the way of the release stops it" env HOME="$gh" HERMY_HOME="$tmp/h10" HERMY_BIN="$tmp/b10" HERMY_REPO_URL="$tmp/hermy.git" bash "$here/get.sh"
 t 0 "get.sh: and left as it was" sh -c "grep -qx mine '$tmp/h10/extra.txt' && test \"\$(git -C '$tmp/h10' rev-parse --short HEAD)\" = $(short v3)"
 get >/dev/null 2>&1
-upstream eleven README.md; git -C "$src" tag -f v4 >/dev/null; git -C "$src" push -q -f "$tmp/hermy.git" v4
-t 0 "get.sh: a release tag moved on the remote is followed" says "^updated: $cs at v4 ($(short v4))\$" get
+upstream eleven README.md; was=$(sha); git -C "$src" tag -f v4 >/dev/null; git -C "$src" push -q -f "$tmp/hermy.git" v4
+t 1 "get.sh: a release tag moved on the remote stops the run" get
+t 0 "get.sh: showing git's reason" says ' v4 .*would clobber' get
+t 0 "get.sh: and the way out" says "moved on the remote: delete the local one (git -C $cs tag -d v4)" get
+t 0 "get.sh: and left as it was" sh -c "test \"\$(git -C '$cs' rev-parse --short HEAD)\" = $was && git -C '$cs' diff --quiet HEAD"
+git -C "$cs" tag -d v4 >/dev/null
+t 0 "get.sh: with the local tag deleted, the moved one is followed" says "^updated: $cs at v4 ($(short v4))\$" get
 t 1 "get.sh: a first run with a HERMY_REF naming nothing is refused" env HOME="$gh" HERMY_HOME="$tmp/h11" HERMY_BIN="$tmp/b11" HERMY_REPO_URL="$tmp/hermy.git" HERMY_REF=nosuch bash "$here/get.sh"
 t 1 "get.sh: and links nothing" test -e "$tmp/b11"
 touch "$tmp/binfile"
