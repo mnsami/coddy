@@ -5,7 +5,7 @@
 # under scripts/ and the full lifecycle are selftest.sh's.
 # Usage: bash scripts/selftest-core.sh
 set -u
-for v in "${!CLAUDE_@}"; do unset "$v" 2>/dev/null; done; unset HERMY_AGENT_DIR HERMY_EXEC HERMY_HOOKS 2>/dev/null
+for v in "${!CLAUDE_@}"; do unset "$v" 2>/dev/null; done; unset HERMY_AGENT_DIR HERMY_EXEC HERMY_HOOKS HERMY_REF 2>/dev/null
 # macOS ships no timeout: perl's alarm, which the exec keeps, stands in (a run cut short exits 142, not 124)
 command -v timeout >/dev/null || timeout() { perl -e 'alarm shift; exec { $ARGV[0] } @ARGV or exit 127' "$@"; }
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -1719,6 +1719,12 @@ done
 t 0 "get.sh: unset again, the latest release" says "^updated: $cs at v3 (" get
 t 0 "get.sh: a first run lands on the latest release" says "^cloned: $tmp/h10 at v3 ($(short v3))\$" env HOME="$gh" HERMY_HOME="$tmp/h10" HERMY_BIN="$tmp/b10" HERMY_REPO_URL="$tmp/hermy.git" bash "$here/get.sh"
 t 1 "get.sh: detached" git -C "$tmp/h10" symbolic-ref -q HEAD
+upstream ten extra.txt; git -C "$src" tag v4; git -C "$src" push -q "$tmp/hermy.git" v4; echo mine > "$tmp/h10/extra.txt"
+t 1 "get.sh: an untracked file in the way of the release stops it" env HOME="$gh" HERMY_HOME="$tmp/h10" HERMY_BIN="$tmp/b10" HERMY_REPO_URL="$tmp/hermy.git" bash "$here/get.sh"
+t 0 "get.sh: and left as it was" sh -c "grep -qx mine '$tmp/h10/extra.txt' && test \"\$(git -C '$tmp/h10' rev-parse --short HEAD)\" = $(short v3)"
+get >/dev/null 2>&1
+t 1 "get.sh: a first run with a HERMY_REF naming nothing is refused" env HOME="$gh" HERMY_HOME="$tmp/h11" HERMY_BIN="$tmp/b11" HERMY_REPO_URL="$tmp/hermy.git" HERMY_REF=nosuch bash "$here/get.sh"
+t 1 "get.sh: and links nothing" test -e "$tmp/b11"
 touch "$tmp/binfile"
 t 1 "get.sh: a HERMY_BIN that is a file is refused" env HOME="$gh" HERMY_HOME="$tmp/h2" HERMY_BIN="$tmp/binfile" HERMY_REPO_URL="$tmp/hermy.git" bash "$here/get.sh"
 t 1 "get.sh: before any clone" test -e "$tmp/h2"
