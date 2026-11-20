@@ -49,8 +49,9 @@ For another agent (Codex, Cursor, Copilot CLI, Gemini CLI or Antigravity CLI) or
 curl -fsSL https://raw.githubusercontent.com/mnsami/hermy/main/get.sh | bash
 ```
 
-- It clones `main` into `~/.hermy` and links `hermy` into `~/.local/bin`. A rerun fast-forwards it,
-  and stops on local changes to tracked files. Your agent reads `~/.hermy/skills/`, starting with `onboard/SKILL.md`.
+- It clones the latest release (the newest `v*` tag on `main`) into `~/.hermy` and links `hermy` into `~/.local/bin`.
+  A rerun moves it to the latest release, and stops on local changes to tracked files. `HERMY_REF=main` follows
+  the tip of `main` instead, `HERMY_REF=<tag>` pins a release. Your agent reads `~/.hermy/skills/`, starting with `onboard/SKILL.md`.
   The plugin keeps its own copy.
 - `hermy doctor` says which install runs. In a project it lists what is missing or off. It changes nothing.
 

@@ -1633,7 +1633,8 @@ if [ "$(id -u)" != 0 ]; then # root writes anywhere
   chmod u+w "$fx/.git/hooks" "$fx/.git/hooks/hermy"; rm "$fx/.git/config.lock"
 fi
 
-# get.sh installs main from HERMY_REPO_URL into HERMY_HOME and links hermy
+# get.sh installs the latest release (main while there is none) from
+# HERMY_REPO_URL into HERMY_HOME and links hermy
 # into HERMY_BIN, run as curl pipes it (the script on stdin), with no network.
 src="$tmp/src" gh="$tmp/gethome"; cs="$gh/.hermy"
 git init -q "$src"; git -C "$src" checkout -q -b main
@@ -1641,7 +1642,7 @@ mkdir -p "$src/bin" "$src/.claude-plugin" "$gh" "$tmp/root"
 cp "$here/bin/hermy" "$src/bin/"; cp "$here/.claude-plugin/plugin.json" "$src/.claude-plugin/"; echo x > "$src/README.md"
 git -C "$src" add -A; git -C "$src" commit -q -m init; git clone -q --bare "$src" "$tmp/hermy.git"
 upstream() { echo "$1" > "$src/$2"; git -C "$src" add -A; git -C "$src" commit -q -m "$1"; git -C "$src" push -q "$tmp/hermy.git" main; }
-get() { HOME="$gh" HERMY_HOME="$cs" HERMY_BIN="${gbin-$gh/bin}" HERMY_REPO_URL="${url-$tmp/hermy.git}" PATH="${gpath-$PATH}" bash -s < "$here/get.sh"; }
+get() { HOME="$gh" HERMY_HOME="$cs" HERMY_BIN="${gbin-$gh/bin}" HERMY_REPO_URL="${url-$tmp/hermy.git}" HERMY_REF="${gref-}" PATH="${gpath-$PATH}" bash -s < "$here/get.sh"; }
 sha() { git -C "$cs" rev-parse --short HEAD; }
 printf '#!/bin/sh\necho 0\n' > "$tmp/root/id"; chmod +x "$tmp/root/id"
 gpath="$tmp/root:$PATH" t 1 "get.sh: refuses root" get
@@ -1650,20 +1651,20 @@ mkdir "$gh/bin"; echo mine > "$gh/bin/hermy"
 t 1 "get.sh: a hermy in HERMY_BIN that is not its link is refused" get
 t 0 "get.sh: before any clone" sh -c "! test -e '$cs' && grep -qx mine '$gh/bin/hermy'"
 rm "$gh/bin/hermy"
-t 0 "get.sh: a first run clones" says "^cloned: $cs at " get
+t 0 "get.sh: a first run with no release tag clones main" says "^cloned: $cs at main ($(git -C "$src" rev-parse --short HEAD))\$" get
 t 0 "get.sh: on main" test "$(git -C "$cs" branch --show-current)" = main
 t 0 "get.sh: links hermy into HERMY_BIN" test "$gh/bin/hermy" -ef "$cs/bin/hermy"
-t 0 "get.sh: prints the commit" says "at $(sha)\$" get
+t 0 "get.sh: prints the commit" says "at main ($(sha))\$" get
 t 0 "get.sh: and the next step per agent" says 'claude plugin install hermy@hermy' get
 t 0 "get.sh: for other agents too" says "$cs/skills/onboard/SKILL.md" get
-t 0 "get.sh: a rerun is up to date" says "^up to date: $cs at $(sha)\$" get
+t 0 "get.sh: a rerun is up to date" says "^up to date: $cs at main ($(sha))\$" get
 t 0 "get.sh: HERMY_BIN off PATH prints the line to add" says "export PATH=\"$gh/bin:" get
 gpath="$gh/bin:$PATH" t 1 "get.sh: and on PATH does not" says 'export PATH=' get
 gbin="$gh/bin/" gpath="$gh/bin:$PATH" t 1 "get.sh: nor with a trailing / on HERMY_BIN" says 'export PATH=' get
 gpath="$gh/bin/:$PATH" t 1 "get.sh: nor on the PATH entry" says 'export PATH=' get
 t 0 "get.sh: and edits no rc file" sh -c "! ls -A '$gh' | grep -q '^\.[a-z]*rc\$\|profile'"
 upstream two README.md
-t 0 "get.sh: a new remote commit fast-forwards" says "^updated: $cs at $(git -C "$src" rev-parse --short HEAD)\$" get
+t 0 "get.sh: a new remote commit fast-forwards" says "^updated: $cs at main ($(git -C "$src" rev-parse --short HEAD))\$" get
 upstream three README.md; was=$(sha)
 echo edited >> "$cs/README.md"
 t 1 "get.sh: an edited tracked file is refused" get
@@ -1689,6 +1690,35 @@ git init -q "$tmp/gd"; git -C "$tmp/gd" checkout -q -b main; git -C "$tmp/gd" co
 upstream seven README.md
 GIT_DIR="$tmp/gd/.git" t 0 "get.sh: a GIT_DIR from the caller is dropped" says '^updated: ' get
 t 0 "get.sh: and its repository left alone" test "$(git -C "$tmp/gd" rev-list --count HEAD)" = 1
+# The latest release: the v* tag nearest origin/main's tip, checked out detached; HERMY_REF picks main or a tag.
+short() { git -C "$src" rev-parse --short "$1"; }
+upstream tagged README.md; git -C "$src" tag v1; git -C "$src" push -q "$tmp/hermy.git" v1
+t 0 "get.sh: a rerun moves to the release tag" says "^updated: $cs at v1 ($(short v1))\$" get
+t 1 "get.sh: detached" git -C "$cs" symbolic-ref -q HEAD
+t 0 "get.sh: a rerun on it is up to date, its detached HEAD passing" says "^up to date: $cs at v1 ($(short v1))\$" get
+git -C "$src" checkout -q -b side; echo side > "$src/README.md"; git -C "$src" commit -q -am side; git -C "$src" tag v9; git -C "$src" checkout -q main
+git -C "$src" push -q "$tmp/hermy.git" v9
+t 0 "get.sh: a v* tag main does not reach is skipped" says "^up to date: $cs at v1 (" get
+upstream eight README.md; git -C "$src" tag v2; git -C "$src" push -q "$tmp/hermy.git" v2; upstream nine README.md
+t 0 "get.sh: a newer release tag is followed" says "^updated: $cs at v2 ($(short v2))\$" get
+echo edited >> "$cs/README.md"
+t 1 "get.sh: detached, an edited tracked file is still refused" get
+git -C "$cs" checkout -q -- README.md
+gref=main t 0 "get.sh: HERMY_REF=main follows the tip" says "^updated: $cs at main ($(short main))\$" get
+t 0 "get.sh: on branch main" test "$(git -C "$cs" branch --show-current)" = main
+git -C "$src" tag v3; git -C "$src" push -q "$tmp/hermy.git" v3
+t 0 "get.sh: a release tag on the commit it is at is fetched too" says "^up to date: $cs at v3 ($(short v3))\$" get
+t 1 "get.sh: and checked out detached" git -C "$cs" symbolic-ref -q HEAD
+gref=v1 t 0 "get.sh: HERMY_REF names a tag" says "^updated: $cs at v1 ($(short v1))\$" get
+t 1 "get.sh: detached on it" git -C "$cs" symbolic-ref -q HEAD
+for r in -x nosuch; do
+  gref=$r t 1 "get.sh: HERMY_REF=$r is refused" get
+  gref=$r t 0 "get.sh: by name" says "HERMY_REF=$r" get
+  t 0 "get.sh: and the checkout left as it was" test "$(sha)" = "$(short v1)"
+done
+t 0 "get.sh: unset again, the latest release" says "^updated: $cs at v3 (" get
+t 0 "get.sh: a first run lands on the latest release" says "^cloned: $tmp/h10 at v3 ($(short v3))\$" env HOME="$gh" HERMY_HOME="$tmp/h10" HERMY_BIN="$tmp/b10" HERMY_REPO_URL="$tmp/hermy.git" bash "$here/get.sh"
+t 1 "get.sh: detached" git -C "$tmp/h10" symbolic-ref -q HEAD
 touch "$tmp/binfile"
 t 1 "get.sh: a HERMY_BIN that is a file is refused" env HOME="$gh" HERMY_HOME="$tmp/h2" HERMY_BIN="$tmp/binfile" HERMY_REPO_URL="$tmp/hermy.git" bash "$here/get.sh"
 t 1 "get.sh: before any clone" test -e "$tmp/h2"

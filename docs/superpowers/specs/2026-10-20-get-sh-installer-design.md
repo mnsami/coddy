@@ -7,13 +7,13 @@ hermy installs only as a Claude Code plugin. Codex, Cursor, Copilot CLI and Gemi
 ## Goals
 
 - `get.sh` at the repo root: `curl -fsSL https://raw.githubusercontent.com/mnsami/coddy/main/get.sh | bash`.
-- Installs from `main`, always (user). No tags, no `--version`, no release check: the repo has no tags or releases, and the release process stays a `plugin.json` bump. (2026-11-18: tags exist from `v0.7.3`; per #285 D6, CI tags `v<version>` and creates a release for each bump merged to `main` (#282). `get.sh` still installs from `main` here; following the newest tag is #497.)
+- Installs from `main`, always (user). No tags, no `--version`, no release check: the repo has no tags or releases, and the release process stays a `plugin.json` bump. (2026-11-18: tags exist from `v0.7.3`; per #285 D6, CI tags `v<version>` and creates a release for each bump merged to `main` (#282). 2026-11-20, #497: `get.sh` installs the latest release, the newest `v*` tag reachable from `main` (`git describe --tags --abbrev=0 --match 'v[0-9]*' origin/main`), detached, or `main` while there is none; `HERMY_REF=main` installs the tip by fast-forward, `HERMY_REF=<tag>` that tag. Still no `--version` and no release check.)
 - A minimal `hermy doctor` that reports which install it runs from (user); #34 extends the same verb later.
 - README's Install section lists both ways.
 
 ## Non-goals
 
-- Release tags, GitHub releases, version pinning, checksums. (Tags and releases exist from `v0.7.3` and come from CI, #282, per #285 D6; `get.sh` following them is #497.)
+- Release tags, GitHub releases, version pinning, checksums. (Tags and releases exist from `v0.7.3` and come from CI, #282, per #285 D6; `get.sh` installs the latest of them, and `HERMY_REF=main` the tip, from #497; checksums stay a non-goal.)
 - Per-agent packaging (#31, #32, #33, #150) and #34's prerequisite and enforcement checks.
 - Installing `jq`, `jj` or anything else; editing shell rc files.
 
