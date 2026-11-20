@@ -5,7 +5,7 @@
 # under scripts/ and the full lifecycle are selftest.sh's.
 # Usage: bash scripts/selftest-core.sh
 set -u
-for v in "${!CLAUDE_@}"; do unset "$v" 2>/dev/null; done; unset HERMY_AGENT_DIR HERMY_EXEC HERMY_HOOKS 2>/dev/null
+for v in "${!CLAUDE_@}"; do unset "$v" 2>/dev/null; done; unset HERMY_AGENT_DIR HERMY_EXEC HERMY_HOOKS HERMY_REF 2>/dev/null
 # macOS ships no timeout: perl's alarm, which the exec keeps, stands in (a run cut short exits 142, not 124)
 command -v timeout >/dev/null || timeout() { perl -e 'alarm shift; exec { $ARGV[0] } @ARGV or exit 127' "$@"; }
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -1633,7 +1633,8 @@ if [ "$(id -u)" != 0 ]; then # root writes anywhere
   chmod u+w "$fx/.git/hooks" "$fx/.git/hooks/hermy"; rm "$fx/.git/config.lock"
 fi
 
-# get.sh installs main from HERMY_REPO_URL into HERMY_HOME and links hermy
+# get.sh installs the latest release (main while there is none) from
+# HERMY_REPO_URL into HERMY_HOME and links hermy
 # into HERMY_BIN, run as curl pipes it (the script on stdin), with no network.
 src="$tmp/src" gh="$tmp/gethome"; cs="$gh/.hermy"
 git init -q "$src"; git -C "$src" checkout -q -b main
@@ -1641,7 +1642,7 @@ mkdir -p "$src/bin" "$src/.claude-plugin" "$gh" "$tmp/root"
 cp "$here/bin/hermy" "$src/bin/"; cp "$here/.claude-plugin/plugin.json" "$src/.claude-plugin/"; echo x > "$src/README.md"
 git -C "$src" add -A; git -C "$src" commit -q -m init; git clone -q --bare "$src" "$tmp/hermy.git"
 upstream() { echo "$1" > "$src/$2"; git -C "$src" add -A; git -C "$src" commit -q -m "$1"; git -C "$src" push -q "$tmp/hermy.git" main; }
-get() { HOME="$gh" HERMY_HOME="$cs" HERMY_BIN="${gbin-$gh/bin}" HERMY_REPO_URL="${url-$tmp/hermy.git}" PATH="${gpath-$PATH}" bash -s < "$here/get.sh"; }
+get() { HOME="$gh" HERMY_HOME="$cs" HERMY_BIN="${gbin-$gh/bin}" HERMY_REPO_URL="${url-$tmp/hermy.git}" HERMY_REF="${gref-}" PATH="${gpath-$PATH}" bash -s < "$here/get.sh"; }
 sha() { git -C "$cs" rev-parse --short HEAD; }
 printf '#!/bin/sh\necho 0\n' > "$tmp/root/id"; chmod +x "$tmp/root/id"
 gpath="$tmp/root:$PATH" t 1 "get.sh: refuses root" get
@@ -1650,20 +1651,20 @@ mkdir "$gh/bin"; echo mine > "$gh/bin/hermy"
 t 1 "get.sh: a hermy in HERMY_BIN that is not its link is refused" get
 t 0 "get.sh: before any clone" sh -c "! test -e '$cs' && grep -qx mine '$gh/bin/hermy'"
 rm "$gh/bin/hermy"
-t 0 "get.sh: a first run clones" says "^cloned: $cs at " get
+t 0 "get.sh: a first run with no release tag clones main" says "^cloned: $cs at main ($(git -C "$src" rev-parse --short HEAD))\$" get
 t 0 "get.sh: on main" test "$(git -C "$cs" branch --show-current)" = main
 t 0 "get.sh: links hermy into HERMY_BIN" test "$gh/bin/hermy" -ef "$cs/bin/hermy"
-t 0 "get.sh: prints the commit" says "at $(sha)\$" get
+t 0 "get.sh: prints the commit" says "at main ($(sha))\$" get
 t 0 "get.sh: and the next step per agent" says 'claude plugin install hermy@hermy' get
 t 0 "get.sh: for other agents too" says "$cs/skills/onboard/SKILL.md" get
-t 0 "get.sh: a rerun is up to date" says "^up to date: $cs at $(sha)\$" get
+t 0 "get.sh: a rerun is up to date" says "^up to date: $cs at main ($(sha))\$" get
 t 0 "get.sh: HERMY_BIN off PATH prints the line to add" says "export PATH=\"$gh/bin:" get
 gpath="$gh/bin:$PATH" t 1 "get.sh: and on PATH does not" says 'export PATH=' get
 gbin="$gh/bin/" gpath="$gh/bin:$PATH" t 1 "get.sh: nor with a trailing / on HERMY_BIN" says 'export PATH=' get
 gpath="$gh/bin/:$PATH" t 1 "get.sh: nor on the PATH entry" says 'export PATH=' get
 t 0 "get.sh: and edits no rc file" sh -c "! ls -A '$gh' | grep -q '^\.[a-z]*rc\$\|profile'"
 upstream two README.md
-t 0 "get.sh: a new remote commit fast-forwards" says "^updated: $cs at $(git -C "$src" rev-parse --short HEAD)\$" get
+t 0 "get.sh: a new remote commit fast-forwards" says "^updated: $cs at main ($(git -C "$src" rev-parse --short HEAD))\$" get
 upstream three README.md; was=$(sha)
 echo edited >> "$cs/README.md"
 t 1 "get.sh: an edited tracked file is refused" get
@@ -1689,6 +1690,107 @@ git init -q "$tmp/gd"; git -C "$tmp/gd" checkout -q -b main; git -C "$tmp/gd" co
 upstream seven README.md
 GIT_DIR="$tmp/gd/.git" t 0 "get.sh: a GIT_DIR from the caller is dropped" says '^updated: ' get
 t 0 "get.sh: and its repository left alone" test "$(git -C "$tmp/gd" rev-list --count HEAD)" = 1
+# The latest release: the v* tag nearest origin/main's tip, checked out detached; HERMY_REF picks main or a tag.
+short() { git -C "$src" rev-parse --short "$1"; }
+upstream tagged README.md; git -C "$src" tag v1; git -C "$src" push -q "$tmp/hermy.git" v1
+t 0 "get.sh: a rerun moves to the release tag" says "^updated: $cs at v1 ($(short v1))\$" get
+t 1 "get.sh: detached" git -C "$cs" symbolic-ref -q HEAD
+t 0 "get.sh: a rerun on it is up to date, its detached HEAD passing" says "^up to date: $cs at v1 ($(short v1))\$" get
+git -C "$src" checkout -q -b side; echo side > "$src/README.md"; git -C "$src" commit -q -am side; git -C "$src" tag v9; git -C "$src" checkout -q main
+git -C "$src" push -q "$tmp/hermy.git" v9
+t 0 "get.sh: a v* tag main does not reach is skipped" says "^up to date: $cs at v1 (" get
+upstream eight README.md; git -C "$src" tag v2; git -C "$src" push -q "$tmp/hermy.git" v2; upstream nine README.md
+t 0 "get.sh: a newer release tag is followed" says "^updated: $cs at v2 ($(short v2))\$" get
+echo edited >> "$cs/README.md"
+t 1 "get.sh: detached, an edited tracked file is still refused" get
+git -C "$cs" checkout -q -- README.md
+gref=main t 0 "get.sh: HERMY_REF=main follows the tip" says "^updated: $cs at main ($(short main))\$" get
+t 0 "get.sh: on branch main" test "$(git -C "$cs" branch --show-current)" = main
+git -C "$src" tag v3; git -C "$src" push -q "$tmp/hermy.git" v3
+t 0 "get.sh: a release tag on the commit it is at is fetched too" says "^up to date: $cs at v3 ($(short v3))\$" get
+t 1 "get.sh: and checked out detached" git -C "$cs" symbolic-ref -q HEAD
+gref=v1 t 0 "get.sh: HERMY_REF names a tag" says "^updated: $cs at v1 ($(short v1))\$" get
+t 1 "get.sh: detached on it" git -C "$cs" symbolic-ref -q HEAD
+# v9: a tag main never reached, as one pushed on an unreviewed commit is.
+for r in -x nosuch HEAD "$(git -C "$src" rev-parse main)" 'v1~1' origin/main v9; do
+  gref=$r t 1 "get.sh: HERMY_REF=$r is refused" get
+  gref=$r t 0 "get.sh: by name" says "HERMY_REF=$r" get
+  t 0 "get.sh: and the checkout left as it was" test "$(sha)" = "$(short v1)"
+done
+t 0 "get.sh: unset again, the latest release" says "^updated: $cs at v3 (" get
+t 0 "get.sh: a first run lands on the latest release" says "^cloned: $tmp/h10 at v3 ($(short v3))\$" env HOME="$gh" HERMY_HOME="$tmp/h10" HERMY_BIN="$tmp/b10" HERMY_REPO_URL="$tmp/hermy.git" bash "$here/get.sh"
+t 1 "get.sh: detached" git -C "$tmp/h10" symbolic-ref -q HEAD
+upstream ten extra.txt; git -C "$src" tag v4; git -C "$src" push -q "$tmp/hermy.git" v4; echo mine > "$tmp/h10/extra.txt"
+t 1 "get.sh: an untracked file in the way of the release stops it" env HOME="$gh" HERMY_HOME="$tmp/h10" HERMY_BIN="$tmp/b10" HERMY_REPO_URL="$tmp/hermy.git" bash "$here/get.sh"
+t 0 "get.sh: and left as it was" sh -c "grep -qx mine '$tmp/h10/extra.txt' && test \"\$(git -C '$tmp/h10' rev-parse --short HEAD)\" = $(short v3)"
+get >/dev/null 2>&1
+upstream eleven README.md; was=$(sha); git -C "$src" tag -f v4 >/dev/null; git -C "$src" push -q -f "$tmp/hermy.git" v4
+t 1 "get.sh: a release tag moved on the remote stops the run" get
+t 0 "get.sh: showing git's reason" says ' v4 .*would clobber' get
+t 0 "get.sh: and the way out" says "moved on the remote: delete the local one (git -C $cs tag -d -- 'v4')" get
+t 0 "get.sh: and left as it was" sh -c "test \"\$(git -C '$cs' rev-parse --short HEAD)\" = $was && git -C '$cs' diff --quiet HEAD"
+git -C "$cs" tag -d v4 >/dev/null
+t 0 "get.sh: with the local tag deleted, the moved one is followed" says "^updated: $cs at v4 ($(short v4))\$" get
+# A moved tag's name, which git lets hold shell syntax, is single-quoted in the delete to paste, and printed as printable ASCII alone.
+m="x'\$(id);"$'\302\233'y; git -C "$src" tag "$m"; git -C "$src" push -q "$tmp/hermy.git" "refs/tags/$m"; get >/dev/null 2>&1
+git -C "$src" tag -f "$m" v1 >/dev/null; git -C "$src" push -q -f "$tmp/hermy.git" "refs/tags/$m"
+t 1 "get.sh: a moved tag named with shell syntax stops the run" get
+get > "$tmp/gm.out" 2>&1
+t 0 "get.sh: naming it single-quoted in the delete" grep -qF "(git -C $cs tag -d -- 'x'\\''\$(id);y')" "$tmp/gm.out"
+LC_ALL=C t 1 "get.sh: and none of its bytes past ASCII" grep -q $'\302\233' "$tmp/gm.out"
+git -C "$src" push -q "$tmp/hermy.git" ":refs/tags/$m"; git -C "$src" tag -d "$m" >/dev/null; git -C "$cs" tag -d "$m" >/dev/null
+# A tag named origin/main, on a commit main does not hold, would shadow the remote branch.
+git -C "$src" checkout -q side; echo bad > "$src/README.md"; git -C "$src" commit -q -am bad; git -C "$src" tag origin/main; git -C "$src" checkout -q main
+git -C "$src" push -q "$tmp/hermy.git" refs/tags/origin/main
+t 0 "get.sh: a tag named origin/main does not move the release" says "^up to date: $cs at v4 ($(short v4))\$" get
+gref=main t 0 "get.sh: nor main's tip" says "^up to date: $cs at main ($(short main))\$" get
+git -C "$src" push -q "$tmp/hermy.git" :refs/tags/origin/main; git -C "$src" tag -d origin/main >/dev/null; git -C "$cs" tag -d origin/main >/dev/null
+# A commit inside a branch merged with a merge commit was never main's state: a release tag there is not followed.
+git -C "$src" checkout -q -b pr; echo backdoor > "$src/README.md"; git -C "$src" commit -q -am pr1; git -C "$src" tag v5
+echo eleven > "$src/README.md"; git -C "$src" commit -q -am pr2; git -C "$src" checkout -q main; git -C "$src" merge -q --no-ff -m merge pr
+git -C "$src" push -q "$tmp/hermy.git" main v5
+t 0 "get.sh: a release tag inside a merged branch is not followed" says "^up to date: $cs at v4 ($(short v4))\$" get
+git -C "$src" tag v6; git -C "$src" push -q "$tmp/hermy.git" v6
+t 0 "get.sh: one on the merge commit is" says "^updated: $cs at v6 ($(short v6))\$" get
+gref=v5 t 1 "get.sh: HERMY_REF naming a tag inside a merged branch is refused" get
+gref=v5 t 0 "get.sh: by name" says "HERMY_REF=v5 is not a tag main itself was at" get
+t 0 "get.sh: and the checkout left as it was" test "$(sha)" = "$(short v6)"
+# A tag object whose own name is not its ref's: describe prints that name, and rev-parse would find another tag by it.
+git -C "$src" checkout -q side; git -C "$src" tag evil; git -C "$src" checkout -q main
+git -C "$src" update-ref refs/tags/v7 "$(printf 'object %s\ntype commit\ntag evil\ntagger T <t@example.com> 0 +0000\n\nm\n' "$(git -C "$src" rev-parse main)" | git -C "$src" mktag)"
+git -C "$src" push -q "$tmp/hermy.git" v7 evil; was=$(sha)
+t 1 "get.sh: a release tag object named otherwise is refused" get
+t 0 "get.sh: saying the checkout is unchanged" says 'release tag .*the checkout and HEAD are unchanged' get
+t 0 "get.sh: naming the tag" says "^warning: tag .*'v7'" get
+t 0 "get.sh: and left as it was" sh -c "test \"\$(git -C '$cs' rev-parse --short HEAD)\" = $was && git -C '$cs' diff --quiet HEAD"
+git -C "$src" push -q "$tmp/hermy.git" :refs/tags/v7 :refs/tags/evil; git -C "$src" tag -d v7 evil >/dev/null; git -C "$cs" tag -d v7 evil >/dev/null
+t 0 "get.sh: with both tags gone, the release is v6 again" says "^up to date: $cs at v6 ($(short v6))\$" get
+git -C "$src" push -q "$tmp/hermy.git" :refs/tags/v6; git -C "$src" tag -d v6 >/dev/null
+t 0 "get.sh: a release tag deleted on the remote moves the rerun to the one before" says "^updated: $cs at v4 ($(short v4))\$" get
+t 1 "get.sh: and is deleted here too" git -C "$cs" rev-parse -q --verify refs/tags/v6
+# A tag named main on the remote does not stand in for the branch: not in the fetch, nor in the branch check.
+git -C "$src" push -q "$tmp/hermy.git" side:refs/tags/main; upstream twelve README.md; git -C "$src" tag v8; git -C "$src" push -q "$tmp/hermy.git" v8
+t 0 "get.sh: with a tag named main, a detached rerun follows a new release" says "^updated: $cs at v8 ($(short v8))\$" get
+upstream thirteen README.md
+gref=main t 0 "get.sh: and HERMY_REF=main the branch's tip" says "^updated: $cs at main ($(short main))\$" get
+upstream fourteen README.md
+gref=main t 0 "get.sh: a rerun on branch main is not refused" says "^updated: $cs at main ($(short main))\$" get
+git -C "$src" push -q "$tmp/hermy.git" :refs/tags/main; git -C "$cs" tag -d main >/dev/null
+get >/dev/null 2>&1; git -C "$cs" branch -f main v9; was=$(sha)
+gref=main t 1 "get.sh: detached, a local main with commits the remote's does not is refused" get
+gref=main t 0 "get.sh: saying so" says 'local main in .* has commits that the remote.s main does not; the checkout and HEAD are unchanged' get
+t 0 "get.sh: and left as it was" test "$(sha)" = "$was"
+git -C "$cs" branch -D main >/dev/null
+gref=main t 0 "get.sh: with that main dropped, it is made again" says "^updated: $cs at main ($(short main))\$" get
+# A release tag's name reaches the terminal as printable ASCII alone.
+c1=$(printf 'v8\302\233x'); upstream fifteen README.md; git -C "$src" tag "$c1"; git -C "$src" push -q "$tmp/hermy.git" "$c1"
+t 0 "get.sh: a release tag named past ASCII is printed without those bytes" says "^updated: $cs at v8x ($(short main))\$" get
+LC_ALL=C t 1 "get.sh: none of them" says $'\302\233' get
+git -C "$src" push -q "$tmp/hermy.git" ":refs/tags/$c1"; git -C "$src" tag -d "$c1" >/dev/null; get >/dev/null 2>&1
+t 1 "get.sh: a first run with a HERMY_REF naming nothing is refused" env HOME="$gh" HERMY_HOME="$tmp/h11" HERMY_BIN="$tmp/b11" HERMY_REPO_URL="$tmp/hermy.git" HERMY_REF=nosuch bash "$here/get.sh"
+t 1 "get.sh: and links nothing" test -e "$tmp/b11"
+mkdir -p "$tmp/gh12"; printf '[clone]\n\tdefaultRemoteName = upstream\n' > "$tmp/gh12/.gitconfig"
+t 0 "get.sh: a first run keeps the remote origin under a clone.defaultRemoteName" says "^cloned: $tmp/h12 at v8 ($(short v8))\$" env HOME="$tmp/gh12" HERMY_HOME="$tmp/h12" HERMY_BIN="$tmp/b12" HERMY_REPO_URL="$tmp/hermy.git" bash "$here/get.sh"
 touch "$tmp/binfile"
 t 1 "get.sh: a HERMY_BIN that is a file is refused" env HOME="$gh" HERMY_HOME="$tmp/h2" HERMY_BIN="$tmp/binfile" HERMY_REPO_URL="$tmp/hermy.git" bash "$here/get.sh"
 t 1 "get.sh: before any clone" test -e "$tmp/h2"

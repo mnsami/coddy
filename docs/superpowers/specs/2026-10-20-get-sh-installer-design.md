@@ -7,13 +7,13 @@ hermy installs only as a Claude Code plugin. Codex, Cursor, Copilot CLI and Gemi
 ## Goals
 
 - `get.sh` at the repo root: `curl -fsSL https://raw.githubusercontent.com/mnsami/coddy/main/get.sh | bash`.
-- Installs from `main`, always (user). No tags, no `--version`, no release check: the repo has no tags or releases, and the release process stays a `plugin.json` bump. (2026-11-18: tags exist from `v0.7.3`; per #285 D6, CI tags `v<version>` and creates a release for each bump merged to `main` (#282). `get.sh` still installs from `main` here; following the newest tag is #497.)
+- Installs from `main`, always (user). No tags, no `--version`, no release check: the repo has no tags or releases, and the release process stays a `plugin.json` bump. (2026-11-18: tags exist from `v0.7.3`; per #285 D6, CI tags `v<version>` and creates a release for each bump merged to `main` (#282). 2026-11-20, #497: `get.sh` installs the latest release, the newest `v*` tag on `main`'s first-parent line (`git describe --first-parent --tags --abbrev=0 --match 'v[0-9]*' refs/remotes/origin/main`), detached, or `main` while there is none; `HERMY_REF=main` installs the tip by fast-forward, `HERMY_REF=<tag>` that tag, and `HERMY_REF` takes nothing else. Still no `--version` and no release check.)
 - A minimal `hermy doctor` that reports which install it runs from (user); #34 extends the same verb later.
 - README's Install section lists both ways.
 
 ## Non-goals
 
-- Release tags, GitHub releases, version pinning, checksums. (Tags and releases exist from `v0.7.3` and come from CI, #282, per #285 D6; `get.sh` following them is #497.)
+- Release tags, GitHub releases, checksums. (Tags and releases exist from `v0.7.3` and come from CI, #282, per #285 D6; `get.sh` installs the latest of them, `HERMY_REF=<tag>` pins a release, one `main` itself was at, and `HERMY_REF=main` the tip, from #497; checksums stay a non-goal.)
 - Per-agent packaging (#31, #32, #33, #150) and #34's prerequisite and enforcement checks.
 - Installing `jq`, `jj` or anything else; editing shell rc files.
 
@@ -28,8 +28,11 @@ hermy installs only as a Claude Code plugin. Codex, Cursor, Copilot CLI and Gemi
 **`get.sh` behaviour.**
 1. Refuse when `id -u` is 0.
 2. Needs `git` and `bash`; missing `git` → say so and stop.
-3. `~/.hermy` absent → `git clone` `https://github.com/mnsami/coddy` (branch `main`) into it.
-4. Present → it must be a git checkout whose `origin` is that repo, on `main`, with no change to a tracked file; otherwise stop and say which, touching nothing. Then `git fetch` and `git merge --ff-only origin/main`; not a fast-forward, or the merge stops on an untracked file in the way → stop, show git's message, say so.
+3. `~/.hermy` absent → `git clone -o origin -b main` `https://github.com/mnsami/coddy` into it (`-o origin`, so a user's `clone.defaultRemoteName` does not name the remote otherwise), then the target and its checkout, as in step 4's bullets. (Steps 3 and 4 as of #497, 2026-11-20.)
+4. Present → it must be a git checkout whose `origin` is that repo, on branch `main` (`refs/heads/main`, so a tag named `main` does not stand in for it) or detached, with no change to a tracked file; otherwise stop and say which, touching nothing. Then `git fetch --prune origin refs/heads/main 'refs/tags/*:refs/tags/*'`: every tag, a tag deleted on the remote deleted here too (`--prune-tags` is ignored beside a refspec on the command line), and a tag moved on the remote stops the run, naming the local tag to delete.
+   - The target: `HERMY_REF=main`, or a tag on `main`'s first-parent line, a state `main` itself was at (in `git rev-list --first-parent refs/remotes/origin/main`, the line `git describe --first-parent` reads, so a tag pushed on an unreviewed commit, or on one inside a branch merged with a merge commit, is refused), resolved as `refs/tags/<HERMY_REF>` alone (a commit id, a branch or a revision such as `v1~1` is refused by name); without `HERMY_REF`, the latest release (the `git describe` above), or `main` while there is none. That pick stops the run when it is a tag object whose embedded name differs from its ref, or when `refs/tags/<name>` resolves to a commit off `main`'s first-parent line, held to it as a pinned tag is (a file system that folds case may open another tag's ref by that name).
+   - A tag is checked out detached. `main` moves by `git merge --ff-only refs/remotes/origin/main` on the branch, or from a detached `HEAD` by `git checkout -B main refs/remotes/origin/main`, once the local `main`, when there is one, holds no commit the remote's does not; one that does stops the run, saying so. Not a fast-forward, or an untracked file in the way → stop, show git's message, say so.
+   - Every stop leaves the checkout and `HEAD` as they were; a first run clones before it can refuse its target (a `HERMY_REF` that is no tag or one `main` itself was never at, a latest release tag object named otherwise or whose ref resolves to a commit off `main`'s first-parent line), and links nothing. Text from the remote (git's output, a tag's name) reaches the terminal as line breaks and printable ASCII alone.
    - "That repo" compares normalised URLs: `git@github.com:` read as `https://github.com/`, a trailing `/` and `.git` dropped, so the https and ssh forms of `mnsami/coddy`, with or without `.git`, all match (my call).
    - Untracked files do not block (my call): editor backups and an agent's scratch output in `~/.hermy` would otherwise stop every update.
 5. Link `~/.hermy/bin/hermy` as `hermy` in `~/.local/bin` (created when absent). An existing `hermy` there that is not a link to that file → stop and say so. `~/.local/bin` not on `PATH` → print the line to add, edit nothing.
