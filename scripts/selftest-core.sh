@@ -1727,7 +1727,7 @@ get >/dev/null 2>&1
 upstream eleven README.md; was=$(sha); git -C "$src" tag -f v4 >/dev/null; git -C "$src" push -q -f "$tmp/hermy.git" v4
 t 1 "get.sh: a release tag moved on the remote stops the run" get
 t 0 "get.sh: showing git's reason" says ' v4 .*would clobber' get
-t 0 "get.sh: and the way out" says "moved on the remote: delete the local one (git -C $cs tag -d 'v4')" get
+t 0 "get.sh: and the way out" says "moved on the remote: delete the local one (git -C $cs tag -d -- 'v4')" get
 t 0 "get.sh: and left as it was" sh -c "test \"\$(git -C '$cs' rev-parse --short HEAD)\" = $was && git -C '$cs' diff --quiet HEAD"
 git -C "$cs" tag -d v4 >/dev/null
 t 0 "get.sh: with the local tag deleted, the moved one is followed" says "^updated: $cs at v4 ($(short v4))\$" get
@@ -1736,7 +1736,7 @@ m="x'\$(id);"$'\302\233'y; git -C "$src" tag "$m"; git -C "$src" push -q "$tmp/h
 git -C "$src" tag -f "$m" v1 >/dev/null; git -C "$src" push -q -f "$tmp/hermy.git" "refs/tags/$m"
 t 1 "get.sh: a moved tag named with shell syntax stops the run" get
 get > "$tmp/gm.out" 2>&1
-t 0 "get.sh: naming it single-quoted in the delete" grep -qF "(git -C $cs tag -d 'x'\\''\$(id);y')" "$tmp/gm.out"
+t 0 "get.sh: naming it single-quoted in the delete" grep -qF "(git -C $cs tag -d -- 'x'\\''\$(id);y')" "$tmp/gm.out"
 LC_ALL=C t 1 "get.sh: and none of its bytes past ASCII" grep -q $'\302\233' "$tmp/gm.out"
 git -C "$src" push -q "$tmp/hermy.git" ":refs/tags/$m"; git -C "$src" tag -d "$m" >/dev/null; git -C "$cs" tag -d "$m" >/dev/null
 # A tag named origin/main, on a commit main does not hold, would shadow the remote branch.
@@ -1752,6 +1752,9 @@ git -C "$src" push -q "$tmp/hermy.git" main v5
 t 0 "get.sh: a release tag inside a merged branch is not followed" says "^up to date: $cs at v4 ($(short v4))\$" get
 git -C "$src" tag v6; git -C "$src" push -q "$tmp/hermy.git" v6
 t 0 "get.sh: one on the merge commit is" says "^updated: $cs at v6 ($(short v6))\$" get
+gref=v5 t 1 "get.sh: HERMY_REF naming a tag inside a merged branch is refused" get
+gref=v5 t 0 "get.sh: by name" says "HERMY_REF=v5 is not a tag main itself was at" get
+t 0 "get.sh: and the checkout left as it was" test "$(sha)" = "$(short v6)"
 # A tag object whose own name is not its ref's: describe prints that name, and rev-parse would find another tag by it.
 git -C "$src" checkout -q side; git -C "$src" tag evil; git -C "$src" checkout -q main
 git -C "$src" update-ref refs/tags/v7 "$(printf 'object %s\ntype commit\ntag evil\ntagger T <t@example.com> 0 +0000\n\nm\n' "$(git -C "$src" rev-parse main)" | git -C "$src" mktag)"
