@@ -947,6 +947,10 @@ HERMY_GUARD_BUDGET=0 t 2 "guard: an edit naming several paths past its deadline 
 HERMY_GUARD_BUDGET=0 t 0 "guard: that refusal names the deadline" says "too many paths to check in time, 0 of them checked when its 0 s deadline passed" guardp "$two"
 cp .hermy.yml "$tmp/dl.yml"; echo 'guard: warn' >> .hermy.yml
 HERMY_GUARD_BUDGET=0 t 2 "guard: and so under guard: warn" guardp "$two"
+# Under guard: warn a path let through with a note keeps it when another asks:
+# the ask carries both.
+wa="[\"$repo/.hermy.yml\",\"$repo/README.md\"]"
+t 0 "guard: warn, the config and a path outside any worktree: the ask carries both" eval 'guardp "$wa" | jq -e ".hermy == \"ask\" and (.text | test(\"changes the hermy guardrails\") and test(\"let through .guard: warn.\"))"'
 cp "$tmp/dl.yml" .hermy.yml
 # A path's verdict the parent cannot read (a jq that prints no JSON for the
 # child's ask alone) refuses the edit, naming the path, never passes it.

@@ -694,8 +694,10 @@ if [ "${1-}" = guard ]; then
       fi
       i=$((i+1))
     done
-    [ -z "$ask" ] || [ "${HERMY_ASK-}" != 0 ] || die "$ask This host cannot ask, so hermy refuses it."
-    [ -z "$ask" ] || { emit "$(jqh -cn --arg t "$ask" '{hermy:"ask",text:$t}')"; exit 0; }
+    # The notes the other paths left ride on the ask or its refusal, which
+    # replace them.
+    [ -z "$ask" ] || [ "${HERMY_ASK-}" != 0 ] || die "$ask This host cannot ask, so hermy refuses it.${notes:+ $notes}"
+    [ -z "$ask" ] || { emit "$(jqh -cn --arg t "$ask${notes:+ $notes}" '{hermy:"ask",text:$t}')"; exit 0; }
     [ -z "$notes" ] || emit "$(jqh -cn --arg t "$notes" '{hermy:"note",text:$t}')"
     exit 0
   fi
