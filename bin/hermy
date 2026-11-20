@@ -1364,11 +1364,13 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     [ -n "$w" ] && echo "$w"
   }
   seen="" nowt="" vf=/dev/null gd="" pd=""
-  # With no call id, the session's (else its pid's) own shared snapshot, so
-  # two sessions without one never take each other's: each word reduced to
-  # [A-Za-z0-9_-] and cut to 128 characters, an empty one the next fallback.
-  shared() { local w; for w in "$1" "${HERMY_PID-}"; do w=${w//[!A-Za-z0-9_-]/}; w=${w:0:128}; [ -z "$w" ] || { echo "shared-$w"; return; }; done; echo shared; }
-  case "$id" in ''|*[!A-Za-z0-9_-]*) id=$(shared "$ss") ;; esac
+  # The call's own snapshot, call-<id>; with no call id, the session's
+  # (session-<word>), else its pid's (pid-<word>), so two sessions without
+  # one never take each other's, each word reduced to [A-Za-z0-9_-] and cut
+  # to 128 characters, an empty one the next fallback; with neither, shared.
+  # Each kind has its own prefix, so no call id names a session's snapshot.
+  shared() { local w k=session; for w in "$1" "${HERMY_PID-}"; do w=${w//[!A-Za-z0-9_-]/}; w=${w:0:128}; [ -z "$w" ] || { echo "$k-$w"; return; }; k=pid; done; echo shared; }
+  case "$id" in ''|*[!A-Za-z0-9_-]*) id=$(shared "$ss") ;; *) id="call-$id" ;; esac
   file="${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
   # Every config path is kept (cfgs), present or not: a .hermy.yml or
   # .coddy.yml the command makes above a live lower one would shadow it.

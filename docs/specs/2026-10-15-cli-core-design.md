@@ -93,7 +93,7 @@ The hook verbs (`guard`, `snap`, `trip`) read one neutral JSON object on stdin: 
 
 - `HERMY_ASK=0`: a shim whose host cannot ask sets it, and the guard's ask then blocks, saying the host cannot ask. `scripts/issue.sh` unsets an inherited one.
 - The guard refuses an edit naming more than 64 paths, in both guard modes, before it guards any, and one whose paths are not all checked within 8 s, before the next path; each path's run gets the seconds left less one, `SECONDS` counting whole seconds (`HERMY_GUARD_BUDGET`, which lowers the 8 s; `scripts/issue.sh` unsets an inherited one).
-- With no plain-word `call`, the snapshot is `shared-<session>`, else `shared-<HERMY_PID>`, each reduced to `[A-Za-z0-9_-]` and cut to 128 characters, else `shared`. The Claude shim hands over the top-level `session_id` while it is a plain word, else `session` as `sed` read it on both of its branches (its JSON spelling, control characters dropped), so `snap` without jq and `trip` with it name one snapshot.
+- A plain-word `call` names the snapshot `call-<call>`; with none, it is `session-<session>`, else `pid-<HERMY_PID>`, each reduced to `[A-Za-z0-9_-]` and cut to 128 characters, else `shared`, each kind under a prefix of its own so no call id names a session's snapshot. The Claude shim hands over the top-level `session_id` while it is a plain word, else `session` as `sed` read it on both of its branches (its JSON spelling, control characters dropped), so `snap` without jq and `trip` with it name one snapshot.
 
 | Host | Payload keys | Session id | Call id | Ask | Failure event | Hook registration |
 |---|---|---|---|---|---|---|

@@ -1222,6 +1222,12 @@ wout=$(jq -cn --arg p "$wp" '{session_id: "sess-a", tool_input: {file_path: $p}}
 t 0 "shim: a note with a quote and newline (a JSON backslash escape) maps byte-identically" jq -e --arg s "$wp" '.hookSpecificOutput.hookEventName == "PreToolUse" and (.hookSpecificOutput.additionalContext | contains($s))' <<<"$wout"
 t 1 "shim: and prints one line" test "$(printf '%s\n' "$wout" | wc -l)" -ne 1
 rmdir "$repo/we\"ird"
+# hout <line>: the shim's hermy_out alone on one verdict line, as the hooks
+# run it. A line that is neither verdict refuses, so an ask never loses its
+# permissionDecision.
+hout() { bash -c 'eval "$(sed -n "/^hermy_out() {/,/^}/p" "$1")"; hermy_out "$2"; echo after' _ "$here/scripts/issue.sh" "$1"; }
+t 0 "shim: an ask still maps to permissionDecision ask" jq -e '.hookSpecificOutput.permissionDecision == "ask" and .hookSpecificOutput.permissionDecisionReason == "a\"b"' <<<"$(hout '{"hermy":"ask","text":"a\"b"}' | head -n1)"
+t 0 "shim: a note still maps to additionalContext" jq -e '.hookSpecificOutput.additionalContext == "n" and (.hookSpecificOutput | has("permissionDecision") | not)' <<<"$(hout '{"hermy":"note","text":"n"}' | head -n1)"
 t 0 "warn: guard lets an unclaimed worktree through with the message" warned "$repo/.worktrees/77/a.txt"
 mkdir -p .git/hermy/77 && echo "sess-z 1" > .git/hermy/77/owner # claimed by another session, in another process
 t 0 "warn: guard lets another session's worktree through, naming the owner" warned "$repo/.worktrees/77/a.txt" sess-a "belongs to session sess-z"
@@ -1236,6 +1242,9 @@ t 0 "warn: the config came back as it was" grep -qx 'guard: warn' .claude/coddy.
 # text, else 1, so no other refusal passes for this one
 raw() { printf %s "$1" | run guard; }
 saying() { local out r; out=$("${@:2}" 2>&1); r=$?; case "$out" in *"$1"*) return "$r" ;; esac; return 1; }
+for l in '{"hermy":"ask","text":"x"' '{"hermy":"aSk","text":"x"}' '{"permissionDecision":"ask"}' 'garbage' ''; do
+  t 2 "shim: an unrecognised verdict refuses: ${l:-empty}" saying "verdict could not be read" hout "$l"
+done
 # A cygpath that turns any path into one the guard allows: the Windows
 # refusal below never asks it, so it holds where Git Bash ships one.
 mkdir "$tmp/cyg"; printf '#!/bin/sh\necho "%s/.claude/n.md"\n' "$repo" > "$tmp/cyg/cygpath"; chmod +x "$tmp/cyg/cygpath"
@@ -1250,6 +1259,18 @@ for v in block warn; do
   # A path still read where the payload names one: a NotebookEdit's, and a
   # relative one against the payload's cwd. Allowed and silent, or refused.
   t 0 "guard: $v reads a NotebookEdit's notebook_path" test -z "$(raw "{\"tool_input\":{\"notebook_path\":\"$repo/.claude/n.ipynb\"}}" 2>&1 || echo refused)"
+  # file_path and notebook_path both: each is guarded, either order; a
+  # non-null path that is no string is refused, not skipped.
+  pl="{\"tool_input\":{\"file_path\":\"$repo/.claude/n.md\",\"notebook_path\":\"$repo/.git/n.ipynb\"}}"
+  t 2 "guard: $v guards notebook_path beside file_path" saying 'in a .git or .jj' raw "$pl"
+  pl="{\"tool_input\":{\"notebook_path\":\"$repo/.claude/n.ipynb\",\"file_path\":\"$repo/.git/n.md\"}}"
+  t 2 "guard: $v guards file_path beside notebook_path" saying 'in a .git or .jj' raw "$pl"
+  for x in 1 '["a"]' '{}' true; do
+    pl="{\"tool_input\":{\"file_path\":$x,\"notebook_path\":\"$repo/.claude/n.ipynb\"}}"
+    t 2 "guard: $v refuses a file_path that is no string: $x" saying 'the edit guard could not read' raw "$pl"
+    pl="{\"tool_input\":{\"file_path\":\"$repo/.claude/n.md\",\"notebook_path\":$x}}"
+    t 2 "guard: $v refuses a notebook_path that is no string: $x" saying 'the edit guard could not read' raw "$pl"
+  done
   # built outside the $( ), where bash 3.2 brace-expands {a,b} once its \" are read as quotes
   pl="{\"cwd\":\"$repo/.claude\",\"tool_input\":{\"file_path\":\"n.md\"}}"
   t 0 "guard: $v reads a relative path against the payload's cwd" test -z "$(raw "$pl" 2>&1 || echo refused)"
@@ -1466,7 +1487,7 @@ rm -r sp
 # The fingerprint's budget is the core's alone: a HERMY_BUDGET a settings env
 # hands the hook is dropped, so 0 runs no command unchecked.
 HERMY_BUDGET=0 wire snap w >/dev/null
-t 1 "tripwire: an inherited HERMY_BUDGET is ignored" grep -qx unchecked "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-w"
+t 1 "tripwire: an inherited HERMY_BUDGET is ignored" grep -qx unchecked "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-w"
 wire trip w 2>/dev/null
 # A path holding a newline is left out of the stat, where its second line
 # would read as another path's stat line and hide that path's change.
@@ -1917,7 +1938,7 @@ t 0 "tripwire: and a control byte as \\ooo, a line of its own" grep -qF "'$wo/b\
 git worktree remove --force "$bs"; git worktree remove --force "$cc"; rm -rf "$wo"
 # A worktree's .git is read no further than a NUL or 1024 characters, so a
 # huge one stalls no hook, and what snap records of it stays small.
-sf="${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-w"
+sf="${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-w"
 git worktree add -q --detach .worktrees/83; cp .worktrees/83/.git "$tmp/g83"
 { printf 'gitdir: /a/b'; head -c 4000000 /dev/zero | tr '\0' x; } > .worktrees/83/.git
 t 0 "tripwire: a 4 MB .git in a worktree stalls no snap" prompt wire snap w

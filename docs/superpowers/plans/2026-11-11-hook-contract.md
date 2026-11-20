@@ -129,7 +129,7 @@ When jq is missing or fails: `printf '{"raw":%s,"call":"%s","session":"%s"}\n' "
 - Test: `scripts/selftest-core.sh` near `:678`
 
 **Interfaces:**
-- An `id` that is empty or not a plain word becomes `shared-<w>`, `w` the first of `session`, `HERMY_PID` that is a non-empty `[A-Za-z0-9_-]` word cut to 128 characters; with neither, `shared`.
+- A plain-word `id` becomes `call-<id>`; one that is empty or not a plain word becomes `session-<w>`, else `pid-<w>`, `w` the first of `session`, `HERMY_PID` that is a non-empty `[A-Za-z0-9_-]` word cut to 128 characters; with neither, `shared`. Each kind has its own prefix, so no call id names a session's snapshot.
 
 - [x] **Step 1: Write the test** (Review Focus 5): `t 0 "snapshot: two sessions without a call id keep their own"` — onboarded repo; `{"session":"a"}` snap, `{"session":"b"}` snap, `{"session":"b"}` trip, `{"session":"a"}` trip: the last exits 0 and stderr has no "lost". Update `:678`'s check to `${snapfile%-w}-shared` only when the payload names no session (keep it so).
 
@@ -148,7 +148,7 @@ When jq is missing or fails: `printf '{"raw":%s,"call":"%s","session":"%s"}\n' "
 Notes from the build:
 - #261 removed snap's reader of the command text, so the core reads `command` nowhere today; the key stays in the contract for the next reader.
 - Added on the way, each with its tests in `selftest-core.sh` (the shim one in `selftest.sh`): the guard refuses an edit naming more than 64 paths, before any child runs (`feat: the edit guard caps the paths one edit names`), and one not checked within 8 s, before the next child; `HERMY_ASK=0`, for a host that cannot ask, turns the guard's ask into a block that says so, and `issue.sh` unsets an inherited one (`feat: an ask blocks where the host cannot ask`); self-test-only Codex- and Copilot-shaped shims hand one `apply_patch` string's files to the guard (`test: apply_patch payloads through host-shaped shims`).
-- Task 4's fallback is `shared-<session>`, else `shared-<HERMY_PID>`, else `shared`, one helper (`shared`) naming the file for both `snap` and `trip`.
+- Task 4's fallback is `session-<session>`, else `pid-<HERMY_PID>`, else `shared`, a plain-word call id being `call-<id>`, one helper (`shared`) naming the file for both `snap` and `trip`.
 
 **Files:**
 - Modify: `docs/specs/2026-10-15-cli-core-design.md` — a per-host delta table: rows Claude Code, Copilot CLI (from the spike's `results/matrix.md`: tool names, `path` vs `file_path`, `apply_patch` as `Edit` with a string `tool_input`, `session_id` in payload / none in env, no `PostToolUseFailure` for shell, ask shown without its reason, timeout fails open, hooks inside its sandbox), Codex (paper, from #31); columns: payload keys, session id, call id, ask, failure event, hook registration.

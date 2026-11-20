@@ -61,6 +61,8 @@ export HERMY_ROOT HERMY_SESSION HERMY_PID HERMY_AGENT_DIR HERMY_HOOKS
 # sed read it on both branches: its JSON spelling (a \u escape kept, not
 # decoded), control characters dropped, which jq would print as \u escapes
 # on one side alone.
+# paths holds file_path and notebook_path both, when both are there, so the
+# guard holds the edit to each; a non-null one that is no string fails jq.
 # When jq is missing or fails, the raw payload rides along after a word that
 # is no JSON, so the core's jq fails on it and refuses.
 hermy_in() {
@@ -69,7 +71,7 @@ hermy_in() {
   id=$(sed -n 's/.*"tool_use_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$r" 2>/dev/null | head -n1)
   ss=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$r" 2>/dev/null | head -n1)
   ss=${ss//[[:cntrl:]]/}
-  if command -v jq >/dev/null && o=$(jqh -cn --arg c "$id" --arg s "$ss" '[inputs] | if length == 1 then .[0] | {paths: [.tool_input.file_path // .tool_input.notebook_path // empty], command: (.tool_input.command // ""), cwd: (.cwd // ""), call: $c, session: (.session_id | if type == "string" then (if [explode[] | select((. < 48 or . > 57) and (. < 65 or . > 90) and (. < 97 or . > 122) and . != 45 and . != 95)] == [] then . else $s end) else $s end)} else error("not one value") end' <<<"$r" 2>/dev/null); then
+  if command -v jq >/dev/null && o=$(jqh -cn --arg c "$id" --arg s "$ss" '[inputs] | if length == 1 then .[0] | {paths: [.tool_input | objects | (.file_path, .notebook_path) | select(. != null) | if type == "string" then . else error("a path that is not a string") end], command: (.tool_input.command // ""), cwd: (.cwd // ""), call: $c, session: (.session_id | if type == "string" then (if [explode[] | select((. < 48 or . > 57) and (. < 65 or . > 90) and (. < 97 or . > 122) and . != 45 and . != 95)] == [] then . else $s end) else $s end)} else error("not one value") end' <<<"$r" 2>/dev/null); then
     printf '%s\n' "$o"
   else
     printf 'hermy-unreadable %s "call":"%s","session":"%s"\n' "$r" "$id" "$ss"
@@ -77,6 +79,8 @@ hermy_in() {
 }
 # The core's verdict line as Claude Code's hook JSON, by parameter expansion
 # alone: the text is already a JSON string, so it moves over byte for byte.
+# A line that is neither verdict refuses the call (exit 2), so an ask is
+# never let through without its permissionDecision.
 hermy_out() {
   local l=$1 n='{"hermy":"note","text":' a='{"hermy":"ask","text":'
   if [[ $l == "$n"*'}' ]]; then
@@ -86,7 +90,8 @@ hermy_out() {
     l=${l#"$a"}
     printf '%s\n' "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":${l%\}}}}"
   else
-    printf '%s\n' "$l"
+    echo "hermy: the hook's verdict could not be read, so the call is refused. The failure lies in hermy, not in the call, and every such call is refused until the user updates or reinstalls the hermy plugin, or disables it." >&2
+    exit 2
   fi
 }
 . "${0%/*}/../bin/hermy"

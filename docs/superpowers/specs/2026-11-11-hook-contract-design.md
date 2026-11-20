@@ -139,8 +139,9 @@ no-session rows of the Lock states table already describe.
 ### Call id fallback
 
 A host with no call id (none so far; Claude and Copilot both send one) gets
-`shared-<session, else HERMY_PID>`, reduced to `[A-Za-z0-9_-]`, instead of
-the root-wide `shared` name; with neither, `shared` as today.
+`session-<session>`, else `pid-<HERMY_PID>`, reduced to `[A-Za-z0-9_-]`,
+instead of the root-wide `shared` name; with neither, `shared` as today. A
+call id names `call-<id>`, so no call id can name a session's snapshot.
 
 ## Approaches considered
 
