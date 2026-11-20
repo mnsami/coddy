@@ -1711,7 +1711,8 @@ t 0 "get.sh: a release tag on the commit it is at is fetched too" says "^up to d
 t 1 "get.sh: and checked out detached" git -C "$cs" symbolic-ref -q HEAD
 gref=v1 t 0 "get.sh: HERMY_REF names a tag" says "^updated: $cs at v1 ($(short v1))\$" get
 t 1 "get.sh: detached on it" git -C "$cs" symbolic-ref -q HEAD
-for r in -x nosuch HEAD "$(git -C "$src" rev-parse main)" 'v1~1'; do
+# v9: a tag main never reached, as one pushed on an unreviewed commit is.
+for r in -x nosuch HEAD "$(git -C "$src" rev-parse main)" 'v1~1' origin/main v9; do
   gref=$r t 1 "get.sh: HERMY_REF=$r is refused" get
   gref=$r t 0 "get.sh: by name" says "HERMY_REF=$r" get
   t 0 "get.sh: and the checkout left as it was" test "$(sha)" = "$(short v1)"
@@ -1726,10 +1727,18 @@ get >/dev/null 2>&1
 upstream eleven README.md; was=$(sha); git -C "$src" tag -f v4 >/dev/null; git -C "$src" push -q -f "$tmp/hermy.git" v4
 t 1 "get.sh: a release tag moved on the remote stops the run" get
 t 0 "get.sh: showing git's reason" says ' v4 .*would clobber' get
-t 0 "get.sh: and the way out" says "moved on the remote: delete the local one (git -C $cs tag -d v4)" get
+t 0 "get.sh: and the way out" says "moved on the remote: delete the local one (git -C $cs tag -d 'v4')" get
 t 0 "get.sh: and left as it was" sh -c "test \"\$(git -C '$cs' rev-parse --short HEAD)\" = $was && git -C '$cs' diff --quiet HEAD"
 git -C "$cs" tag -d v4 >/dev/null
 t 0 "get.sh: with the local tag deleted, the moved one is followed" says "^updated: $cs at v4 ($(short v4))\$" get
+# A moved tag's name, which git lets hold shell syntax, is single-quoted in the delete to paste, and printed as printable ASCII alone.
+m="x'\$(id);"$'\302\233'y; git -C "$src" tag "$m"; git -C "$src" push -q "$tmp/hermy.git" "refs/tags/$m"; get >/dev/null 2>&1
+git -C "$src" tag -f "$m" v1 >/dev/null; git -C "$src" push -q -f "$tmp/hermy.git" "refs/tags/$m"
+t 1 "get.sh: a moved tag named with shell syntax stops the run" get
+get > "$tmp/gm.out" 2>&1
+t 0 "get.sh: naming it single-quoted in the delete" grep -qF "(git -C $cs tag -d 'x'\\''\$(id);y')" "$tmp/gm.out"
+LC_ALL=C t 1 "get.sh: and none of its bytes past ASCII" grep -q $'\302\233' "$tmp/gm.out"
+git -C "$src" push -q "$tmp/hermy.git" ":refs/tags/$m"; git -C "$src" tag -d "$m" >/dev/null; git -C "$cs" tag -d "$m" >/dev/null
 # A tag named origin/main, on a commit main does not hold, would shadow the remote branch.
 git -C "$src" checkout -q side; echo bad > "$src/README.md"; git -C "$src" commit -q -am bad; git -C "$src" tag origin/main; git -C "$src" checkout -q main
 git -C "$src" push -q "$tmp/hermy.git" refs/tags/origin/main

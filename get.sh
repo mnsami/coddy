@@ -5,11 +5,12 @@
 #   curl -fsSL https://raw.githubusercontent.com/mnsami/hermy/main/get.sh | bash
 # Inputs, all optional: HERMY_REPO_URL (the repository), HERMY_HOME (the
 # checkout, ~/.hermy), HERMY_BIN (where hermy is linked, ~/.local/bin),
-# HERMY_REF (main for the tip, or a tag to pin, nothing else; the latest
-# release without it). A rerun moves the checkout to that target, main by
-# fast-forward. Every refusal comes before any change to the checkout, but a
-# HERMY_REF that is no tag, which a first run finds once it has cloned main,
-# linking nothing.
+# HERMY_REF (main for the tip, or a tag main reached to pin, nothing else;
+# the latest release without it). A rerun moves the checkout to that target,
+# main by fast-forward. Every refusal comes before any change to the checkout,
+# but a first run's refusal of its target (a HERMY_REF that is no tag main
+# reached, a latest release tag object named otherwise), which comes once it
+# has cloned main, linking nothing.
 # Reads nothing from stdin, which is this script under curl.
 # Wrapped in main so a download cut short runs nothing.
 set -u
@@ -76,7 +77,8 @@ main() {
     # for it. A tag moved on the remote fails the fetch and stops the run; LC_ALL=C keeps git's reason matchable.
     out=$(LC_ALL=C git -C "$home" fetch --prune origin refs/heads/main 'refs/tags/*:refs/tags/*' 2>&1) || {
       out=$(clean "$out")
-      tags=$(printf '%s\n' "$out" | sed -n 's/^ ! \[rejected\] *\([^ ]*\) .*(would clobber existing tag)$/\1/p' | tr '\n' ' ')
+      # Each name single-quoted for the command to paste: git lets one hold ; $ ( ) ` and '.
+      tags=$(printf '%s\n' "$out" | sed -n "s/'/'\\\\''/g; s/^ ! \[rejected\] *\([^ ]*\) .*(would clobber existing tag)\$/'\1'/p" | tr '\n' ' ')
       [ -z "$tags" ] || tags="; a release tag moved on the remote: delete the local one (git -C $home tag -d ${tags% }), then run this again"
       die "could not fetch from $url$tags. git says:
 $out"
@@ -115,6 +117,9 @@ $(clean "$out")"
     # A tag by its own ref and nothing else: no commit id, branch or revision such as v1~1.
     [ -n "$c" ] || { git -C "$home" show-ref -q --verify "refs/tags/$ref" && c=$(git -C "$home" rev-parse -q --verify "refs/tags/$ref^{commit}"); } ||
       die "HERMY_REF=$ref is not a tag of $url: name a tag, or main, then run this again"
+    # A pinned tag too must be one main reached: a tag pushed on an unreviewed commit is not a release.
+    git -C "$home" merge-base --is-ancestor "$c" refs/remotes/origin/main ||
+      die "HERMY_REF=$ref is not a tag main reached in $url; the checkout and HEAD are unchanged: name a release, or main, then run this again"
     out=$(git -C "$home" checkout -q --detach "$c" 2>&1) ||
       die "could not check out $(clean "$ref") in $home (an untracked file is in the way); the checkout and HEAD are unchanged. git says:
 $(clean "$out")"
