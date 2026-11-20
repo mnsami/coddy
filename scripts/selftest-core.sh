@@ -1730,6 +1730,12 @@ t 0 "get.sh: and the way out" says "moved on the remote: delete the local one (g
 t 0 "get.sh: and left as it was" sh -c "test \"\$(git -C '$cs' rev-parse --short HEAD)\" = $was && git -C '$cs' diff --quiet HEAD"
 git -C "$cs" tag -d v4 >/dev/null
 t 0 "get.sh: with the local tag deleted, the moved one is followed" says "^updated: $cs at v4 ($(short v4))\$" get
+# A tag named origin/main, on a commit main does not hold, would shadow the remote branch.
+git -C "$src" checkout -q side; echo bad > "$src/README.md"; git -C "$src" commit -q -am bad; git -C "$src" tag origin/main; git -C "$src" checkout -q main
+git -C "$src" push -q "$tmp/hermy.git" refs/tags/origin/main
+t 0 "get.sh: a tag named origin/main does not move the release" says "^up to date: $cs at v4 ($(short v4))\$" get
+gref=main t 0 "get.sh: nor main's tip" says "^up to date: $cs at main ($(short main))\$" get
+git -C "$src" push -q "$tmp/hermy.git" :refs/tags/origin/main; git -C "$src" tag -d origin/main >/dev/null; git -C "$cs" tag -d origin/main >/dev/null
 t 1 "get.sh: a first run with a HERMY_REF naming nothing is refused" env HOME="$gh" HERMY_HOME="$tmp/h11" HERMY_BIN="$tmp/b11" HERMY_REPO_URL="$tmp/hermy.git" HERMY_REF=nosuch bash "$here/get.sh"
 t 1 "get.sh: and links nothing" test -e "$tmp/b11"
 touch "$tmp/binfile"

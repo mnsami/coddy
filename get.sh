@@ -81,11 +81,12 @@ $out"
     sha= state=cloned on=main
   fi
   # The latest release: the v* tag nearest origin/main's tip, which a reverted release does not move.
-  ref=${HERMY_REF:-$(git -C "$home" describe --tags --abbrev=0 --match 'v[0-9]*' origin/main 2>/dev/null || echo main)}
+  # Full ref names: a fetched tag named origin/main (or main) would shadow the short one.
+  ref=${HERMY_REF:-$(git -C "$home" describe --tags --abbrev=0 --match 'v[0-9]*' refs/remotes/origin/main 2>/dev/null || echo main)}
   if [ "$ref" = main ]; then
     # Detached: main moves only by fast-forward, and checkout -B moves nothing when it fails.
-    if [ "$on" = main ]; then out=$(git -C "$home" merge --ff-only origin/main 2>&1)
-    else out=$(git -C "$home" merge-base --is-ancestor main origin/main && git -C "$home" checkout -q -B main origin/main 2>&1); fi ||
+    if [ "$on" = main ]; then out=$(git -C "$home" merge --ff-only refs/remotes/origin/main 2>&1)
+    else out=$(git -C "$home" merge-base --is-ancestor refs/heads/main refs/remotes/origin/main && git -C "$home" checkout -q -B main refs/remotes/origin/main 2>&1); fi ||
       die "could not update $home (not a fast-forward, or an untracked file is in the way); the checkout and HEAD are unchanged. git says:
 $out"
   else
