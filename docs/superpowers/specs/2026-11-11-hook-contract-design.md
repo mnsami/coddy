@@ -119,8 +119,11 @@ runs and, since the core prints one fixed shape, by plain text substitution
 without it (`snap`'s note path runs without jq today).
 
 Copilot headless turns an ask into a deny by itself (spike H7), and
-interactive Copilot shows the ask without its text; that is #33's to
-handle, in its shim.
+interactive Copilot shows the ask without its text. A shim whose host cannot
+ask sets `HERMY_ASK=0`: the guard's ask then blocks, exit 2, its message
+ending `This host cannot ask, so hermy refuses it.`, for an edit naming
+several paths too, whether or not the shim exports it. The Claude shim unsets an
+inherited `HERMY_ASK`, since Claude Code can ask.
 
 ### Session under Copilot
 
