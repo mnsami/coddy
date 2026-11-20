@@ -69,7 +69,8 @@ main() {
   if [ -e "$home" ]; then
     sha=$(git -C "$home" rev-parse -q --verify HEAD) state=updated
     # --tags: a tag on a commit the checkout has already is not followed otherwise.
-    git -C "$home" fetch -q --tags origin main || die "could not fetch from $url"
+    # --force: a tag moved on the remote would fail the whole fetch, quietly, on every rerun.
+    git -C "$home" fetch -q --tags --force origin main || die "could not fetch from $url"
   else
     git clone -q -b main -- "$url" "$home" || die "could not clone $url"
     sha= state=cloned on=main
