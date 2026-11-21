@@ -248,6 +248,7 @@ leg() {
   t 0 "$tool: that rejection names the issue and the owner" says "issue $n belongs to session sess-a (pid $$, running)" guard "$repo/.worktrees/$n/a.txt" sess-b
   t 2 "$tool: a Claude Code worktree is held to the same owner check" guard "$repo/.claude/worktrees/$n/a.txt" sess-b
   t 2 "$tool: and so is one in any case of worktrees/" guard "$repo/.claude/WorkTrees/$n/a.txt" sess-b
+  t 2 "$tool: a session_id key inside tool_input does not name the editor" sh -c 'printf "{\"session_id\":\"sess-b\",\"tool_input\":{\"file_path\":\"%s\",\"session_id\":\"sess-a\"}}" "$1" | CLAUDE_PID=1 CLAUDE_PROJECT_DIR="$2" bash "$3/scripts/issue.sh" guard' _ "$repo/.worktrees/$n/a.txt" "$repo" "$here"
   t 0 "$tool: a hook payload without session_id is not held to it" guard "$repo/.worktrees/$n/a.txt" ""
   t 0 "$tool: guard allows the owner's process under a new session id (/clear)" guard "$repo/.worktrees/$n/a.txt" sess-b $$
   t 0 "$tool: and moves the lock to that session id" holds "sess-b $$" ".git/hermy/$n/owner"
@@ -1216,6 +1217,17 @@ t 1 "claim needs a worktree first" run claim 99
 warned() { out=$(guard "$1" "${2-sess-a}") && printf %s "$out" | jq -e --arg s "${3-/hermy:start}" '.hookSpecificOutput | .hookEventName == "PreToolUse" and (.additionalContext | contains($s))'; }
 printf 'tracker: github\ndefault_branch: main\nguard: warn\n' > .claude/coddy.yml
 t 0 "warn: guard lets the main checkout through with the message" warned "$repo/README.md"
+mkdir "$repo/we\"ird"; wp="$repo/we\"ird/../"$'\n'"x.txt"
+wout=$(jq -cn --arg p "$wp" '{session_id: "sess-a", tool_input: {file_path: $p}}' | CLAUDE_PID=$$ run guard)
+t 0 "shim: a note with a quote and newline (a JSON backslash escape) maps byte-identically" jq -e --arg s "$wp" '.hookSpecificOutput.hookEventName == "PreToolUse" and (.hookSpecificOutput.additionalContext | contains($s))' <<<"$wout"
+t 1 "shim: and prints one line" test "$(printf '%s\n' "$wout" | wc -l)" -ne 1
+rmdir "$repo/we\"ird"
+# hout <line>: the shim's hermy_out alone on one verdict line, as the hooks
+# run it. A line that is neither verdict refuses, so an ask never loses its
+# permissionDecision.
+hout() { bash -c 'eval "$(sed -n "/^hermy_out() {/,/^}/p" "$1")"; hermy_out "$2"; echo after' _ "$here/scripts/issue.sh" "$1"; }
+t 0 "shim: an ask still maps to permissionDecision ask" jq -e '.hookSpecificOutput.permissionDecision == "ask" and .hookSpecificOutput.permissionDecisionReason == "a\"b"' <<<"$(hout '{"hermy":"ask","text":"a\"b"}' | head -n1)"
+t 0 "shim: a note still maps to additionalContext" jq -e '.hookSpecificOutput.additionalContext == "n" and (.hookSpecificOutput | has("permissionDecision") | not)' <<<"$(hout '{"hermy":"note","text":"n"}' | head -n1)"
 t 0 "warn: guard lets an unclaimed worktree through with the message" warned "$repo/.worktrees/77/a.txt"
 mkdir -p .git/hermy/77 && echo "sess-z 1" > .git/hermy/77/owner # claimed by another session, in another process
 t 0 "warn: guard lets another session's worktree through, naming the owner" warned "$repo/.worktrees/77/a.txt" sess-a "belongs to session sess-z"
@@ -1230,6 +1242,9 @@ t 0 "warn: the config came back as it was" grep -qx 'guard: warn' .claude/coddy.
 # text, else 1, so no other refusal passes for this one
 raw() { printf %s "$1" | run guard; }
 saying() { local out r; out=$("${@:2}" 2>&1); r=$?; case "$out" in *"$1"*) return "$r" ;; esac; return 1; }
+for l in '{"hermy":"ask","text":"x"' '{"hermy":"aSk","text":"x"}' '{"permissionDecision":"ask"}' 'garbage' ''; do
+  t 2 "shim: an unrecognised verdict refuses: ${l:-empty}" saying "verdict could not be read" hout "$l"
+done
 # A cygpath that turns any path into one the guard allows: the Windows
 # refusal below never asks it, so it holds where Git Bash ships one.
 mkdir "$tmp/cyg"; printf '#!/bin/sh\necho "%s/.claude/n.md"\n' "$repo" > "$tmp/cyg/cygpath"; chmod +x "$tmp/cyg/cygpath"
@@ -1244,6 +1259,18 @@ for v in block warn; do
   # A path still read where the payload names one: a NotebookEdit's, and a
   # relative one against the payload's cwd. Allowed and silent, or refused.
   t 0 "guard: $v reads a NotebookEdit's notebook_path" test -z "$(raw "{\"tool_input\":{\"notebook_path\":\"$repo/.claude/n.ipynb\"}}" 2>&1 || echo refused)"
+  # file_path and notebook_path both: each is guarded, either order; a
+  # non-null path that is no string is refused, not skipped.
+  pl="{\"tool_input\":{\"file_path\":\"$repo/.claude/n.md\",\"notebook_path\":\"$repo/.git/n.ipynb\"}}"
+  t 2 "guard: $v guards notebook_path beside file_path" saying 'in a .git or .jj' raw "$pl"
+  pl="{\"tool_input\":{\"notebook_path\":\"$repo/.claude/n.ipynb\",\"file_path\":\"$repo/.git/n.md\"}}"
+  t 2 "guard: $v guards file_path beside notebook_path" saying 'in a .git or .jj' raw "$pl"
+  for x in 1 '["a"]' '{}' true; do
+    pl="{\"tool_input\":{\"file_path\":$x,\"notebook_path\":\"$repo/.claude/n.ipynb\"}}"
+    t 2 "guard: $v refuses a file_path that is no string: $x" saying 'the edit guard could not read' raw "$pl"
+    pl="{\"tool_input\":{\"file_path\":\"$repo/.claude/n.md\",\"notebook_path\":$x}}"
+    t 2 "guard: $v refuses a notebook_path that is no string: $x" saying 'the edit guard could not read' raw "$pl"
+  done
   # built outside the $( ), where bash 3.2 brace-expands {a,b} once its \" are read as quotes
   pl="{\"cwd\":\"$repo/.claude\",\"tool_input\":{\"file_path\":\"n.md\"}}"
   t 0 "guard: $v reads a relative path against the payload's cwd" test -z "$(raw "$pl" 2>&1 || echo refused)"
@@ -1414,7 +1441,7 @@ printf '#!/bin/sh\ncase " $* " in *" hash-object "*) echo x >> "%s" ;; esac\nexe
 for i in $(seq 1000); do echo "$i" > "many/$i.txt"; done
 : > "$tmp/hashes"; PATH="$tmp/gitshim:$PATH" wire snap many
 t 0 "tripwire: 1000 dirty files are hashed by one hash-object" test "$(wc -l < "$tmp/hashes" | tr -d ' ')" = 1
-t 0 "tripwire: and each is in the snapshot" test "$(grep -c '^many/.* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/hermy-snap-*-many)" = 1000
+t 0 "tripwire: and each is in the snapshot" test "$(grep -c '^many/.* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-many")" = 1000
 wire trip many 2>/dev/null; rm -r many
 # A dirty file over 1 MiB is not read: its line holds its size, ctime and
 # inode, so a sparse 14 GiB one costs what a small one does, and one
@@ -1422,7 +1449,7 @@ wire trip many 2>/dev/null; rm -r many
 dd if=/dev/null of=huge.bin bs=1048576 seek=14336 count=0 2>/dev/null
 SECONDS=0; wire snap big
 t 0 "tripwire: a sparse 14 GiB untracked file is fingerprinted within seconds" test "$SECONDS" -le 5
-t 0 "tripwire: as its size, ctime and inode, unread" grep -q '^huge\.bin big:15032385536:[0-9.]*:[0-9]*$' "${TMPDIR:-/tmp}"/hermy-snap-*-big
+t 0 "tripwire: as its size, ctime and inode, unread" grep -q '^huge\.bin big:15032385536:[0-9.]*:[0-9]*$' "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-big"
 SECONDS=0; wire trip big; got=$?
 t 0 "tripwire: and trip, quiet while it stands, within seconds too" test "$got:$((SECONDS <= 5))" = 0:1
 rm huge.bin; dd if=/dev/zero of=two.bin bs=1048576 count=2 2>/dev/null
@@ -1434,23 +1461,23 @@ t 0 "tripwire: and the report names its path alone" grep -q 'main checkout: two\
 rm two.bin
 # Exactly 1 MiB is hashed; a byte more is not read.
 head -c 1048576 /dev/zero > mib.bin; head -c 1048577 /dev/zero > mib1.bin; wire snap big
-t 0 "tripwire: a file of exactly 1 MiB is hashed" grep -q '^mib\.bin [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/hermy-snap-*-big
-t 0 "tripwire: one a byte over is not read" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}"/hermy-snap-*-big
+t 0 "tripwire: a file of exactly 1 MiB is hashed" grep -q '^mib\.bin [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-big"
+t 0 "tripwire: one a byte over is not read" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-big"
 wire trip big 2>/dev/null; rm mib.bin mib1.bin
 # A file named %Fc in the root, which GNU's stat reads after its -f as a
 # path, does not pass it off as BSD's, which would read every big file.
 head -c 1048577 /dev/zero > mib1.bin; : > %Fc; wire snap big
-t 0 "tripwire: a file named %Fc in the root leaves a big file unread" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}"/hermy-snap-*-big
+t 0 "tripwire: a file named %Fc in the root leaves a big file unread" grep -q '^mib1\.bin big:1048577:' "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-big"
 wire trip big 2>/dev/null; rm mib1.bin %Fc
 # Past 32 MiB hashed in all a file up to 1 MiB is recorded as a big one, so
 # 8000 sparse 1 MiB untracked files cost what their paths do, not 8 GiB
 # read, and one recorded so, rewritten in place to the same size, still trips.
 mkdir sp; seq -f 'sp/f%04g' 0 7999 | xargs perl -e 'for (@ARGV) { open my $f, ">", $_ or die; truncate $f, 1048576 or die }'
 wire snap big
-t 1 "tripwire: 8000 sparse 1 MiB untracked files are fingerprinted within the budget" grep -qx unchecked "${TMPDIR:-/tmp}"/hermy-snap-*-big
-got=$(grep -c '^sp/f[0-9]* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}"/hermy-snap-*-big)
+t 1 "tripwire: 8000 sparse 1 MiB untracked files are fingerprinted within the budget" grep -qx unchecked "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-big"
+got=$(grep -c '^sp/f[0-9]* [0-9a-f]\{40\}$' "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-big")
 t 0 "tripwire: no more than 32 MiB of them hashed" test "$got" -ge 1 -a "$got" -le 32
-t 0 "tripwire: the rest by size, ctime and inode" grep -q '^sp/f7999 big:1048576:' "${TMPDIR:-/tmp}"/hermy-snap-*-big
+t 0 "tripwire: the rest by size, ctime and inode" grep -q '^sp/f7999 big:1048576:' "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-big"
 wire trip big 2>/dev/null
 wire snap w; printf x | dd of=sp/f7999 bs=1 seek=4096 conv=notrunc 2>/dev/null
 wire trip w 2>"$tmp/trip.err"; got=$?
@@ -1460,7 +1487,7 @@ rm -r sp
 # The fingerprint's budget is the core's alone: a HERMY_BUDGET a settings env
 # hands the hook is dropped, so 0 runs no command unchecked.
 HERMY_BUDGET=0 wire snap w >/dev/null
-t 1 "tripwire: an inherited HERMY_BUDGET is ignored" grep -qx unchecked "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-w"
+t 1 "tripwire: an inherited HERMY_BUDGET is ignored" grep -qx unchecked "${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-w"
 wire trip w 2>/dev/null
 # A path holding a newline is left out of the stat, where its second line
 # would read as another path's stat line and hide that path's change.
@@ -1540,6 +1567,18 @@ tripped 2 "tripwire: local commit that was pushed to another branch" 'git commit
 # snap reads no command's text: a push to the default branch passes it,
 # saying nothing, for the pre-push hook and branch protection to refuse.
 t 0 "push: git push origin main passes snap, saying nothing" silent 'git push origin main'
+t 2 "shim: guard refuses a path jq cannot read" sh -c "printf '{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"\\\\ud800\"}}' | CLAUDE_PROJECT_DIR='$repo' bash '$here/scripts/issue.sh' guard"
+shimin() { printf '%s' "$2" | CLAUDE_PROJECT_DIR="$repo" bash "$here/scripts/issue.sh" "$1"; }
+t 2 "shim: guard refuses a payload whose tool_input is not an object" shimin guard '{"session_id":"sess-a","tool_input":["x"]}'
+t 2 "shim: guard refuses two JSON values in one payload" shimin guard '{"session_id":"sess-a","tool_input":{"file_path":"x"}}{"session_id":"sess-a"}'
+# snap without jq and trip with it must name one snapshot, the call id read by sed on both sides
+sharedid() { printf '{"tool_use_id":"w","session_id":"s","cwd":"%s","tool_input":{"command":"true"}}' "$repo" > "$tmp/w.json"; PATH="$tmp/nojq" run snap < "$tmp/w.json" >/dev/null && o=$(run trip < "$tmp/w.json" 2>&1) && ! grep -q "left no snapshot" <<<"$o"; }
+t 0 "shim: snap without jq and trip with it name the same snapshot" sharedid
+# With no call id the session names it, read by sed on both sides too, so a
+# JSON escape or a control character in it names one snapshot.
+sharedss() { printf '{"session_id":"%s","cwd":"%s","tool_input":{"command":"true"}}' "$1" "$repo" > "$tmp/w.json"; PATH="$tmp/nojq" run snap < "$tmp/w.json" >/dev/null && o=$(run trip < "$tmp/w.json" 2>&1) && ! grep -q "left no snapshot" <<<"$o"; }
+t 0 "shim: so do they for a session with a JSON escape and no call id" sharedss 's\u00e9x'
+t 0 "shim: and for one with a DEL and no call id" sharedss "s$(printf '\177')x"
 # jq loads ~/.jq into every program; the hooks run it with HOME=/dev/null,
 # so a broken one leaves the guard reading the payload as before.
 mkdir "$tmp/badhome"; printf 'def x: ;\n' > "$tmp/badhome/.jq"
@@ -1899,7 +1938,7 @@ t 0 "tripwire: and a control byte as \\ooo, a line of its own" grep -qF "'$wo/b\
 git worktree remove --force "$bs"; git worktree remove --force "$cc"; rm -rf "$wo"
 # A worktree's .git is read no further than a NUL or 1024 characters, so a
 # huge one stalls no hook, and what snap records of it stays small.
-sf="${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-w"
+sf="${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-call-w"
 git worktree add -q --detach .worktrees/83; cp .worktrees/83/.git "$tmp/g83"
 { printf 'gitdir: /a/b'; head -c 4000000 /dev/zero | tr '\0' x; } > .worktrees/83/.git
 t 0 "tripwire: a 4 MB .git in a worktree stalls no snap" prompt wire snap w
@@ -2149,6 +2188,8 @@ away() { (cd "$tmp" && "$@"); }
 asks() { out=$(guard "$1") && printf %s "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and .permissionDecision == "ask"'; }
 t 2 "hook: guard after a cd out of the project blocks the main checkout" away guard "$repo/README.md"
 t 0 "hook: and asks on .hermy.yml" away asks "$repo/.hermy.yml"
+HERMY_ASK=0 t 0 "hook: an inherited HERMY_ASK=0 still gives Claude Code's ask" asks "$repo/.hermy.yml"
+HERMY_GUARD_BUDGET=0 t 0 "hook: an inherited HERMY_GUARD_BUDGET=0 leaves the guard's time as it was" asks "$repo/.hermy.yml"
 away wire snap w; echo x > stray.txt; t 2 "hook: trip after a cd out of the project reports a stray write" away wire trip w; rm stray.txt
 away wire snap w; rm .claude/coddy.yml; t 2 "hook: trip after a cd out of the project restores a deleted config" away wire trip w
 t 0 "hook: and the config came back" same

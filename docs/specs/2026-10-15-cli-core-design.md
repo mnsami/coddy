@@ -57,7 +57,7 @@ The agent-dir rules in `guard` and `snap`, today written as `.claude/`:
 ## Config
 
 - `conf` is `.hermy.yml` when it exists at the root, else `.claude/coddy.yml`.
-- `guard` on `.hermy.yml` at the root prints `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "..."}}` and exits 0, with `guard: warn` too. Without `jq` it exits 2 (fails closed, as today).
+- `guard` on `.hermy.yml` at the root prints `{"hermy": "ask", "text": "..."}`, which the shim turns into the host's ask, and exits 0, with `guard: warn` too. Without `jq` it exits 2 (fails closed, as today).
 - Config lock:
   - `snap` records both paths, including whether each exists.
   - `trip` restores either one that a shell command deleted or changed.
@@ -87,8 +87,22 @@ The agent-dir rules in `guard` and `snap`, today written as `.claude/`:
 - `README.md`: `.hermy.yml` and how to put `hermy` on `PATH`.
 - `ROADMAP.md`: #27 under M2.
 
+## Hook contract (#278)
+
+The hook verbs (`guard`, `snap`, `trip`) read one neutral JSON object on stdin: `paths` (every path an edit writes), `command`, `cwd`, `call` (the per-call id pairing `snap` with `trip`) and `session`. They print at most one verdict line: block is exit 2 with the message on stderr; `{"hermy": "ask", "text": "..."}` and `{"hermy": "note", "text": "..."}` exit 0. A host's shim defines `hermy_in` (its payload to that object) and `hermy_out` (the verdict to its hook output) and sources the core; with neither, stdin is the object and the verdict goes out as it is. Design: `docs/superpowers/specs/2026-11-11-hook-contract-design.md`.
+
+- `HERMY_ASK=0`: a shim whose host cannot ask sets it, and the guard's ask then blocks, saying the host cannot ask. `scripts/issue.sh` unsets an inherited one.
+- The guard refuses an edit naming more than 64 paths, in both guard modes, before it guards any, and one whose paths are not all checked within 8 s, before the next path; each path's run gets the seconds left less one, `SECONDS` counting whole seconds (`HERMY_GUARD_BUDGET`, which lowers the 8 s; `scripts/issue.sh` unsets an inherited one).
+- A plain-word `call` names the snapshot `call-<call>`; with none, it is `session-<session>`, else `pid-<HERMY_PID>`, each reduced to `[A-Za-z0-9_-]` and cut to 128 characters, else `shared`, each kind under a prefix of its own so no call id names a session's snapshot. The Claude shim hands over the top-level `session_id` while it is a plain word, else `session` as `sed` read it on both of its branches (its JSON spelling, control characters dropped), so `snap` without jq and `trip` with it name one snapshot.
+
+| Host | Payload keys | Session id | Call id | Ask | Failure event | Hook registration |
+|---|---|---|---|---|---|---|
+| Claude Code | `tool_input.file_path`, `notebook_path`, `command`; `cwd` | `session_id` in the payload; `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PID` in the shell's env | `tool_use_id` | `permissionDecision: ask`, its reason shown | `PostToolUse` and `PostToolUseFailure` | `hooks/hooks.json`, exec form |
+| Copilot CLI | Claude's tool names (`Write`, `Edit`, `Bash`); `path` for `file_path`; `apply_patch` as an `Edit` whose `tool_input` is the patch string | `session_id` in the payload, none and no pid in the hook's env; `COPILOT_AGENT_SESSION_ID` in its shell tool, equality unverified (#414) | `tool_use_id` | shown without its reason; none headless, so its shim sets `HERMY_ASK=0` | `PostToolUse` alone, no `PostToolUseFailure` for a shell command | loads `hooks/hooks.json` but drops the exec form's args; a timeout fails open; hooks run inside its sandbox |
+| Codex | paper only (#31): an `apply_patch` tool | per its docs, unverified | per its docs, unverified | unverified | unverified | `.codex-plugin/plugin.json`, unverified |
+
 ## Out of scope
 
-- Hook output per agent: the `warn` and `ask` JSON is Claude Code's format, emitted from the core. #31-#33 adapt it.
+- Hook output per agent: done by the hook contract above; each host's shim maps it (#31-#33).
 - Session identity for agents without one (#34 reports it).
 - AGENTS.md and portable skills (#28).

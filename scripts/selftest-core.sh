@@ -26,14 +26,15 @@ says() { "${@:2}" 2>&1 | grep -q "$1"; }
 quiet() { local o; o=$("$@" 2>&1) && [ -z "$o" ]; } # exits 0 and prints nothing
 holds() { read -r a b _ < "$2" && [ "$a $b" = "$1" ]; }
 # guard <path> [session]: the edit hook's payload; another session runs in another process
-guard() { local s=${2-sess-a} p=1; [ "$s" != sess-a ] || p=$$; printf '{"session_id":"%s","tool_input":{"file_path":"%s"}}' "$s" "$1" | HERMY_PID=$p run guard; }
+guard() { local s=${2-sess-a} p=1; [ "$s" != sess-a ] || p=$$; printf '{"session":"%s","paths":["%s"]}' "$s" "$1" | HERMY_PID=$p run guard; }
 # asks <path>: guard exits 0 and asks the user, as hook JSON
-asks() { out=$(guard "$1") && printf %s "$out" | jq -e '.hookSpecificOutput | .hookEventName == "PreToolUse" and .permissionDecision == "ask" and (.permissionDecisionReason | contains(".hermy.yml"))'; }
-wire() { printf '{"tool_use_id":"%s"}' "$2" | run "$1"; }
+asks() { out=$(guard "$1") && printf %s "$out" | jq -e '.hermy == "ask" and (.text | contains(".hermy.yml"))'; }
+wire() { printf '{"call":"%s"}' "$2" | run "$1"; }
 tripped() { wire snap w; (cd "$repo" && eval "$3") >/dev/null 2>&1; t "$1" "$2" wire trip w; }
 # report <name> <shell snippet>: as tripped, with trip's exit in $r and its report in $out
 report() { wire snap w; (cd "$repo" && eval "$2") >/dev/null 2>&1; out=$(wire trip w 2>&1); r=$?; t 0 "$1" test "$r" = 2; }
-snapfile="${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)-w"
+snapbase="${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$repo" | cksum | cut -d' ' -f1)"
+snapfile="$snapbase-call-w"
 # The legacy config's records: its path with / as _ after the snapshot's name and a dot.
 lgs="$snapfile.$(printf %s .claude/coddy.yml | tr / _)"
 # rooted <dir> [VAR=value...]: status (or $verb) run from that directory prints the project root
@@ -50,6 +51,7 @@ mkdir .claude sub
 t 1 "the core reads no CLAUDE_ variable" grep -q CLAUDE_ "$here/bin/hermy"
 # nor an input under the name from before the rename (spelled as a class, so this line holds no old name)
 t 1 "the core reads no input under the old name" grep -q 'C[O]DDY_' "$here/bin/hermy"
+t 1 "the core names no host payload key or envelope" grep -qE 'tool_input|tool_use_id|session_id|hookSpecificOutput|permissionDecision|additionalContext|hookEventName' "$here/bin/hermy"
 t 0 "root: from HERMY_ROOT" rooted /
 t 0 "root: from the working directory without HERMY_ROOT" rooted "$repo" -u HERMY_ROOT
 t 0 "root: from a subdirectory without HERMY_ROOT" rooted "$repo/sub" -u HERMY_ROOT
@@ -151,7 +153,7 @@ PATH="$tmp/nojq" wire snap w; t 0 "before onboarding: snap without jq and trip w
 tripped 0 "before onboarding: a shell write to the main checkout is quiet" 'echo x > stray.txt'; rm stray.txt
 # BASHOPTS is readonly in bash, so env hands it on: nullglob must not read
 # an empty glob of the marker's records as some.
-wire snap w; t 0 "before onboarding: trip is quiet with nullglob inherited" env BASHOPTS=nullglob "$here/bin/hermy" trip <<<'{"tool_use_id":"w"}'
+wire snap w; t 0 "before onboarding: trip is quiet with nullglob inherited" env BASHOPTS=nullglob "$here/bin/hermy" trip <<<'{"call":"w"}'
 t 1 "before onboarding: snap made nothing under .git" test -e .git/hermy
 printf '#!/bin/sh\n: > "%s"\n' "$tmp/prevran" > .git/hooks/pre-commit; chmod +x .git/hooks/pre-commit
 t 0 "before onboarding: githook hands off to the hook before it" run githook pre-commit
@@ -327,10 +329,14 @@ mv "$tmp/live.yml" .hermy.yml
 # jq the guard cannot tell which path is edited and fails closed.
 t 0 "guard asks on .hermy.yml" asks "$repo/.hermy.yml"
 for p in "$repo/./.hermy.yml" "$repo//.hermy.yml" "$repo/sub/../.hermy.yml" "$repo/.HERMY.YML" .hermy.yml; do t 0 "guard asks on .hermy.yml spelled $p" asks "$p"; done
+# A shim whose host cannot ask sets HERMY_ASK=0: the ask blocks, saying so.
+HERMY_ASK=0 t 2 "guard: under HERMY_ASK=0 the ask on .hermy.yml blocks" guard "$repo/.hermy.yml"
+HERMY_ASK=0 t 0 "guard: that refusal says the host cannot ask" says 'This host cannot ask, so hermy refuses it' guard "$repo/.hermy.yml"
+HERMY_ASK=1 t 0 "guard: any other HERMY_ASK still asks" asks "$repo/.hermy.yml"
 # .coddy.yml, from before the rename, below a live .hermy.yml is let go by the
 # config lock, so an edit of it is held like any path in the main checkout, and
 # one that is a link to .git/config is refused, never asked.
-casks() { out=$(guard "$1") && printf %s "$out" | jq -e '.hookSpecificOutput.permissionDecision == "ask" and (.hookSpecificOutput.permissionDecisionReason | contains(".coddy.yml"))'; }
+casks() { out=$(guard "$1") && printf %s "$out" | jq -e '.hermy == "ask" and (.text | contains(".coddy.yml"))'; }
 t 2 "guard does not ask on .coddy.yml below a live .hermy.yml" guard "$repo/.coddy.yml"
 t 0 "guard: holding it as the main checkout" says 'edits belong in an issue worktree' guard "$repo/.coddy.yml"
 ln -s .git/config .coddy.yml
@@ -343,7 +349,7 @@ for p in "$repo/.coddy.yml" "$repo/sub/../.coddy.yml" "$repo/.CODDY.YML"; do t 0
 t 0 "guard asks on .hermy.yml above a live .coddy.yml" asks "$repo/.hermy.yml"
 # The legacy .claude/coddy.yml below it lies in the agent dir, free like any
 # path there, and one that is a link to .git/config is refused.
-lasks() { out=$(guard "$1") && jq -e '.hookSpecificOutput.permissionDecision == "ask" and (.hookSpecificOutput.permissionDecisionReason | contains(".claude/coddy.yml"))' <<<"$out"; }
+lasks() { out=$(guard "$1") && jq -e '.hermy == "ask" and (.text | contains(".claude/coddy.yml"))' <<<"$out"; }
 HERMY_AGENT_DIR=.claude t 0 "guard does not ask on the legacy config below a live .coddy.yml" quiet guard "$repo/.claude/coddy.yml"
 ln -s ../.git/config .claude/coddy.yml
 HERMY_AGENT_DIR=.claude t 2 "guard refuses a legacy config below a live .coddy.yml that is a link to .git/config" guard "$repo/.claude/coddy.yml"
@@ -423,7 +429,7 @@ tripped 2 "config: deleting .hermy.yml trips" 'rm .hermy.yml'
 t 0 "config: restored after the deletion" same .hermy.yml
 tripped 2 "config: rewriting .hermy.yml trips" 'echo "verify: true" >> .hermy.yml'
 t 0 "config: restored after the rewrite" same .hermy.yml
-t 0 "config: that report names the file" says 'changed .hermy.yml' sh -c "cd '$repo' && printf '{\"tool_use_id\":\"w\"}' | '$here/bin/hermy' snap && echo x >> .hermy.yml && printf '{\"tool_use_id\":\"w\"}' | '$here/bin/hermy' trip"
+t 0 "config: that report names the file" says 'changed .hermy.yml' sh -c "cd '$repo' && printf '{\"call\":\"w\"}' | '$here/bin/hermy' snap && echo x >> .hermy.yml && printf '{\"call\":\"w\"}' | '$here/bin/hermy' trip"
 tripped 2 "config: a link in its place trips, the same content behind it" 'cp .hermy.yml "$tmp/else" && ln -sf "$tmp/else" .hermy.yml'
 t 1 "config: and the link is gone" test -L .hermy.yml
 t 0 "config: a file with its content back" same .hermy.yml
@@ -499,7 +505,7 @@ HERMY_AGENT_DIR=.claude tripped 0 "config: deleting the legacy file next to a li
 t 1 "config: and it is not restored" test -e .claude/coddy.yml
 # So snap records its kind alone: a sparse 1 TiB one stalls no snap.
 dd if=/dev/null of=.claude/coddy.yml bs=1048576 seek=1048576 count=0 2>/dev/null
-t 0 "config: a sparse 1 TiB legacy file next to a live .hermy.yml does not stall snap" timeout 10 sh -c "printf '{\"tool_use_id\":\"w\"}' | '$here/bin/hermy' snap"
+t 0 "config: a sparse 1 TiB legacy file next to a live .hermy.yml does not stall snap" timeout 10 sh -c "printf '{\"call\":\"w\"}' | '$here/bin/hermy' snap"
 t 0 "config: which records its kind" test "$(cat "$lgs.kind")" = file
 t 1 "config: and no copy of it" test -e "$lgs"
 t 0 "config: and trip lets it go" wire trip w
@@ -548,7 +554,7 @@ t 0 "config: and leaving no record" none
 echo 'guard: warn' >> .hermy.yml
 t 2 "config: under guard: warn too" wire snap w
 dd if=/dev/null of=.hermy.yml bs=1048576 seek=1048576 count=0 2>/dev/null
-t 2 "config: a sparse 1 TiB .hermy.yml is refused at once" timeout 10 sh -c "printf '{\"tool_use_id\":\"w\"}' | '$here/bin/hermy' snap"
+t 2 "config: a sparse 1 TiB .hermy.yml is refused at once" timeout 10 sh -c "printf '{\"call\":\"w\"}' | '$here/bin/hermy' snap"
 cp "$tmp/conf.orig" .hermy.yml
 tripped 0 "config: brought back under 64 KiB, commands run as before" 'true'
 # One that grows past it between snap's check and its copy is cut short:
@@ -575,11 +581,11 @@ cp "$tmp/conf.orig" .hermy.yml; rm -r "$tmp/grow"
 # stands in for a huge checkout. It records its own pid and its sleep's, to
 # show none outlives the hook.
 mkdir "$tmp/slow"; printf '#!/bin/sh\ncase " $* " in *" merge-base "*) echo $$ >> "%s"; sleep 60 & echo $! >> "%s"; wait ;; esac\nexec "%s" "$@"\n' "$tmp/slow/pids" "$tmp/slow/pids" "$(command -v git)" > "$tmp/slow/git"; chmod +x "$tmp/slow/git"
-slow() { : > "$tmp/slow/pids"; printf '{"tool_use_id":"w"}' | HERMY_BUDGET=2 PATH="$tmp/slow:$PATH" run "$1"; }
+slow() { : > "$tmp/slow/pids"; printf '{"call":"w"}' | HERMY_BUDGET=2 PATH="$tmp/slow:$PATH" run "$1"; }
 left() { [ -s "$tmp/slow/pids" ] || return 0; while read -r p; do ! kill -0 "$p" 2>/dev/null || return 0; done < "$tmp/slow/pids"; return 1; }
 SECONDS=0; out=$(slow snap); r=$?
 t 0 "budget: snap past it lets the command run, within seconds" test "$r:$((SECONDS <= 8))" = 0:1
-t 0 "budget: telling the agent it goes unchecked" jq -e '.hookSpecificOutput.additionalContext | contains("so this command runs unchecked")' <<<"$out"
+t 0 "budget: telling the agent it goes unchecked" jq -e '.hermy == "note" and (.text | contains("so this command runs unchecked"))' <<<"$out"
 t 0 "budget: its snapshot says so" grep -qx unchecked "$snapfile"
 t 1 "budget: and no git of its fingerprint is left running" left
 rm .hermy.yml; out=$(wire trip w 2>&1); r=$?
@@ -598,13 +604,13 @@ t 0 "budget: nor any snapshot record" none
 # that sleeps on hash-object, the fingerprint's last call.
 mkdir "$tmp/slowh"; sed 's/ merge-base / hash-object /' "$tmp/slow/git" > "$tmp/slowh/git"; chmod +x "$tmp/slowh/git"
 echo a > dirty.txt; : > "$tmp/slow/pids"
-out=$(printf '{"tool_use_id":"w"}' | HERMY_BUDGET=2 PATH="$tmp/slowh:$PATH" run snap)
-t 0 "budget: past git status, the notice names the dirty paths it listed" jq -e '.hookSpecificOutput.additionalContext | test("checkout, which has [0-9]+ dirty or untracked paths, within")' <<<"$out"
+out=$(printf '{"call":"w"}' | HERMY_BUDGET=2 PATH="$tmp/slowh:$PATH" run snap)
+t 0 "budget: past git status, the notice names the dirty paths it listed" jq -e '.hermy == "note" and (.text | test("checkout, which has [0-9]+ dirty or untracked paths, within"))' <<<"$out"
 t 1 "budget: and no git of its fingerprint is left running" left
 wire trip w 2>/dev/null; rm -r dirty.txt "$tmp/slowh"
 # A member of its group that ignores TERM gets KILL once the job is gone.
 mkdir "$tmp/slowt"; sed 's/ merge-base "\*) / merge-base "*) trap "" TERM; /' "$tmp/slow/git" > "$tmp/slowt/git"; chmod +x "$tmp/slowt/git"
-: > "$tmp/slow/pids"; printf '{"tool_use_id":"w"}' | HERMY_BUDGET=2 PATH="$tmp/slowt:$PATH" run snap >/dev/null
+: > "$tmp/slow/pids"; printf '{"call":"w"}' | HERMY_BUDGET=2 PATH="$tmp/slowt:$PATH" run snap >/dev/null
 t 0 "budget: a TERM-ignoring git was started" test -s "$tmp/slow/pids"
 t 1 "budget: and is gone once snap returns" left
 wire trip w 2>/dev/null; rm -r "$tmp/slowt"
@@ -613,7 +619,7 @@ wire trip w 2>/dev/null; rm -r "$tmp/slowt"
 # .git/worktrees, with no record left. A budget of 0 stands in for more
 # entries than it checks in 10 seconds.
 mkdir -p .git/worktrees/many
-adm() { printf '{"tool_use_id":"w"}' | HERMY_BUDGET=0 run snap; }
+adm() { printf '{"call":"w"}' | HERMY_BUDGET=0 run snap; }
 t 2 "budget: snap refuses once the admin dirs take more than half of it" adm
 t 0 "budget: naming .git/worktrees, to clear by hand" says "/.git/worktrees' holds more entries than hermy can check in 0 seconds before a shell command, so hermy refuses every command until you remove, by hand" adm
 t 0 "budget: leaving no record" none
@@ -648,7 +654,7 @@ done
 unchecked() {
   for i in 1 2; do
     out=$(PATH="$3:$PATH" wire snap w); echo x >> README.md
-    t 0 "unchecked: $1 failing, snap says the command runs unchecked ($i)" jq -e --arg s "since $2 failed, so this command runs unchecked" '.hookSpecificOutput.additionalContext | contains($s)' <<<"$out"
+    t 0 "unchecked: $1 failing, snap says the command runs unchecked ($i)" jq -e --arg s "since $2 failed, so this command runs unchecked" '.hermy == "note" and (.text | contains($s))' <<<"$out"
     out=$(PATH="$3:$PATH" wire trip w 2>&1); r=$?
     t 0 "unchecked: and trip reports the edit's command ($i)" test "$r" = 2
     t 0 "unchecked: as one that ran unchecked, naming $2 ($i)" grep -q "ran unchecked: the main checkout could not be fingerprinted before it ran, since $2 failed" <<<"$out"
@@ -712,7 +718,7 @@ t 0 "unchecked: trip's fingerprint failing, with an edit, trips" test "$r" = 2
 t 0 "unchecked: saying the fingerprint failed" grep -q 'could not be fingerprinted after that command ran, since the fingerprint failed' <<<"$out"
 git checkout -q README.md
 out=$(PATH="$tmp/nosort:$PATH" wire snap w)
-t 0 "unchecked: snap's fingerprint failing says the command runs unchecked" jq -e '.hookSpecificOutput.additionalContext | contains("since the fingerprint failed, so this command runs unchecked")' <<<"$out"
+t 0 "unchecked: snap's fingerprint failing says the command runs unchecked" jq -e '.hermy == "note" and (.text | contains("since the fingerprint failed, so this command runs unchecked"))' <<<"$out"
 t 0 "unchecked: its snapshot says so" grep -qx 'unchecked fp' "$snapfile"
 out=$(wire trip w 2>&1); r=$?
 t 0 "unchecked: and trip reports it" test "$r" = 2
@@ -778,7 +784,7 @@ t 0 "snapshot: and the report names it" grep -q "$snapfile" <<<"$out"
 git checkout -q -- .hermy.yml
 tripped 2 "snapshot: so does one that rewrites it as not onboarded alone, the config untouched" 'echo NOT_ONBOARDED > "$snapfile"'
 wire snap w; echo NOT_ONBOARDED > "$snapfile"
-t 2 "snapshot: and so with nullglob inherited" env BASHOPTS=nullglob "$here/bin/hermy" trip <<<'{"tool_use_id":"w"}'
+t 2 "snapshot: and so with nullglob inherited" env BASHOPTS=nullglob "$here/bin/hermy" trip <<<'{"call":"w"}'
 # Each path's kind is recorded, present or not, so a lost copy is not read
 # as a path that was absent: a weakened legacy file planted next to the live
 # .hermy.yml is let go, and a command that then removed .hermy.yml with its
@@ -805,8 +811,30 @@ rm .hermy.yml; mv .claude/coddy.yml .hermy.yml
 mv .hermy.yml "$tmp/aside"
 tripped 0 "snapshot: quiet once the config is gone, no claim or git hooks left" 'true'
 mv "$tmp/aside" .hermy.yml
-t 0 "snapshot: a tool_use_id that is not a plain word names the shared snapshot" sh -c "printf '{\"tool_use_id\":\"../x\"}' | '$here/bin/hermy' snap && test -f '${snapfile%-w}-shared'"
-rm -f "${snapfile%-w}-shared"*
+t 0 "snapshot: a call that is not a plain word, with no session or pid, names the shared snapshot" env -u HERMY_PID sh -c "printf '{\"call\":\"../x\"}' | '$here/bin/hermy' snap && test -f '$snapbase-shared'"
+rm -f "$snapbase-shared"
+# With no call id, each session keeps a shared snapshot of its own (else its
+# pid's), its name reduced to a plain word, so two never take each other's.
+# sw <verb> <session>: the hook with that session and no call id
+sw() { printf '{"session":"%s"}' "$2" | run "$1"; }
+t 0 "snapshot: with no call id, the session names it" sh -c "printf '{\"session\":\"../a\"}' | '$here/bin/hermy' snap && test -f '$snapbase-session-a'"
+t 0 "snapshot: with no call id or session, the pid names it" sh -c "printf '{}' | '$here/bin/hermy' snap && test -f '$snapbase-pid-$$'"
+rm -f "$snapbase-session-"* "$snapbase-pid-"*
+# Each kind has a prefix of its own, so a call id spelled as a session's
+# snapshot name never takes that session's snapshot.
+for c in session-a shared-a; do
+  sw snap a >/dev/null 2>&1; wire snap "$c" >/dev/null 2>&1; wire trip "$c" >/dev/null 2>&1
+  t 0 "snapshot: a call id spelled $c leaves session a's snapshot alone" sw trip a
+done
+sw snap a >/dev/null 2>&1; sw snap b >/dev/null 2>&1; sw trip b >/dev/null 2>&1
+out=$(sw trip a 2>&1); r=$?
+t 0 "snapshot: two sessions with no call id, interleaved, each trip finds its own" test "$r" = 0
+t 1 "snapshot: and none reports it lost" grep -q 'left no snapshot' <<<"$out"
+sw snap a >/dev/null 2>&1; sw snap b >/dev/null 2>&1; git worktree add -q --detach "$tmp/stray" 2>/dev/null
+t 2 "snapshot: a stray worktree one session's command made trips that session's trip" sw trip a
+out=$(sw trip b 2>&1)
+t 1 "snapshot: while the other's reports no lost snapshot" grep -q 'left no snapshot' <<<"$out"
+git worktree remove --force "$tmp/stray"; rm -f "$snapbase-session-"*
 
 # No agent-dir rules without HERMY_AGENT_DIR; with it, its directory is free
 # and its worktrees/ held to the lock.
@@ -871,6 +899,74 @@ ln -s ../../.hermy.yml .worktrees/1/cfg; ln .hermy.yml .worktrees/1/hard
 t 0 "guard asks on .hermy.yml through a symlink in the owner's worktree" asks "$repo/.worktrees/1/cfg"
 t 0 "guard asks on .hermy.yml through a hard link in the owner's worktree" asks "$repo/.worktrees/1/hard"
 rm .worktrees/1/cfg .worktrees/1/hard
+# An edit naming several paths is held on every one.
+guardp() { printf '{"session":"sess-a","paths":%s}' "$1" | run guard; }
+t 2 "guard: two paths, one outside any worktree, is refused" guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/README.md\"]"
+t 0 "guard: two paths, one the config, asks" guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.hermy.yml\"]"
+t 0 "guard: that ask is one neutral line" eval 'guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.hermy.yml\"]" | jq -e ".hermy == \"ask\""'
+t 2 "guard: a refused path beats an ask" guardp "[\"$repo/.hermy.yml\",\"$repo/README.md\"]"
+t 2 "guard: an empty paths list is refused" guardp '[]'
+t 0 "guard: two paths in the claimed worktree pass" guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.worktrees/1/b.txt\"]"
+HERMY_ASK=0 t 2 "guard: under HERMY_ASK=0 two paths, one the config, block" guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.hermy.yml\"]"
+t 2 "guard: and so under a shim's HERMY_ASK=0 it never exported" bash -c 'HERMY_ASK=0; . "$1" guard' _ "$here/bin/hermy" <<<"{\"session\":\"sess-a\",\"paths\":[\"$repo/.worktrees/1/a.txt\",\"$repo/.hermy.yml\"]}"
+# A NUL in a path makes bash warn on stderr; the ask on stdout still wins.
+t 0 "guard: two paths, the config's with a NUL, still ask" eval 'guardp "[\"$repo/.worktrees/1/a.txt\",\"$repo/.hermy.yml\\u0000\"]" 2>/dev/null | jq -e ".hermy == \"ask\""'
+# A host's shim hands over every file one apply_patch string names. Codex-
+# and Copilot-shaped shims, the self-test's alone, share one extractor.
+cat > "$tmp/patchshim" <<'EOF'
+# Codex sends apply_patch with the patch as its command's last word, Copilot
+# as an Edit whose tool_input is the patch string.
+hermy_in() {
+  jq -c 'def patch: if (.tool_input | type) == "string" then .tool_input
+      elif (.tool_input.command | type) == "array" then .tool_input.command[-1]
+      else .tool_input.input // "" end;
+    {paths: [patch | splits("\n") | rtrimstr("\r") | capture("^\\*\\*\\* (?:(?:Update|Add|Delete) File|Move to): (?<p>.+)$") | .p],
+     cwd: (.cwd // ""), call: (.tool_use_id // ""), session: (.session_id // "")}'
+}
+EOF
+printf '. %q\n' "$here/bin/hermy" >> "$tmp/patchshim"
+# patch <path...>: an apply_patch string updating each path
+patch() { local p; printf '*** Begin Patch\n'; for p; do printf '*** Update File: %s\n@@\n-hi\n+ho\n' "$p"; done; printf '*** End Patch\n'; }
+# codexp <patch> and copilot <path...>: the guard's payload as each host sends it
+codexp() { jq -cn --arg p "$1" --arg c "$repo" '{session_id: "sess-a", tool_use_id: "c1", cwd: $c, tool_name: "apply_patch", tool_input: {command: ["apply_patch", $p]}}' | bash "$tmp/patchshim" guard; }
+codex() { codexp "$(patch "$@")"; }
+copilot() { jq -cn --arg p "$(patch "$@")" --arg c "$repo" '{session_id: "sess-a", tool_use_id: "c1", cwd: $c, tool_name: "Edit", tool_input: $p}' | bash "$tmp/patchshim" guard; }
+t 0 "apply_patch: a Codex patch of two files in the claimed worktree passes" codex .worktrees/1/a.txt .worktrees/1/b.txt
+t 2 "apply_patch: a Codex patch of README.md is refused" codex README.md
+t 0 "apply_patch: a Copilot Edit patching a file in the claimed worktree passes" copilot .worktrees/1/a.txt
+t 2 "apply_patch: a Copilot Edit patching README.md is refused" copilot README.md
+t 2 "apply_patch: a patch of the claimed worktree and README.md is refused" codex .worktrees/1/a.txt README.md
+t 2 "apply_patch: a move out of the claimed worktree onto README.md is refused" codexp "$(printf '*** Begin Patch\n*** Update File: .worktrees/1/a.txt\n*** Move to: README.md\n@@\n-hi\n+ho\n*** End Patch')"
+many=$(jq -cn --arg d "$repo/.worktrees/1/" '[range(0;65)|$d+"f\(.)"]')
+t 2 "guard: a payload with more paths than the cap is refused" guardp "$many"
+t 0 "guard: that refusal names the cap" eval 'guardp "$many" 2>&1 | grep -q "too many paths, more than the 64"'
+# Past its deadline (HERMY_GUARD_BUDGET lowers it) an edit naming several
+# paths is refused before the next path, in warn mode too.
+two="[\"$repo/.worktrees/1/a.txt\",\"$repo/.worktrees/1/b.txt\"]"
+HERMY_GUARD_BUDGET=0 t 2 "guard: an edit naming several paths past its deadline is refused" guardp "$two"
+HERMY_GUARD_BUDGET=0 t 0 "guard: that refusal names the deadline" says "too many paths to check in time, 0 of them checked when its 0 s deadline passed" guardp "$two"
+cp .hermy.yml "$tmp/dl.yml"; echo 'guard: warn' >> .hermy.yml
+HERMY_GUARD_BUDGET=0 t 2 "guard: and so under guard: warn" guardp "$two"
+# Under guard: warn a path let through with a note keeps it when another asks:
+# the ask carries both.
+wa="[\"$repo/.hermy.yml\",\"$repo/README.md\"]"
+t 0 "guard: warn, the config and a path outside any worktree: the ask carries both" eval 'guardp "$wa" | jq -e ".hermy == \"ask\" and (.text | test(\"changes the hermy guardrails\") and test(\"let through .guard: warn.\"))"'
+# An exported HERMY_ASK=0 is the parent's to apply: its refusal keeps the note.
+HERMY_ASK=0 t 2 "guard: warn, HERMY_ASK=0 exported, the config and a path outside any worktree are refused" guardp "$wa"
+HERMY_ASK=0 t 0 "guard: that refusal carries the other path's note" eval 'guardp "$wa" 2>&1 | grep "This host cannot ask" | grep -q "let through .guard: warn."'
+cp "$tmp/dl.yml" .hermy.yml
+# Two config paths asked in one edit: the one ask names both.
+mv .hermy.yml .coddy.yml
+t 0 "guard: an edit of .hermy.yml and a live .coddy.yml asks once, naming both" eval 'guardp "[\"$repo/.hermy.yml\",\"$repo/.coddy.yml\"]" | jq -e ".hermy == \"ask\" and (.text | contains(\"Editing .hermy.yml \") and contains(\"Editing .coddy.yml \"))"'
+mv .coddy.yml .hermy.yml
+# A path's verdict the parent cannot read (a jq that prints no JSON for the
+# child's ask alone) refuses the edit, naming the path, never passes it.
+mkdir "$tmp/oddjq"
+printf '#!/bin/sh\nfor a; do [ "$a" != %s ] || { echo "not json"; exit 0; }; done\nexec %s "$@"\n' "'{hermy: \"ask\", text: \$m}'" "$(command -v jq)" > "$tmp/oddjq/jq"; chmod +x "$tmp/oddjq/jq"
+cfgtwo="[\"$repo/.worktrees/1/a.txt\",\"$repo/.hermy.yml\"]"
+PATH="$tmp/oddjq:$PATH" t 2 "guard: an unreadable verdict on one of several paths is refused" guardp "$cfgtwo"
+PATH="$tmp/oddjq:$PATH" t 0 "guard: that refusal names the path" says "could not read its verdict on path 2 of 2" guardp "$cfgtwo"
+t 0 "guard: eight paths in the claimed worktree pass within it" guardp "$(jq -cn --arg d "$repo/.worktrees/1/" '[range(0;8)|$d+"f\(.)"]')"
 # Shift_JIS, GBK and GB18030 take 0x78 as a trail byte, so a path ending in
 # a lead byte reads with the x the guard puts after it as one character: the
 # guard reads byte-wise. ぁ, in UTF-8 as the payload carries it, ends in 0x81.
@@ -957,7 +1053,7 @@ t 0 "guard: and the owner line is left as it was" cmp -s "$tmp/own" .git/hermy/1
 t 0 "guard: an edit it is allowed" guard "$repo/.worktrees/1/a.txt"
 t 0 "guard: moves the owner line to it" holds "sess-a $$" .git/hermy/1/owner
 t 0 "guard: with both starts" ownline "sess-a $$" .git/hermy/1/owner
-t 2 "guard: blocks a relative path against a cwd named the owner's id and a newline" run guard < <(printf '{"session_id":"sess-a","cwd":"%s","tool_input":{"file_path":"x"}}' "$repo/.worktrees/1\\n")
+t 2 "guard: blocks a relative path against a cwd named the owner's id and a newline" run guard < <(printf '{"session":"sess-a","cwd":"%s","paths":["x"]}' "$repo/.worktrees/1\\n")
 rm .worktrees/1/rd .worktrees/1/d .worktrees/1/dd .worktrees/1/L .worktrees/1/M .worktrees/1/nl; rmdir $'.worktrees/1\n'
 rm .worktrees/1/E .worktrees/1/E2 .worktrees/1/E7 .worktrees/1/lng .worktrees/1/la .worktrees/1/L2; rm -r .git/hermy/2; rmdir .worktrees/2 .worktrees/7
 # ps prints a start time in the locale's language, and the guard runs in C:
@@ -967,7 +1063,7 @@ rm .worktrees/1/E .worktrees/1/E2 .worktrees/1/E7 .worktrees/1/lng .worktrees/1/
 de=$(locale -a 2>/dev/null | grep -ix -m1 -e de_DE.UTF-8 -e de_DE.utf8)
 if [ -n "$de" ]; then
   fresh() { rm -r .git/hermy/1; LC_ALL=$de run claim 1 >/dev/null 2>&1; cp .git/hermy/1/owner "$tmp/own"; }
-  newsid() { run guard < <(printf '{"session_id":"sess-c","tool_input":{"file_path":"%s"}}' "$repo/.worktrees/1/a.txt"); }
+  newsid() { run guard < <(printf '{"session":"sess-c","paths":["%s"]}' "$repo/.worktrees/1/a.txt"); }
   fresh
   t 0 "under $de: claim writes both starts in C" ownline "sess-a $$" "$tmp/own"
   LC_ALL=$de t 0 "under $de: guard allows the owner's edit" guard "$repo/.worktrees/1/a.txt"
@@ -1012,8 +1108,8 @@ under="$repo/.worktrees/1/"; under="$under$(printf './%.0s' $(seq $(( (4096 - ${
 cp .hermy.yml "$tmp/conf.yml"
 for v in block warn; do
   { grep -v '^guard:' "$tmp/conf.yml"; echo "guard: $v"; } > .hermy.yml
-  t 2 "guard: $v refuses a path over 4096 bytes, promptly" timeout 1 "$here/bin/hermy" guard < <(printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$over")
-  t 2 "guard: $v refuses a cwd over 4096 bytes" timeout 1 "$here/bin/hermy" guard < <(printf '{"session_id":"sess-a","cwd":"%s","tool_input":{"file_path":"README.md"}}' "${over%/README.md}")
+  t 2 "guard: $v refuses a path over 4096 bytes, promptly" timeout 1 "$here/bin/hermy" guard < <(printf '{"session":"sess-a","paths":["%s"]}' "$over")
+  t 2 "guard: $v refuses a cwd over 4096 bytes" timeout 1 "$here/bin/hermy" guard < <(printf '{"session":"sess-a","cwd":"%s","paths":["README.md"]}' "${over%/README.md}")
   t 0 "guard: $v allows a path of 4096 bytes in the owner's worktree" guard "$under"
 done
 cp "$tmp/conf.yml" .hermy.yml
@@ -1023,14 +1119,14 @@ cp "$tmp/conf.yml" .hermy.yml
 # once the walk's 5 seconds have passed, not let through after it.
 deep=$(printf 'd/%.0s' $(seq 300)); mkdir -p ".worktrees/1/$deep"
 ln -s "$(printf '../d/%.0s' $(seq 200))" ".worktrees/1/${deep}B"
-t 2 "guard: refuses a walk that outlasts its time budget, promptly" timeout 15 "$here/bin/hermy" guard < <(printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$pr/.worktrees/1/$deep$(printf 'B/%.0s' $(seq 30))a.txt")
+t 2 "guard: refuses a walk that outlasts its time budget, promptly" timeout 15 "$here/bin/hermy" guard < <(printf '{"session":"sess-a","paths":["%s"]}' "$pr/.worktrees/1/$deep$(printf 'B/%.0s' $(seq 30))a.txt")
 rm -r .worktrees/1/d
 # Nor the tail a missing directory leaves, joined and read in time
 # quadratic in its length: 40 links, each putting 60 components after the
 # next, the last into a missing directory, leave one past 4096 bytes.
 x=$(printf '/x%.0s' $(seq 60))
 for i in $(seq 39); do ln -s "S$((i+1))$x" ".worktrees/1/S$i"; done; ln -s "nodir$x" .worktrees/1/S40
-t 2 "guard: refuses a tail past 4096 bytes after a missing directory, promptly" timeout 15 "$here/bin/hermy" guard < <(printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$pr/.worktrees/1/S1/a.txt")
+t 2 "guard: refuses a tail past 4096 bytes after a missing directory, promptly" timeout 15 "$here/bin/hermy" guard < <(printf '{"session":"sess-a","paths":["%s"]}' "$pr/.worktrees/1/S1/a.txt")
 rm .worktrees/1/S[0-9]*
 # The Claude Code shims take their inputs from CLAUDE_* alone: an inherited
 # HERMY_* value, however hostile, is ignored.
@@ -1401,6 +1497,7 @@ t 0 "removed config: and that a tracked config comes back from HEAD in your own 
 t 2 "removed config: guard refuses a path outside the project too" guard "$tmp/elsewhere.txt"
 t 0 "removed config: a Write of .hermy.yml is asked" asks "$repo/.hermy.yml"
 t 1 "removed config: naming no /hermy:config, which stops without a config" grep -qF '/hermy:config' <<<"$out"
+lasks() { out=$(guard "$1") && jq -e '.hermy == "ask" and (.text | contains(".claude/coddy.yml"))' <<<"$out"; }
 t 0 "removed config: and one of .claude/coddy.yml" lasks "$repo/.claude/coddy.yml"
 t 0 "removed config: and one of .coddy.yml" casks "$repo/.coddy.yml"
 t 2 "removed config: but no other edit under .claude/" guard "$repo/.claude/notes.md"
@@ -1427,8 +1524,8 @@ t 1 "removed config: and for pre-commit" "$hooks/pre-commit"
 mv "$tmp/lock-aside" .git/hermy/1
 # A FIFO at .hermy.yml is no config, and the leftovers are found without opening it.
 mkfifo .hermy.yml
-t 2 "removed config: a FIFO at .hermy.yml does not hang guard" timeout 5 sh -c "printf '{\"session_id\":\"sess-a\",\"tool_input\":{\"file_path\":\"$repo/README.md\"}}' | '$here/bin/hermy' guard"
-t 2 "removed config: nor snap" timeout 5 sh -c "printf '{\"tool_use_id\":\"w\"}' | '$here/bin/hermy' snap"
+t 2 "removed config: a FIFO at .hermy.yml does not hang guard" timeout 5 sh -c "printf '{\"session\":\"sess-a\",\"paths\":[\"$repo/README.md\"]}' | '$here/bin/hermy' guard"
+t 2 "removed config: nor snap" timeout 5 sh -c "printf '{\"call\":\"w\"}' | '$here/bin/hermy' snap"
 rm .hermy.yml
 mv "$tmp/aside" .hermy.yml
 tripped 0 "removed config: once it is back, the next command is checked as before" 'true'
@@ -1480,7 +1577,7 @@ HERMY_HOOKS=1 t 0 "hooks: with HERMY_HOOKS=1 and no snap mark for the session, s
 # holds snap nor is written through, a linked .git/hermy gets no mark, and a
 # session's first snap prunes within the fingerprint's budget.
 mkdir "$tmp/keeprm"; printf '#!/bin/sh\ncase "$*" in */.git/hermy/.snap-*) exit 0 ;; esac\nexec "%s" "$@"\n' "$(command -v rm)" > "$tmp/keeprm/rm"; chmod +x "$tmp/keeprm/rm"
-msnap() { printf '{"session_id":"%s","tool_use_id":"w"}' "$1" | timeout 10 env "${@:2}" "$here/bin/hermy" snap; }
+msnap() { printf '{"session":"%s","call":"w"}' "$1" | timeout 10 env "${@:2}" "$here/bin/hermy" snap; }
 mkfifo .git/hermy/.snap-sess-f
 t 0 "hooks: a FIFO at the mark's name does not hold snap" msnap sess-f PATH="$tmp/keeprm:$PATH"
 t 0 "hooks: and is left a FIFO" test -p .git/hermy/.snap-sess-f
@@ -1576,7 +1673,7 @@ t 0 "old name: githook reads coddy.previousHooksPath while hermy's is missing" g
 t 0 "old name: and runs that hook" test "$(cat "$tmp/lg.log")" = prev
 # Its leftovers are a removed config's too (left): with no config, the old
 # hooks directory alone, or a claim under the old records alone, refuses.
-lgguard() { printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$lg/README.md" | HERMY_ROOT="$lg" run guard; }
+lgguard() { printf '{"session":"sess-a","paths":["%s"]}' "$lg/README.md" | HERMY_ROOT="$lg" run guard; }
 mv "$lg/.coddy.yml" "$tmp/lg.yml"; rm -rf "$lg/.git/hooks/hermy" "$lg/.git/hermy"
 t 2 "old name: no config next to .git/hooks/coddy refuses an edit" lgguard
 t 0 "old name: naming it" says 'yet .git/hooks/coddy is there' lgguard
@@ -2032,25 +2129,25 @@ for st in foo.git foo.git/refs; do
 done
 # the same bare repository beside a config at its parent: the parent is the project, the exemption does not apply
 mkdir -p "$tmp/sbc"; git init -q --bare "$tmp/sbc/foo.git"; printf 'version: 2\ntracker: github\nworktree: git\ndefault_branch: main\nverify: true\n' > "$tmp/sbc/.hermy.yml"
-for st in foo.git foo.git/refs; do t 2 "bare: beside a config, from $st, guard is held" sh -c "echo '{\"tool_input\":{\"file_path\":\"/x\"}}' | HERMY_ROOT='$tmp/sbc/$st' '$here/bin/hermy' guard"; done
+for st in foo.git foo.git/refs; do t 2 "bare: beside a config, from $st, guard is held" sh -c "echo '{\"paths\":[\"/x\"]}' | HERMY_ROOT='$tmp/sbc/$st' '$here/bin/hermy' guard"; done
 mkdir -p "$dp/bx/y"; git init -q --bare "$dp/bx/y/c.git"
 t 0 "bare: nested, the line names the bare repository, not a .git that does not exist" sh -c "HERMY_ROOT='$dp/bx/y/c.git' '$here/bin/hermy' status | grep -q \"^git_dir: $(cd "$dp" && pwd -P)/bx/y/c.git is a bare repository nested in the project\""
 rm -rf "$dp/bx"
 # a .git that is a huge sparse file, and a HEAD git rejects, stall and fool no hook
 mkdir -p "$tmp/sp"; git init -q "$tmp/sp"; cp "$dp/.hermy.yml" "$tmp/sp/"; mv "$tmp/sp/.git" "$tmp/sp/x"; truncate -s 4G "$tmp/sp/.git"
-t 2 "guard: a huge sparse .git at the root is refused within seconds" timeout 10 sh -c "printf '{\"session_id\":\"s\",\"tool_input\":{\"file_path\":\"$tmp/sp/f\"}}' | HERMY_ROOT='$tmp/sp' '$here/bin/hermy' guard"
-t 2 "snap: and so is a command" timeout 10 sh -c "printf '{\"session_id\":\"s\",\"cwd\":\"$tmp/sp\",\"tool_input\":{\"command\":\"true\"}}' | HERMY_ROOT='$tmp/sp' '$here/bin/hermy' snap"
+t 2 "guard: a huge sparse .git at the root is refused within seconds" timeout 10 sh -c "printf '{\"session\":\"s\",\"paths\":[\"$tmp/sp/f\"]}' | HERMY_ROOT='$tmp/sp' '$here/bin/hermy' guard"
+t 2 "snap: and so is a command" timeout 10 sh -c "printf '{\"session\":\"s\",\"cwd\":\"$tmp/sp\",\"command\":\"true\"}' | HERMY_ROOT='$tmp/sp' '$here/bin/hermy' snap"
 rm -rf "$tmp/sp"
 mkdir -p "$tmp/hA"; git init -q "$tmp/hA"; printf '#!/bin/sh\ntouch "%s/hMark"\n' "$tmp" > "$tmp/hfsm"; chmod +x "$tmp/hfsm"; git -C "$tmp/hA" config core.fsmonitor "$tmp/hfsm"
 for hd in ' refs/heads/main' $'\trefs/heads/main' $'\nrefs/heads/main'; do
   P="$tmp/hA/proj"; rm -rf "$P"; mkdir -p "$P/.git/objects" "$P/.git/refs" "$P/src/deep"; cp "$dp/.hermy.yml" "$P/"
   ln -s "$hd" "$P/.git/HEAD"; echo garbage > "$P/src/.git"
-  t 0 "snap: a symlink HEAD whose target starts with whitespace is no repository, so no git runs in the one above" sh -c "printf '{\"session_id\":\"s\",\"cwd\":\"$P/src/deep\",\"tool_input\":{\"command\":\"true\"}}' | HERMY_ROOT='$P/src/deep' '$here/bin/hermy' snap"
+  t 0 "snap: a symlink HEAD whose target starts with whitespace is no repository, so no git runs in the one above" sh -c "printf '{\"session\":\"s\",\"cwd\":\"$P/src/deep\",\"command\":\"true\"}' | HERMY_ROOT='$P/src/deep' '$here/bin/hermy' snap"
   t 1 "snap: and A's core.fsmonitor never ran" test -e "$tmp/hMark"
 done
 P="$tmp/hA/proj"; rm -rf "$P"; mkdir -p "$P/.git/objects" "$P/.git/refs" "$P/src/deep"; cp "$dp/.hermy.yml" "$P/"
 printf 'ref:%300srefs/heads/main\n' ' ' > "$P/.git/HEAD"; echo garbage > "$P/src/.git"
-t 0 "snap: ref: and over 250 whitespace characters before refs/ is no repository" sh -c "printf '{\"session_id\":\"s\",\"cwd\":\"$P/src/deep\",\"tool_input\":{\"command\":\"true\"}}' | HERMY_ROOT='$P/src/deep' '$here/bin/hermy' snap"
+t 0 "snap: ref: and over 250 whitespace characters before refs/ is no repository" sh -c "printf '{\"session\":\"s\",\"cwd\":\"$P/src/deep\",\"command\":\"true\"}' | HERMY_ROOT='$P/src/deep' '$here/bin/hermy' snap"
 t 1 "snap: and A's core.fsmonitor never ran" test -e "$tmp/hMark"
 rm -rf "$tmp/hA" "$tmp/sb"
 # the same with no config in the subdirectory, and a commondir to nowhere
@@ -2061,7 +2158,7 @@ t 0 "doctor: so is a commondir to nowhere" dsaysat "$dp/lsub" '^git_dir: '
 t 0 "doctor: and says to remove the file, not to open the session elsewhere" sh -c "echo 'gitdir: /nowhere' > '$dp/lsub/.git/commondir'; HERMY_ROOT='$dp/lsub' '$here/bin/hermy' doctor 2>&1 | grep -q 'is not the main checkout.s own git dir'"
 # a repository git rejects planted at .worktrees/.git (or in place of an issue worktree's .git) leaves the root the project: a main-checkout write is still refused
 plant() { mkdir -p "$1/objects" "$1/refs"; echo 'ref: refs/heads/main' > "$1/HEAD"; printf '[core]\n\trepositoryformatversion = 9\n' > "$1/config"; }
-gdir() { printf '{"session_id":"sess-a","tool_input":{"file_path":"%s"}}' "$dp/README.md" | HERMY_ROOT="$1" HERMY_PID=$$ "$here/bin/hermy" guard; }
+gdir() { printf '{"session":"sess-a","paths":["%s"]}' "$dp/README.md" | HERMY_ROOT="$1" HERMY_PID=$$ "$here/bin/hermy" guard; }
 mkdir -p "$dp/.worktrees/5"; plant "$dp/.worktrees/.git"
 t 2 "guard: from a jj workspace under a planted .worktrees/.git, the main checkout is refused" gdir "$dp/.worktrees/5"
 rm -rf "$dp/.worktrees/.git"; plant "$dp/.worktrees/5/.git"

@@ -139,8 +139,9 @@ The plan and questions `/hermy:start` posts on that issue are internal too. Ceil
 ## How it enforces
 
 [docs/enforcement.md](docs/enforcement.md) has one section per layer: what it stops, lets through and misses.
-The edit guard, tripwire and config lock are Claude Code hooks. Another agent running the skills from `~/.hermy`
-gets only the git hooks, branch protection and the PR check.
+The edit guard, tripwire and config lock run as Claude Code hooks only, until another host's shim lands: the core
+they run is host-neutral, and each host needs a shim mapping its hook payload in and the verdict out.
+Another agent running the skills from `~/.hermy` gets only the git hooks, branch protection and the PR check.
 - **Edit guard.** Rejects Claude's file edits in the project outside `.worktrees/<issue>/`, and inside it before
   the issue is claimed. `.claude/` stays editable, settings files too
   ([only Claude Code's prompt holds them](docs/enforcement-limits.md#settings-files)), except `.claude/worktrees/`.

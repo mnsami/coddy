@@ -542,9 +542,15 @@ hookson() {
 # jq for the hooks: HOME=/dev/null, so a ~/.jq (loaded into every program)
 # is never read. Not named jq, so command -v jq still finds the real one.
 jqh() { HOME=/dev/null jq "$@"; }
-# Hook context for the agent, as Claude Code reads it: no permissionDecision,
-# so the usual permission flow still applies.
-note() { jqh -cn --arg m "$*" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $m}}'; }
+# The hook verbs read one neutral JSON line (paths, command, cwd, call,
+# session). A host's shim defines hermy_in to map its own payload to it; with
+# none, stdin already is that line.
+readin() { if declare -F hermy_in >/dev/null; then in=$(hermy_in); else in=$(cat); fi; }
+# One verdict line, in the host's hook output when its shim defines hermy_out.
+emit() { if declare -F hermy_out >/dev/null; then hermy_out "$1"; else printf '%s\n' "$1"; fi; }
+# Hook context for the agent: a note, with no decision, so the usual
+# permission flow still applies.
+note() { emit "$(jqh -cn --arg m "$*" '{hermy: "note", text: $m}')"; }
 # guard: warn lets the $1 (edit) through and hands the agent die's
 # message as context instead.
 warnmode() { [ "$(cfg guard)" = warn ] || return 0; wm=$1; die() { note "hermy warning, the $wm was let through (guard: warn): $*"; exit 0; }; }
@@ -630,6 +636,8 @@ abspath() {
   p="${p%/}$t"; echo "${p:-/}"
 }
 
+# This file by a path the cd below leaves valid, for the git hooks start writes.
+src="${BASH_SOURCE[0]-}"; case "$src" in /*|'') ;; *) src="$PWD/$src" ;; esac
 if [ "${1-}" = guard ]; then
   # Byte-wise, before the payload is read: under Shift_JIS, GBK or GB18030
   # (LC_ALL, LC_CTYPE or LANG, which an env can set) a path ending in a lead
@@ -637,8 +645,14 @@ if [ "${1-}" = guard ]; then
   export LC_ALL=C
   # Seconds the walk below (phys) may take, from here, well inside the hook's
   # 10 s timeout, past which a Claude Code before 2.1.295 lets the edit
-  # through. Reset, not read, as an environment can set SECONDS.
-  budget=5 SECONDS=0
+  # through. Reset, not read, as an environment can set SECONDS. The whole
+  # guard, an edit naming several paths included, has 8 s (HERMY_GUARD_BUDGET,
+  # a whole number, lowers it: the self-test's, and what an edit naming
+  # several paths hands each path's run, the seconds left), and the walk no
+  # more than that.
+  budget=5 gdl=8 SECONDS=0
+  case "${HERMY_GUARD_BUDGET-}" in ''|*[!0-9]*) ;; *) [ "${#HERMY_GUARD_BUDGET}" -gt 4 ] || [ "$((10#$HERMY_GUARD_BUDGET))" -ge "$gdl" ] || gdl=$((10#$HERMY_GUARD_BUDGET)) ;; esac
+  [ "$gdl" -ge "$budget" ] || budget=$gdl
   # No config: inert, unless a started issue's leftovers say it was removed
   # (left): then every edit is refused but a Write of a config (below).
   tamp=""; [ -f "$conf" ] || { left || exit 0; tamp=1; }
@@ -649,13 +663,46 @@ if [ "${1-}" = guard ]; then
   # .hermy.yml must never go through unasked. So the payload is read before
   # warnmode, whose die lets the edit through.
   command -v jq >/dev/null || die "the edit guard needs jq"
-  # The hook's session_id is the editing session's HERMY_SESSION.
+  # The input's session is the editing session's HERMY_SESSION.
   # jq once per field, not read per line: a path may hold a newline. $(...)
   # strips trailing ones, so a path ends in an x it then drops, here and from
   # phys and inroot below (abspath's own line ends in a newline).
-  in=$(cat)
-  me=$(jqh -r '.session_id // ""' <<<"$in") &&
-    f=$(jqh -j '.tool_input.file_path // .tool_input.notebook_path // empty' <<<"$in" && printf x) &&
+  readin
+  # An edit naming several paths is held on each: guard runs itself once per
+  # path, and the first refusal, else the asks as one, else the notes, win.
+  # Each child costs a process and its walk, so an edit naming more than 64
+  # paths is refused before any starts, and one whose paths are not all
+  # checked within the guard's seconds ($gdl) once they are up, in warn mode
+  # too: the hook's timeout lets the edit through before Claude Code 2.1.295.
+  # Each child gets the seconds left, less one: SECONDS counts whole
+  # wall-clock seconds, so each side may read up to one short, and the last
+  # child's walk still ends about 9 s in, inside the 10 s.
+  if n=$(jqh -r '(.paths // []) | length' <<<"$in" 2>/dev/null) && [ "$n" -gt 1 ] 2>/dev/null; then
+    [ "$n" -le 64 ] || die "the edit guard refuses an edit naming $n paths: too many paths, more than the 64 one edit may name."
+    ask="" notes="" i=0
+    while [ "$i" -lt "$n" ]; do
+      # A child's refusal reaches stderr itself; only its stdout, the verdict
+      # line, is read, so a warning it printed cannot hide an ask.
+      r=$((gdl - SECONDS - 1))
+      [ "$r" -gt 0 ] || die "the edit guard refuses an edit naming $n paths: too many paths to check in time, $i of them checked when its ${gdl} s deadline passed."
+      o=$(jqh -c --argjson i "$i" '.paths = [.paths[$i]]' <<<"$in" | HERMY_ASK= HERMY_GUARD_BUDGET=$r "$BASH" -p "$src" guard); c=$?
+      [ "$c" -ne 2 ] || exit 2
+      [ "$c" -eq 0 ] || die "the edit guard failed on path $((i+1)) of $n (exit $c)"
+      if [ -n "$o" ]; then
+        k=$(jqh -r '.hermy // ""' <<<"$o") && t=$(jqh -r '.text // ""' <<<"$o") || k=""
+        case "$k" in ask) ask="${ask:+$ask }$t" ;; note) notes="${notes:+$notes }$t" ;; *) die "the edit guard could not read its verdict on path $((i+1)) of $n" ;; esac
+      fi
+      i=$((i+1))
+    done
+    # The notes the other paths left ride on the ask or its refusal, which
+    # replace them.
+    [ -z "$ask" ] || [ "${HERMY_ASK-}" != 0 ] || die "$ask This host cannot ask, so hermy refuses it.${notes:+ $notes}"
+    [ -z "$ask" ] || { emit "$(jqh -cn --arg t "$ask${notes:+ $notes}" '{hermy:"ask",text:$t}')"; exit 0; }
+    [ -z "$notes" ] || emit "$(jqh -cn --arg t "$notes" '{hermy:"note",text:$t}')"
+    exit 0
+  fi
+  me=$(jqh -r '.session // ""' <<<"$in") &&
+    f=$(jqh -j '.paths[0] // empty' <<<"$in" && printf x) &&
     cwd=$(jqh -j '.cwd // empty' <<<"$in" && printf x) || die "the edit guard could not read the hook payload with jq"
   f=${f%x} cwd=${cwd%x}
   [ -n "$f" ] || die "the edit guard could not read a path from the hook payload"
@@ -757,7 +804,13 @@ if [ "${1-}" = guard ]; then
   nm=$(byname "$f" && printf x) && nm=${nm%?x} && at=$(phys "$nm" new) && at=${at%x} || die "$nf"
   pr=$(cd "$root" && pwd -P && printf x) && pr=${pr%?x} || pr=$root
   # Removed (tamp), /hermy:config stops on NOT_ONBOARDED, so the ask names none.
-  ask() { local m="Editing $1 changes the hermy guardrails. Allow it only if you asked for this change (/hermy:config)."; [ -z "$tamp" ] || m="Writing $1 puts back the hermy config that was removed, and with it the hermy guardrails. Allow it only if you asked for this change."; jqh -cn --arg m "$m" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $m}}'; exit 0; }
+  # A shim whose host cannot ask sets HERMY_ASK=0: the ask then blocks.
+  ask() {
+    local m="Editing $1 changes the hermy guardrails. Allow it only if you asked for this change (/hermy:config)."
+    [ -z "$tamp" ] || m="Writing $1 puts back the hermy config that was removed, and with it the hermy guardrails. Allow it only if you asked for this change."
+    [ "${HERMY_ASK-}" != 0 ] || die "$m This host cannot ask, so hermy refuses it."
+    emit "$(jqh -cn --arg m "$m" '{hermy: "ask", text: $m}')"; exit 0
+  }
   lc=$(printf %s "${at##*/}" | tr '[:upper:]' '[:lower:]')
   # Each config path from the highest down to the live one ($cname), the
   # legacy one in the agent dir (free otherwise) asked as .hermy.yml is, its
@@ -835,7 +888,7 @@ if [ "${1-}" = guard ]; then
     # its mkdir and that line.
     [ ! -d "$root/.git/hermy/$issue" ] || [ -s "$root/.git/hermy/$issue/owner" ] || die "issue $issue's claim is in flight or died halfway. Run /hermy:start $issue."
     # The lock's owner, as claim wrote it; a plain-file marker has none. A
-    # claim run by hand, or a hook payload without session_id, names no
+    # claim run by hand, or a hook input without a session, names no
     # session, and then the edit is not held to the owner.
     owner "$issue"
     [ -z "$sid" ] || [ -z "$me" ] || mine ||
@@ -1181,13 +1234,15 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   fpb=20 SECONDS=0
   case "${HERMY_BUDGET-}" in ''|*[!0-9]*) ;; *) [ "${#HERMY_BUDGET}" -gt 4 ] || fpb=$HERMY_BUDGET ;; esac
   adb=$((10#$fpb / 2))
-  # The snapshot is named by the tool use; an id that is not a plain word
-  # reads as none, so it cannot name a path outside TMPDIR. Read without jq:
-  # onboard installs jq inside one command, so snap runs without it and trip
-  # with it, and the name must come out the same on both sides. Inside a JSON
-  # string a quote is escaped, so a bare "tool_use_id" is a key, never text.
-  in=$(cat)
-  id=$(sed -n 's/.*"tool_use_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
+  # The snapshot is named by the tool use, else the session (shared); an id
+  # that is not a plain word reads as none, so it cannot name a path outside
+  # TMPDIR. Both read without jq: onboard installs jq inside one command, so
+  # snap runs without it and trip with it, and the name must come out the
+  # same on both sides. Inside a JSON string a quote is escaped, so a bare
+  # "call" or "session" is a key, never text.
+  readin
+  id=$(sed -n 's/.*"call"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
+  ss=$(sed -n 's/.*"session"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
   R=$(cd "$root" 2>/dev/null && pwd -P)
   # The common dir git worktree list reads, physical, read past each side's
   # onboarding gate: it runs at the root, whose .git is, past oddly, a real
@@ -1290,7 +1345,7 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
   }
   # Hook context of fixed text alone (no quote, backslash or control
   # character), without jq.
-  ctx() { printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$*"; }
+  ctx() { emit "$(printf '{"hermy":"note","text":"%s"}' "$*")"; }
   tl="usually thousands of dirty or untracked files; ignored ones cost nothing"
   sx="stat gave no size, change time and inode for one of its dirty files"
   ut="so this command runs unchecked: what it changes there, and a worktree it makes, go unreported, though a change to the config is still put back."
@@ -1311,7 +1366,13 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     [ -n "$w" ] && echo "$w"
   }
   seen="" nowt="" vf=/dev/null gd="" pd=""
-  case "$id" in ''|*[!A-Za-z0-9_-]*) id=shared ;; esac
+  # The call's own snapshot, call-<id>; with no call id, the session's
+  # (session-<word>), else its pid's (pid-<word>), so two sessions without
+  # one never take each other's, each word reduced to [A-Za-z0-9_-] and cut
+  # to 128 characters, an empty one the next fallback; with neither, shared.
+  # Each kind has its own prefix, so no call id names a session's snapshot.
+  shared() { local w k=session; for w in "$1" "${HERMY_PID-}"; do w=${w//[!A-Za-z0-9_-]/}; w=${w:0:128}; [ -z "$w" ] || { echo "$k-$w"; return; }; k=pid; done; echo shared; }
+  case "$id" in ''|*[!A-Za-z0-9_-]*) id=$(shared "$ss") ;; *) id="call-$id" ;; esac
   file="${TMPDIR:-/tmp}/hermy-snap-$(printf %s "$root" | cksum | cut -d' ' -f1)-$id"
   # Every config path is kept (cfgs), present or not: a .hermy.yml or
   # .coddy.yml the command makes above a live lower one would shadow it.
@@ -1351,7 +1412,6 @@ if [ "${1-}" = snap ] || [ "${1-}" = trip ]; then
     # when it is no directory, since BusyBox's rm has no -d), and none when
     # .git/hermy is a link or no directory; a session's first has fp prune
     # those over a day old (pd).
-    ss=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$in" 2>/dev/null | head -n1)
     if [ -d "$root/.git" ] && m=$(smark "$ss"); then
       { [ -e "${m%/*}" ] || [ -L "${m%/*}" ] || mkdir "${m%/*}"
         if [ -d "${m%/*}" ] && [ ! -L "${m%/*}" ]; then
@@ -1588,8 +1648,6 @@ if [ "${1-}" = doctor ]; then
 fi
 [ -z "$odd" ] || { [ "${1-}" = sweep ] && exit 0; oddly; }
 [ -f "$conf" ] || { [ "${1-}" = sweep ] && exit 0; die "NOT_ONBOARDED"; }
-# This file by a path the cd below leaves valid, for the git hooks start writes.
-src="${BASH_SOURCE[0]-}"; case "$src" in /*|'') ;; *) src="$PWD/$src" ;; esac
 # Where the call began, physical, for wtroots: a session's sandbox writes it.
 began=$(cd "$dir" 2>/dev/null && pwd -P)
 cd "$root" || die "cannot enter $root"
