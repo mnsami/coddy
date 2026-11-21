@@ -157,7 +157,7 @@ Notes from the build:
 
 - [x] **Step 1: Write the docs.**
 - [x] **Step 2: `claude plugin validate .`; expect the one CLAUDE.md warning only.**
-- [ ] **Step 3: Headless Claude Code check** in an onboarded scratch repo with a claimed issue: `claude --plugin-dir ~/dev/private/hermy --permission-mode acceptEdits -p "write hi to README.md"` is refused naming `/hermy:start`; `-p "write guard: warn to .hermy.yml"` is asked (denied headless); under `guard: warn` the run quotes the hook's warning back.
+- [x] **Step 3: Headless Claude Code check** in an onboarded scratch repo with a claimed issue: `claude --plugin-dir ~/dev/private/hermy --permission-mode acceptEdits -p "write hi to README.md"` is refused naming `/hermy:start`; `-p "write guard: warn to .hermy.yml"` is asked (denied headless); under `guard: warn` the run quotes the hook's warning back.
 - [x] **Step 4: Both self-tests under `/bin/bash`.**
 - [ ] **Step 5: Final whole-branch review** with both briefs, then commit `docs: describe the host-neutral hook contract (#278)` and open the PR closing #278.
 
